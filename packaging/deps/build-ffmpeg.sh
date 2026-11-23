@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Builds the FFmpeg that the Linux and macOS packages bundle (packaging/README.md): shared, LGPL
-# (no --enable-gpl, no external libraries) and only what the audio decoder opens, the
-# MP3 and FLAC demuxers and decoders (src/infrastructure/media/audio_decoder.cpp).
+# (no --enable-gpl, no external libraries) and only what the audio decoder opens: the MP3 and
+# FLAC demuxers/decoders, plus the MP4 (mov) demuxer with its AAC and E-AC-3 decoders (the
+# Bilibili CDN's audio/mp4). See src/infrastructure/media/audio_decoder.cpp.
 # Its sonames (libavcodec.so.63 …) differ from the FFmpeg 7.1 that Qt Multimedia ships
 # (libavcodec.so.61), so both live in the bundle's lib/.
 #
@@ -33,9 +34,9 @@ cd "$work/ffmpeg-$VERSION"
     --disable-autodetect --disable-network \
     --disable-avdevice --disable-avfilter --disable-swscale \
     --disable-everything \
-    --enable-demuxer=mp3,flac \
-    --enable-decoder=mp3,mp3float,flac \
-    --enable-parser=mpegaudio,flac
+    --enable-demuxer=mp3,flac,mov \
+    --enable-decoder=mp3,mp3float,flac,aac,eac3 \
+    --enable-parser=mpegaudio,flac,aac,ac3
 make -j"${JOBS:-$(getconf _NPROCESSORS_ONLN)}"
 make install
 

@@ -107,7 +107,7 @@ class StreamTest : public QObject
         QVERIFY(std::holds_alternative<StreamSource>(result));
         QVERIFY(!std::get<StreamSource>(result).preview); // no inferred full-track grant
         r["url"] = QJsonValue::Null;
-        QCOMPARE(std::get<PlaybackFailure>(map(r)).error, PlaybackError::Unavailable);
+        QCOMPARE(std::get<PlaybackFailure>(map(r)).error, PlaybackError::NeedPermission);
     }
     void malformed_data()
     {
