@@ -13,14 +13,14 @@ const QString kFriend = QStringLiteral("200");
 const TogetherRoomId kRoom{QStringLiteral("synthetic-room")};
 
 struct Harness {
-    BackendFacade facade;
-    ListeningSession player{facade};
-    TogetherSession together{facade, player};
     QList<PlaybackCommand> commands;
     QList<TogetherCommand> sent; // not answered yet
     QList<TogetherCommand> all;
     qint64 clock = 1'000'000;
     SessionSnapshot session{{QUuid::createUuid(), 1}, SessionPhase::Authenticated, kMe};
+    BackendFacade facade;
+    ListeningSession player{facade};
+    TogetherSession together{facade, player};
     Harness()
     {
         QObject::connect(&facade, &BackendFacade::playbackRequested, &facade,
@@ -224,11 +224,18 @@ class TogetherSessionTest : public QObject
         h.facade.setAllowBiliSource(true);
         h.createActive();
         QVERIFY(!h.latestPlay().query.allowBiliSource);
+        const auto roomLoad = h.latestPlay().id;
         QVERIFY(h.player.next());
+        QVERIFY(!h.latestPlay().query.allowBiliSource);
         h.publish(PlaybackState::Playing);
+        int roomPreloads = 0;
         for (const auto& c : h.commands)
-            if (c.action == PlaybackAction::Preload && !c.query.song.value.isEmpty())
+            if (c.id > roomLoad && c.action == PlaybackAction::Preload &&
+                !c.query.song.value.isEmpty()) {
+                ++roomPreloads;
                 QVERIFY(!c.query.allowBiliSource);
+            }
+        QVERIFY(roomPreloads > 0);
         const auto before = h.count(TogetherKind::Play);
         h.publish(PlaybackState::Playing, 1000, 0, SourceProvider::Bilibili);
         QCOMPARE(h.together.state(), TogetherSession::State::Idle);
@@ -247,6 +254,13 @@ class TogetherSessionTest : public QObject
             h.publish(PlaybackState::Playing, 5000);
             const auto old = h.latestPlay();
             QVERIFY(old.query.allowBiliSource);
+            const auto preload = std::find_if(h.commands.crbegin(), h.commands.crend(),
+                [](const auto& c) {
+                    return c.action == PlaybackAction::Preload && !c.query.song.value.isEmpty();
+                });
+            QVERIFY(preload != h.commands.crend());
+            const auto oldPreload = *preload;
+            QVERIFY(oldPreload.query.allowBiliSource);
             h.facade.setAllowBiliSource(false);
             if (resume) {
                 QVERIFY(h.together.resume({kRoom, kMe, false}));
@@ -271,6 +285,15 @@ class TogetherSessionTest : public QObject
             QVERIFY(h.latestPlay().id != old.id);
             QVERIFY(!h.latestPlay().query.allowBiliSource);
             QVERIFY(!h.facade.allowBiliSource());
+            const auto current = h.player.playback().token;
+            PlaybackSnapshot late;
+            late.token = oldPreload.next;
+            late.song = oldPreload.query.song;
+            late.provider = SourceProvider::Bilibili;
+            late.state = PlaybackState::Playing;
+            h.facade.deliverPlayback({oldPreload.generation, late});
+            QCOMPARE(h.player.playback().token, current);
+            QCOMPARE(h.together.state(), TogetherSession::State::Active);
         }
     }
     void failedOrCanceledRoomReloadNeverPublishesTheQueue()
