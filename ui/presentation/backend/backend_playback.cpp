@@ -1303,8 +1303,15 @@ bool BackendLyrics::routePlayback(const std::shared_ptr<Job>& job)
     job->generation = generation;
     if (m_session && m_session->playback().token.generation == generation) {
         const auto own = m_session->lyrics();
-        if (own && own->song.value == job->key)
+        if (own && own->song.value == job->key) {
+            log::info(lcUiBackend, "lyrics.session",
+                      {{"song", job->key}, {"token", generation},
+                       {"provider", m_session->playback().provider},
+                       {"standard_lines", own->original.standard.lines.size()},
+                       {"standard_availability", own->original.standard.availability},
+                       {"enhanced_lines", own->original.enhanced.lines.size()}});
             job->finish(Outcome<SongLyrics>{lyricsOf(*own)});
+        }
         else if (m_session->lyricsState() == domain::LyricsState::Loading ||
                  m_session->playback().state == domain::PlaybackState::Resolving)
             m_waiting.append(job);

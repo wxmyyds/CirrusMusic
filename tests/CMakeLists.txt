@@ -91,7 +91,7 @@ add_test(NAME backend_facade COMMAND tst_backend_facade)
 set_tests_properties(backend_facade PROPERTIES TIMEOUT 15)
 
 qt_add_executable(tst_backend_runtime unit/backend_runtime_test.cpp)
-target_link_libraries(tst_backend_runtime PRIVATE cirrus_backend cirrus_bootstrap Qt6::Test Qt6::Gui OpenSSL::Crypto)
+target_link_libraries(tst_backend_runtime PRIVATE cirrus_backend cirrus_bootstrap cirrus_presentation_backend Qt6::Test Qt6::Gui OpenSSL::Crypto)
 add_test(NAME backend_runtime COMMAND tst_backend_runtime)
 # Some 40 cases, one waiting out the facade's 5 s close delay: 22 s in a Linux debug build,
 # past 30 s on the macOS runner (three cores, four tests at a time).

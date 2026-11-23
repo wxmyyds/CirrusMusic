@@ -1,6 +1,7 @@
 #include "../support/comment_write_support.h"
 #include "../support/fake_http.h"
 #include "../support/fake_playback.h"
+#include "../support/presentation_playback_snapshot.h"
 #include "../support/synthetic_bilibili.h"
 #include "../support/fake_secret_store.h"
 #include "../support/synthetic_cover.h"
@@ -13,6 +14,9 @@
 #include "application/music/personal_fm_source.h"
 #include "application/playback/listening_session.h"
 #include "application/ports/playback.h"
+#include "backend_playback.h"
+#include "lyrics.h"
+#include "player.h"
 #include "infrastructure/bootstrap/xeapi_key_vault.h"
 #include "infrastructure/netease/music/comment_v3_issuer.h"
 #include "infrastructure/netease/music/cover_upload.h"
@@ -323,9 +327,11 @@ void BackendRuntimeTest::biliLyricsAndCookieThroughThread()
         auto manager = std::make_unique<FakeGetManager>();
         const QJsonObject subtitle{{"subtitle", QJsonObject{{"subtitles", QJsonArray{
             QJsonObject{{"lan", "zh-CN"}, {"subtitle_url", "//aisubtitle.hdslb.com/a.json"}}}}}}};
+        auto body = biliJson(QJsonDocument(QJsonObject{{"body", QJsonArray{
+            QJsonObject{{"from", 0}, {"to", 2}, {"content", "Subtitle"}}}}}).toJson());
+        body.delayMs = 250;
         manager->plans = {biliJson(QJsonDocument(QJsonObject{{"code", 0}, {"data", subtitle}}).toJson()),
-                          biliJson(QJsonDocument(QJsonObject{{"body", QJsonArray{
-                              QJsonObject{{"from", 0}, {"to", 2}, {"content", "Subtitle"}}}}}).toJson())};
+                          body};
         return manager;
     };
     BackendRuntime runtime(config, std::move(f));
@@ -335,10 +341,35 @@ void BackendRuntimeTest::biliLyricsAndCookieThroughThread()
     QTRY_COMPARE(facade.state(), BackendState::Ready);
     QTRY_VERIFY(facade.snapshot().token.isValid());
     QTRY_COMPARE(runtime.biliAccount().status, domain::BiliAccountStatus::LoggedIn);
+    UiPlaybackSnapshot playback;
+    ui::BackendLyrics lyricsSource(runtime);
+    ui::Player player(&playback, nullptr);
+    ui::CurrentLyrics shown(&lyricsSource, &player);
+    connect(&runtime.listening(), &ListeningSession::playbackChanged, &player,
+            [&](domain::PlaybackSnapshot snapshot) {
+                ui::PlaybackSnapshot state;
+                state.current.key = snapshot.song.value;
+                state.generation = snapshot.token.generation;
+                state.provider = snapshot.provider == domain::SourceProvider::Bilibili
+                                     ? ui::playback::Bilibili : ui::playback::Netease;
+                state.status = snapshot.state == domain::PlaybackState::Resolving
+                                   ? ui::playback::Loading : ui::playback::Playing;
+                playback.publish(std::move(state));
+            });
     facade.setAllowBiliSource(true);
     QVERIFY(runtime.listening().replaceQueue({{"1"}}));
+    QCOMPARE(shown.status(), ui::lyrics::Loading);
     QTRY_COMPARE(facade.playback().provider, domain::SourceProvider::Bilibili);
     QTRY_COMPARE(runtime.listening().lyricsState(), domain::LyricsState::Ready);
+    QTRY_COMPARE(shown.status(), ui::lyrics::Ready);
+    QCOMPARE(shown.lines()->rowCount(), 1);
+    QCOMPARE(shown.lines()->lines().first().text, QString("Subtitle"));
+    QCOMPARE(shown.lines()->lines().first().startMs, 0);
+    QCOMPARE(shown.lines()->lines().first().endMs, 2000);
+    QCOMPARE(shown.timing(), ui::lyrics::Lines);
+    ui::CurrentLyrics openedLater(&lyricsSource, &player);
+    QTRY_COMPARE(openedLater.status(), ui::lyrics::Ready);
+    QCOMPARE(openedLater.lines()->rowCount(), 1);
     QCOMPARE(runtime.listening().lyrics()->original.standard.lines.first().text, QString("Subtitle"));
     QCOMPARE(state->requests.load(), 2); // permission + original metadata, never NetEase lyrics
     runtime.clearBiliCookie();

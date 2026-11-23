@@ -2,6 +2,7 @@
 
 #include "player.h"
 #include "sources.h"
+#include "logging/log.h"
 
 #include <QSettings>
 
@@ -267,6 +268,8 @@ void CurrentLyrics::load()
     m_key = m_player->current().key;
     m_generation = m_player->generation();
     m_provider = m_player->provider();
+    log::info(lcUi, "lyrics.load", {{"song", m_key}, {"token", m_generation},
+                                   {"provider", m_provider}, {"voice", m_player->current().voice}});
     emit offsetChanged();
     m_lines->reset({});
     m_hasTranslation = m_hasRomanization = m_japanese = m_hasRuby = false;
@@ -290,12 +293,20 @@ void CurrentLyrics::load()
 void CurrentLyrics::apply(const Outcome<SongLyrics>& outcome)
 {
     if (!outcome.value) {
+        log::warn(lcUi, "lyrics.failed", {{"song", m_key}, {"token", m_generation},
+                                         {"provider", m_provider}});
         setStatus(lyrics::Failed);
         return;
     }
     const SongLyrics& lyrics = *outcome.value;
     lyrics::Timing timing = lyrics::Lines;
     QList<ShownLine> lines = buildLines(lyrics, &timing);
+    log::info(lcUi, "lyrics.received",
+              {{"song", m_key}, {"token", m_generation}, {"provider", m_provider},
+               {"standard_lines", lyrics.original.standard ? lyrics.original.standard->lines.size() : 0},
+               {"enhanced_lines", lyrics.original.enhanced ? lyrics.original.enhanced->lines.size() : 0},
+               {"shown_lines", lines.size()}, {"no_lyric", lyrics.noLyric},
+               {"instrumental", lyrics.instrumental}});
     if (const LyricTrack* original = pick(lyrics.original, true))
         m_trackOffsetMs = original->offsetMs;
     m_timing = timing;
