@@ -159,6 +159,48 @@ class AudioEngineTest : public QObject
         QTRY_VERIFY_WITH_TIMEOUT(has(Kind::Ended), 5000);
     }
 
+    // A seek past what has downloaded (2026-11-22, the maintainer: the bar sprang back, and
+    // went on doing so for a while). The engine wakes a read waiting on the download
+    // (AudioStream::interrupt); with none waiting, the seek's own read took that wake-up:
+    // the seek was dropped or never got there, and the download was not sent there.
+    void aSeekPastTheDownloadPlaysFromThere()
+    {
+        // seek.mp3 (200 KB, 200 s; opening reads 64 KB and the end) in 8 KB chunks, as a
+        // song of some MB in 256 KB ones: the first 120 KB at once, the rest slowly (still
+        // faster than it plays). Paused, the producer fills its ring and waits there, in
+        // no read; 180 s is past the download.
+        m_engine.reset();
+        AudioStore::Options options;
+        options.root = m_dir->path() + QStringLiteral("/chunked");
+        options.chunkBytes = 8192;
+        options.aheadBytes = 8192;
+        m_store =
+            std::make_unique<AudioStore>(options, std::make_unique<test::RangeManager>(m_server));
+        m_store->setPartition(QStringLiteral("test"));
+        m_engine = std::make_unique<AudioEngine>(*m_store);
+        m_engine->setVolume(0);
+        connect(m_engine.get(), &AudioEngine::event, this,
+                [this](PlaybackEvent e) { m_events.append(e); });
+        m_server.blockBytes = 1024;
+        m_server.slowAfter = 120000;
+        m_server.slowIntervalMs = 400;
+        const auto t = token(3);
+        load(QStringLiteral("seek.mp3"), QStringLiteral("mp3"), t);
+        QTRY_VERIFY_WITH_TIMEOUT(has(Kind::Ready), 8000);
+        m_engine->pause();
+        QTest::qWait(300);
+        m_engine->seek(180000);
+        QTRY_VERIFY_WITH_TIMEOUT(has(Kind::SeekConfirmed), 3000);
+        QCOMPARE(first(Kind::SeekConfirmed).value, 180000);
+        // The download went there (the chunk of byte 180 000; opening asked for the end's),
+        // and it plays on from there.
+        QVERIFY(std::any_of(m_server.ranges.cbegin(), m_server.ranges.cend(), [](auto& range) {
+            const qint64 from = range.mid(6, range.indexOf('-') - 6).toLongLong();
+            return from >= 160000 && from < 190000;
+        }));
+        m_engine->play();
+        QTRY_VERIFY_WITH_TIMEOUT(lastPosition(t) >= 181000, 5000);
+    }
     void stopRetiresEverything()
     {
         load(QStringLiteral("tone.flac"), QStringLiteral("flac"), token(3));

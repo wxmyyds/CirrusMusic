@@ -14,6 +14,7 @@ Q_DECLARE_LOGGING_CATEGORY(lcCache)     // cirrus.cache: covers, lyrics and othe
 Q_DECLARE_LOGGING_CATEGORY(lcPlayback)  // cirrus.playback: session, queue, loads
 Q_DECLARE_LOGGING_CATEGORY(lcMedia)     // cirrus.media: audio engine and audio store
 Q_DECLARE_LOGGING_CATEGORY(lcReport)    // cirrus.report: listening reports
+Q_DECLARE_LOGGING_CATEGORY(lcTogether)  // cirrus.together: listen-together rooms and sync
 Q_DECLARE_LOGGING_CATEGORY(lcPlatform)  // cirrus.platform: MPRIS, SMTC, Now Playing, tray
 Q_DECLARE_LOGGING_CATEGORY(lcUi)        // cirrus.ui: presentation layer, models
 Q_DECLARE_LOGGING_CATEGORY(lcUiBackend) // cirrus.ui.backend: the backend host

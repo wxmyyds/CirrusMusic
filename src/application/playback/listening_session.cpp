@@ -171,7 +171,8 @@ bool ListeningSession::begin(PlaybackQueue candidate, TransportIntent intent, Au
     const auto sourceSession = m_backend.snapshot();
     const auto revision = ++m_revision;
     m_starting = true;
-    const auto id = m_backend.playSong(entry->song, quality, intent);
+    const auto id = m_backend.playSong(entry->song, quality, intent,
+                                       entry->program.value.isEmpty() && m_permitBiliSource);
     m_starting = false;
     log::debug(lcPlayback, "queue.begin",
                {{"song", entry->song.value},
@@ -215,7 +216,7 @@ void ListeningSession::commit(PlaybackQueue candidate, TransportIntent intent, A
     m_positionObservedAt.reset();
     m_history.begin(m_token, m_backend.snapshot().accountId, entry->song,
                     fm ? ListeningMode::PersonalFm : ListeningMode::Queue, fm ? QUuid{} : entry->id,
-                    fm ? PlayOrigin{} : entry->origin);
+                    fm ? PlayOrigin{} : entry->origin, fm ? ProgramId{} : entry->program);
     m_quality = quality;
     m_intent = intent;
     m_auto = automatic;
@@ -233,7 +234,10 @@ void ListeningSession::commit(PlaybackQueue candidate, TransportIntent intent, A
         m_backend.cancelMusic(oldLyricRequest);
     if (revision != m_revision)
         return;
-    requestLyrics();
+    if (entry->program.value.isEmpty())
+        requestLyrics();
+    else
+        m_lyricsState = LyricsState::None;
     if (revision != m_revision)
         return;
     if (!notifyHistory())
@@ -255,14 +259,15 @@ void ListeningSession::commit(PlaybackQueue candidate, TransportIntent intent, A
     return;
 }
 bool ListeningSession::replaceQueue(const QList<SongId>& songs, qsizetype startIndex,
-                                    AudioQuality quality, const QList<PlayOrigin>& origins)
+                                    AudioQuality quality, const QList<PlayOrigin>& origins,
+                                    const QList<ProgramId>& programs)
 {
     log::info(lcPlayback, "queue.replace",
               {{"count", songs.size()}, {"index", startIndex}, {"quality", quality}});
     if (startIndex < 0 || startIndex >= songs.size())
         return false;
     auto candidate = m_queue;
-    if (!candidate.replace(songs, origins) ||
+    if (!candidate.replace(songs, origins, programs) ||
         !candidate.select(candidate.snapshot().entries[startIndex].id))
         return false;
     return begin(std::move(candidate), TransportIntent::Play, quality, false);
@@ -292,7 +297,8 @@ bool ListeningSession::restoreQueue(const QueueSnapshot& saved, SessionSnapshot 
     emit queueChanged(m_queue.snapshot());
     return guard && m_revision == revision && m_backend.snapshot() == expected;
 }
-bool ListeningSession::append(const QList<SongId>& songs, bool playNext, const PlayOrigin& origin)
+bool ListeningSession::append(const QList<SongId>& songs, bool playNext, const PlayOrigin& origin,
+                              const QList<ProgramId>& programs)
 {
     Q_ASSERT(QThread::currentThread() == thread());
     if (m_mode == ListeningMode::PersonalFm || m_backend.state() != BackendState::Ready ||
@@ -300,7 +306,7 @@ bool ListeningSession::append(const QList<SongId>& songs, bool playNext, const P
         return false;
     if (m_queueContext.isValid() && !queueContextMatches())
         return false;
-    if (!m_queue.append(songs, playNext, origin))
+    if (!m_queue.append(songs, playNext, origin, programs))
         return false;
     m_queueContext = m_backend.snapshot().token;
     m_sourceSession = m_backend.snapshot();
@@ -614,9 +620,26 @@ void ListeningSession::clearHistory()
     if (guard)
         notifyHistory(changed);
 }
+void ListeningSession::setBiliSourcePermitted(bool permit)
+{
+    if (permit == m_permitBiliSource)
+        return;
+    m_permitBiliSource = permit;
+    if (!m_backend.allowBiliSource())
+        return;
+    m_preload.reset();
+    if (const auto id = std::exchange(m_preloadLyricRequest, 0))
+        m_backend.cancelMusic(id);
+    if (current())
+        static_cast<void>(m_backend.preloadSong({}, m_quality, false));
+    refreshPreload();
+}
+
 void ListeningSession::requestLyrics()
 {
-    if (!current() || m_terminalHandled || m_playback.state == PlaybackState::Failed ||
+    const auto entry = m_queue.current();
+    if (!entry || !entry->program.value.isEmpty() || !current() || m_terminalHandled ||
+        m_playback.state == PlaybackState::Failed ||
         m_playback.state == PlaybackState::Empty || m_lyricsRequested ||
         !m_backend.playbackSource(m_token.generation))
         return;
@@ -639,7 +662,9 @@ void ListeningSession::sourceSelected(PlaybackSourceSelection selection)
         requestLyrics();
         return;
     }
-    if (m_preload && selection.token.generation == m_preload->generation &&
+    const auto entry = m_preload ? m_preload->queue.current() : std::nullopt;
+    if (m_preload && entry && entry->program.value.isEmpty() &&
+        selection.token.generation == m_preload->generation &&
         selection.token.session == m_token.session && !m_preloadLyricRequest)
         m_preloadLyricRequest = m_backend.playbackLyrics(m_preload->generation);
 }
@@ -798,7 +823,9 @@ void ListeningSession::requestPreload(SongId song, QUuid entry, PlaybackQueue qu
         m_preload->queue = std::move(queue); // same song; the rest of the queue changed
         return;
     }
-    const auto id = m_backend.preloadSong(song, m_quality);
+    const auto nextEntry = queue.current();
+    const auto id = m_backend.preloadSong(song, m_quality,
+        nextEntry && nextEntry->program.value.isEmpty() && m_permitBiliSource);
     if (!id) {
         m_preload.reset();
         return;

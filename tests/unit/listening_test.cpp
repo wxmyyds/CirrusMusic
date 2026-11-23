@@ -207,6 +207,36 @@ class ListeningTest : public QObject
         QCOMPARE(h.plays(), 2);
         QVERIFY(stopped.first()[0].toBool());
     }
+    void aProgramPlaysItsTrackWithoutLyrics()
+    {
+        Harness h;
+        h.facade.setAllowBiliSource(true);
+        QSignalSpy records(&h.player, &ListeningSession::listeningRecordChanged);
+        const PlayOrigin podcast{PlayOriginKind::Podcast, "4", "synthetic podcast"};
+        QVERIFY(h.player.replaceQueue({{"99"}, {"1"}}, 0, AudioQuality::Standard,
+                                      {podcast, podcast}, {{"5"}, {}}));
+        QCOMPARE(h.latestPlay().query.song.value, "99"); // the track, as a song
+        QVERIFY(!h.latestPlay().query.allowBiliSource);
+        QVERIFY(h.music.isEmpty());                      // no lyrics asked for
+        QCOMPARE(h.player.lyricsState(), LyricsState::None);
+        QCOMPARE(h.player.queue().entries.first().program.value, "5");
+        QVERIFY(h.player.queue().entries.last().program.value.isEmpty());
+        h.publish(PlaybackState::Playing, 1000);
+        auto played = h.player.playback();
+        played.state = PlaybackState::Playing;
+        played.observed = ObservedPlayback{4000, false};
+        h.facade.deliverPlayback({h.latestPlay().generation, played});
+        QTRY_VERIFY(!records.isEmpty());
+        const auto row = qvariant_cast<StoredListeningRecord>(records.last().first());
+        QCOMPARE(row.program.value, "5");
+        QCOMPARE(row.song.value, "99");
+        QCOMPARE(row.origin, podcast);
+        QVERIFY(h.player.next());
+        QCOMPARE(h.player.lyricsState(), LyricsState::Loading); // the song after it has lyrics
+        QVERIFY(h.latestPlay().query.allowBiliSource);
+        QVERIFY(!h.player.replaceQueue({{"99"}}, 0, AudioQuality::Standard, {}, {{"5"}, {"6"}}));
+        QVERIFY(!h.player.replaceQueue({{"99"}}, 0, AudioQuality::Standard, {}, {{"x"}}));
+    }
     void shuffleIsOneRoundAndHistoryIsStable()
     {
         PlaybackQueue q([](quint32) { return 0; });

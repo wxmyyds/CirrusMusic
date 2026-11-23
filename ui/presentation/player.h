@@ -47,7 +47,7 @@ class Player : public QObject
     Q_PROPERTY(bool canPrevious READ canPrevious NOTIFY changed)
     Q_PROPERTY(int mode READ mode NOTIFY changed) // Playback.Mode
     Q_PROPERTY(bool fmWaiting READ fmWaiting NOTIFY changed)
-    // Whether podcast voices can be played (playVoices()); not yet with the backend.
+    // Whether podcast voices can be played (playVoices()).
     Q_PROPERTY(bool canPlayVoices READ canPlayVoices CONSTANT)
     // The queue in play order; rows get details as views ask (ensureQueueLoaded).
     // A song can be in it twice: the current row is `queueIndex`, not the current role.

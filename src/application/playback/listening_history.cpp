@@ -7,8 +7,10 @@ namespace cirrus::application
 {
 using namespace domain;
 void ListeningHistory::begin(LoadToken token, QString accountId, SongId song, ListeningMode source,
-                             QUuid queueEntry, PlayOrigin origin)
+                             QUuid queueEntry, PlayOrigin origin, ProgramId program)
 {
+    if (!validQueueProgram(program) || source == ListeningMode::PersonalFm)
+        program = {};
     if (!validPlayOrigin(origin) ||
         (source == ListeningMode::PersonalFm && origin.kind != PlayOriginKind::None))
         origin = {}; // a bad origin never costs the record
@@ -28,6 +30,7 @@ void ListeningHistory::begin(LoadToken token, QString accountId, SongId song, Li
     m_active->source = source;
     m_active->queueEntry = queueEntry;
     m_active->origin = std::move(origin);
+    m_active->program = std::move(program);
     m_active->recordId = QUuid::createUuid();
     m_active->startedAtMs = QDateTime::currentMSecsSinceEpoch();
 }

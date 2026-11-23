@@ -304,7 +304,20 @@ bool AudioDecoder::seek(qint64 ms)
     const qint64 start = stream->start_time == AV_NOPTS_VALUE ? 0 : stream->start_time;
     const qint64 from = std::max<qint64>(0, ms - kPrerollMs);
     const qint64 ts = start + av_rescale_q(from, {1, 1000}, stream->time_base);
-    if (av_seek_frame(m_format, m_streamIndex, ts, AVSEEK_FLAG_BACKWARD) < 0)
+    // Past what has been read (its index), FFmpeg's MP3 seek reads every frame up to
+    // there: the download would have to get there in order, and on a slow line that took
+    // long (2026-11-22). A fast seek jumps there by the Xing table or the bit rate; within
+    // the index, the index is exact.
+    const int entries = avformat_index_get_entries_count(stream);
+    const AVIndexEntry* last =
+        entries > 0 ? avformat_index_get_entry(m_format->streams[m_streamIndex], entries - 1)
+                    : nullptr;
+    const bool past = !last || ts > last->timestamp;
+    if (past)
+        m_format->flags |= AVFMT_FLAG_FAST_SEEK;
+    const int sought = av_seek_frame(m_format, m_streamIndex, ts, AVSEEK_FLAG_BACKWARD);
+    m_format->flags &= ~AVFMT_FLAG_FAST_SEEK;
+    if (sought < 0 || m_interrupted)
         return false;
     avcodec_flush_buffers(m_codec);
     swr_init(m_convert); // drops what it held

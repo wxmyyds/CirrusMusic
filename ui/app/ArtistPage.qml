@@ -16,6 +16,8 @@ SongCollectionPage {
     originId: pageModel.artistKey
 
     property alias artistKey: pageModel.artistKey
+    shareKind: Share.Artist
+    shareKey: pageModel.artistKey
     // 0 songs, 1 albums, 2 introduction, 3 similar artists.
     property int currentTab: 0
     readonly property int tabCount: 4

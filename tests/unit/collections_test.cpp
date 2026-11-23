@@ -218,6 +218,58 @@ class CollectionsTest : public QObject
         bad.insert(mode / 2 == 1 ? "pid" : "id", 1);
         QVERIFY(!operationPayload(request->operation, bad));
     }
+    // As the official Android app 9.6.22 (docs/api/playlist-subscription.md): subscribe
+    // with its Yidun checkToken, "" without one (what Cirrus sends); unsubscribe with the
+    // id alone.
+    void playlistSubscription()
+    {
+        for (const QString id : {"", "01", "-1", " 1"})
+            QVERIFY(
+                !CollectionMutation({QUuid::createUuid(), PlaylistSubscription{{id}}}).isValid());
+        QVERIFY(!CollectionMutation(
+                     {QUuid::createUuid(), PlaylistSubscription{{"1"}, CollectionAction(2)}})
+                     .isValid());
+        for (const bool subscribe : {true, false}) {
+            const CollectionMutation m{QUuid::createUuid(),
+                                       PlaylistSubscription{{wide},
+                                                            subscribe ? CollectionAction::Collect
+                                                                      : CollectionAction::Remove}};
+            const auto request = collectionRequest(m);
+            QVERIFY(request);
+            QCOMPARE(request->operation, subscribe ? ApiOperation::PlaylistSubscribe
+                                                   : ApiOperation::PlaylistUnsubscribe);
+            const auto c = operationContract(request->operation);
+            QVERIFY(c);
+            QCOMPARE(c->logicalPath,
+                     subscribe ? "/api/playlist/subscribe" : "/api/playlist/unsubscribe");
+            QCOMPARE(c->protocol, Protocol::Eapi);
+            QCOMPARE(c->destination, OfficialDestination::Default);
+            QVERIFY(requiresAccountCookie(request->operation));
+            const QJsonObject expected = subscribe ? QJsonObject{{"id", wide}, {"checkToken", ""}}
+                                                   : QJsonObject{{"id", wide}};
+            QCOMPARE(*operationPayload(request->operation, request->parameters), expected);
+            // The caller never supplies the token or anything else.
+            for (const char* key : {"checkToken", "t", "header", "e_r"}) {
+                auto bad = request->parameters;
+                bad.insert(key, "x");
+                QVERIFY(!operationPayload(request->operation, bad));
+            }
+            Harness h({Plan{R"({"code":200})"}});
+            QSignalSpy done(&h.gateway, &ICollectionGateway::completed);
+            QVERIFY(h.submit(m));
+            QTRY_COMPARE(done.size(), 1);
+            QCOMPARE(result(done).outcome, CollectionOutcome::Acknowledged);
+            const auto& r = h.http->requests.last();
+            QCOMPARE(r.url().path(), QString(subscribe ? "/eapi/playlist/subscribe"
+                                                       : "/eapi/playlist/unsubscribe"));
+            const auto wire = decodeEapiRequest(h.http->bodies.last());
+            QVERIFY(wire);
+            auto payload = wire->payload;
+            QVERIFY(payload.take("header").isObject());
+            QCOMPARE(payload.take("e_r"), QJsonValue(false));
+            QCOMPARE(payload, expected);
+        }
+    }
     void wireBoundaries()
     {
         QVERIFY(!operationPayload(ApiOperation::SongHeart, {{"id", "1"}, {"liked", "false"}}));

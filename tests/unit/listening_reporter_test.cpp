@@ -324,6 +324,30 @@ class ListeningReporterTest : public QObject
         h.state(PlaybackState::Ended, 4000);
         QCOMPARE(h.plays().last().source, ListeningReportSource::Song);
     }
+    void aProgramIsReportedFromItsPodcast()
+    {
+        Harness h;
+        h.reporter.setOriginLookup([](QUuid) { // a song's lookup never applies to a program
+            return std::optional(ListeningReporter::Origin{ListeningReportSource::List, "55"});
+        });
+        const PlayOrigin podcast{PlayOriginKind::Podcast, "4", "synthetic podcast"};
+        QVERIFY(h.session.replaceQueue({{"99"}, {"98"}}, 0, AudioQuality::Standard, {podcast, {}},
+                                       {{"5"}, {"6"}}));
+        h.state(PlaybackState::Playing, 4000);
+        QCOMPARE(h.starts().size(), 1);
+        QVERIFY(h.session.next());
+        const auto r = h.plays().first();
+        QCOMPARE(r.song.value, "99"); // the track
+        QCOMPARE(r.program.value, "5");
+        QCOMPARE(r.source, ListeningReportSource::DjRadio);
+        QCOMPARE(r.sourceId, "4");
+        QVERIFY(r.isValid());
+        h.state(PlaybackState::Playing, 4000);
+        h.state(PlaybackState::Ended, 4000);
+        QCOMPARE(h.plays().last().program.value, "6");
+        QCOMPARE(h.plays().last().sourceId, ""); // no podcast known: none made up
+        QVERIFY(h.plays().last().isValid());
+    }
 };
 QTEST_GUILESS_MAIN(ListeningReporterTest)
 #include "listening_reporter_test.moc"

@@ -18,6 +18,7 @@ namespace cirrus::ui
 {
 
 class FakeControls;
+class TogetherSource;
 
 // Read-only catalog: home, search, playlist/album/artist details, daily songs.
 class CatalogSource
@@ -159,7 +160,7 @@ class LibrarySource
     virtual Request updatePlaylist(const QString& playlistKey, const QString& title,
                                    const QString& description, Reply<bool> reply) = 0;
     virtual Request deletePlaylist(const QString& playlistKey, Reply<bool> reply) = 0;
-    // Whether setPlaylistSubscribed() is offered (the backend holds it back for now).
+    // Whether setPlaylistSubscribed() is offered.
     [[nodiscard]] virtual bool canSavePlaylists() const = 0;
 };
 
@@ -339,6 +340,7 @@ struct Sources {
     std::unique_ptr<CacheSource> cache;
     std::unique_ptr<LyricsSource> lyrics;
     std::unique_ptr<StatsSource> stats;
+    std::unique_ptr<TogetherSource> together; // none in the gallery
 };
 
 } // namespace cirrus::ui

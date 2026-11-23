@@ -64,6 +64,17 @@ struct PodcastSubscription {
                (action == CollectionAction::Collect || action == CollectionAction::Remove);
     }
 };
+// Saves someone else's playlist to the account's library, or removes it (docs/api/
+// playlist-subscription.md): not its songs (PlaylistCollection).
+struct PlaylistSubscription {
+    PlaylistId playlist;
+    CollectionAction action = CollectionAction::Collect;
+    [[nodiscard]] bool isValid() const
+    {
+        return validMusicId(playlist.value) &&
+               (action == CollectionAction::Collect || action == CollectionAction::Remove);
+    }
+};
 // Follows or unfollows a user (docs/api/user-profile-reads.md §5).
 struct UserFollow {
     QString userId;
@@ -112,12 +123,12 @@ struct PlaylistDescription {
         return validMusicId(playlist.value) && validPlaylistText(description, 4096, true);
     }
 };
-// No whole-playlist subscription (checkToken-v2 gate), CloudSong/Program/Voice casts or JSON.
+// No CloudSong/Program/Voice casts or JSON.
 using CollectionChange =
     std::variant<SongHeart, PlaylistCollection, AlbumCollection, ArtistCollection,
                  PodcastSubscription, PlaylistCreate, PlaylistRename, PlaylistDescription,
                  PlaylistDelete, PlaylistSongOrder, AccountPlaylistOrder, PlaylistTagEdit,
-                 PlaylistMakePublic, PlaylistCoverReplace, UserFollow>;
+                 PlaylistMakePublic, PlaylistCoverReplace, UserFollow, PlaylistSubscription>;
 struct CollectionMutation {
     QUuid eventId; // local correlation only, NOT server idempotency; caller explicitly supplies it
     CollectionChange change;

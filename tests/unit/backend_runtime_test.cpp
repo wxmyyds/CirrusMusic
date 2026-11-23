@@ -3078,7 +3078,7 @@ void BackendRuntimeTest::togetherHttpThroughThread()
     auto plans = loginPlans();
     for (int i = 0; i < kTogetherKinds; ++i)
         plans.append(Plan{togetherHttpFixture(TogetherKind(i))});
-    plans.append(Plan{R"({"code":200,"data":{"playlist":{}}})"});
+    plans.append(Plan{R"({"code":200,"data":{"playlist":[]}})"});
     plans.append(Plan{"", 200, -1});
     BackendRuntime runtime(config, factories(state, gate, plans));
     auto& f = runtime.facade();

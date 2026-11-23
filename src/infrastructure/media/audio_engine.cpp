@@ -79,9 +79,10 @@ struct AudioEngine::Producer {
     std::condition_variable wake;
     bool quit = false;
     std::optional<qint64> seekTo;
-    qint64 baseMs = 0;      // the position output frame `startFrame` stands for (lock)
-    quint64 startFrame = 0; // output frame (since the flush) the track starts at (lock)
-    quint64 seekSerial = 0; // bumped when a seek took effect (lock)
+    std::optional<qint64> seeking; // the seek taken from seekTo, until it is made (lock)
+    qint64 baseMs = 0;             // the position output frame `startFrame` stands for (lock)
+    quint64 startFrame = 0;        // output frame (since the flush) the track starts at (lock)
+    quint64 seekSerial = 0;        // bumped when a seek took effect (lock)
     // The next track, all under the lock. The owner hands it over; the producer goes on
     // into it at the current track's end (gapless) or mixes it in over a transition
     // (docs/tasks/automix.md). Once it plays (`crossed`), its audio starts at output frame
@@ -452,6 +453,7 @@ void AudioEngine::Producer::run(AudioEngine* engine, LoadToken token, bool reope
     std::vector<float> out;
     size_t written = 0;   // of `out`
     bool flushing = true; // the owner flushed before starting us
+    int seekRetries = 0;  // of an interrupted seek nothing newer replaced
     while (true) {
         std::optional<qint64> seek;
         {
@@ -459,6 +461,8 @@ void AudioEngine::Producer::run(AudioEngine* engine, LoadToken token, bool reope
             if (quit)
                 return;
             seek = std::exchange(seekTo, std::nullopt);
+            if (seek)
+                seeking = seek;
         }
         if (seek) {
             if (!flushing)
@@ -475,15 +479,31 @@ void AudioEngine::Producer::run(AudioEngine* engine, LoadToken token, bool reope
             }
             m_upcoming.reset(); // opened again when the time comes
             if (!m_cur->seek(*seek)) {
-                if (m_cur->decoder().interrupted())
-                    continue; // a newer seek or stop came in
+                if (m_cur->decoder().interrupted()) {
+                    // A newer seek or a stop goes next. Else the interruption was the
+                    // owner waking a waiting read for this very seek (AudioEngine::seek),
+                    // and nothing read was waiting: it cut the seek's own read short. Once
+                    // more, then (2026-11-22: the seek was dropped, the bar sprang back).
+                    std::lock_guard guard(lock);
+                    if (seekTo)
+                        seekRetries = 0;
+                    else if (!quit && seekRetries < 3) {
+                        ++seekRetries;
+                        seekTo = seek;
+                        log::debug(lcMedia, "engine.seek_again", {"try", seekRetries});
+                    } else
+                        seeking.reset();
+                    continue;
+                }
                 failed(m_cur->decoder().error().value_or(PlaybackError::Decode));
                 return;
             }
+            seekRetries = 0;
             produced = 0;
             eof = false;
             m_curOrigin = 0;
             std::lock_guard guard(lock);
+            seeking.reset();
             baseMs = *seek;
             startFrame = 0;
             ++seekSerial;
@@ -748,7 +768,7 @@ qint64 AudioEngine::position() const
         std::lock_guard guard(m_producer->lock);
         base = m_producer->baseMs;
         start = m_producer->startFrame;
-        pending = m_producer->seekTo;
+        pending = m_producer->seekTo ? m_producer->seekTo : m_producer->seeking;
     }
     if (pending)
         return *pending; // the seek hasn't taken effect yet
@@ -802,7 +822,7 @@ void AudioEngine::tick()
         std::lock_guard guard(m_producer->lock);
         base = m_producer->baseMs;
         serial = m_producer->seekSerial;
-        seeking = m_producer->seekTo.has_value();
+        seeking = m_producer->seekTo || m_producer->seeking;
         crossed = m_producer->crossed;
         boundary = m_producer->boundary;
         nextStart = m_producer->nextStartFrame;
@@ -1060,6 +1080,7 @@ void AudioEngine::seek(qint64 positionMs)
     if (!m_active || !m_ready || m_ended || !m_producer)
         return;
     const auto target = std::clamp<qint64>(positionMs, 0, std::max<qint64>(0, clipLength() - 1));
+    log::debug(lcMedia, "engine.seek", {{"token", m_token.generation}, {"ms", target}});
     m_meter.breakInterval();
     bool crossed;
     {

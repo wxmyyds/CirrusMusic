@@ -55,6 +55,8 @@ cloud
 folder
 
 # Actions
+group
+group_add
 add
 remove
 more_vert
@@ -107,6 +109,7 @@ keyboard
 accessibility
 
 # Status
+sync_problem
 error
 warning
 info

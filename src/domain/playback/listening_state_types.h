@@ -18,7 +18,7 @@ inline bool validSavedQueue(const QueueSnapshot& queue)
     QSet<QUuid> ids;
     for (const auto& entry : queue.entries) {
         if (entry.id.isNull() || ids.contains(entry.id) || !validMusicId(entry.song.value) ||
-            !validPlayOrigin(entry.origin))
+            !validPlayOrigin(entry.origin) || !validQueueProgram(entry.program))
             return false;
         ids.insert(entry.id);
     }
@@ -45,12 +45,13 @@ struct StoredListeningRecord {
     std::optional<PreviewRange> preview;
     QString actualQuality;
     PlayOrigin origin{}; // fixed when the record is first stored
+    ProgramId program{}; // a podcast program played through `song`, its track
 };
 inline StoredListeningRecord storedListeningRecord(const ListeningRecord& row)
 {
     return {row.recordId,    row.accountId,     row.song,     row.source, row.queueEntry,
             row.startedAtMs, row.endedAtMs,     row.playedMs, row.capped, row.end,
-            row.preview,     row.actualQuality, row.origin};
+            row.preview,     row.actualQuality, row.origin,   row.program};
 }
 inline bool validStoredListeningRecord(const StoredListeningRecord& row)
 {
@@ -69,6 +70,7 @@ inline bool validStoredListeningRecord(const StoredListeningRecord& row)
              row.preview->endMs <= ObservedPlayback::MaximumMs)) &&
            row.actualQuality.size() <= 64 && row.actualQuality.isValidUtf16() &&
            !row.actualQuality.contains(QChar::Null) && validPlayOrigin(row.origin) &&
+           validQueueProgram(row.program) &&
            (row.source == ListeningMode::Queue || row.origin.kind == PlayOriginKind::None);
 }
 struct ListeningHistoryCursor {

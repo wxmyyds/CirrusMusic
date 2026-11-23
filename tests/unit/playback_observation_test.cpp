@@ -49,10 +49,16 @@ struct Harness {
                 return *it;
         return {};
     }
+    void selectSource()
+    {
+        const auto c = play();
+        facade.deliverPlaybackSource({c.token, c.query.song, SourceProvider::Netease, {}});
+    }
     void state(PlaybackState state, qint64 position = 0, std::optional<PreviewRange> preview = {},
                quint64 jump = 0)
     {
         const auto c = play();
+        selectSource();
         PlaybackSnapshot p;
         p.token = c.token;
         p.song = c.query.song;
@@ -68,6 +74,8 @@ struct Harness {
     }
     void lyrics(SongLyrics l)
     {
+        selectSource();
+        QVERIFY(!reads.isEmpty());
         const auto r = reads.last();
         facade.deliverMusic({r.id, r.generation, r.context, std::move(l)});
     }
@@ -228,7 +236,7 @@ class PlaybackObservationTest final : public QObject
         QTRY_COMPARE(h.publisher.snapshot().metadataStatus,
                      ObservationContentStatus::LimitExceeded);
         QVERIFY(!h.publisher.snapshot().metadata);
-        QCOMPARE(h.reads.size(), 1);
+        QCOMPARE(h.reads.size(), 0); // metadata attachment never selects a source or fetches lyrics
     }
     void sameSongNewLoadAndLateLyrics()
     {
@@ -420,6 +428,8 @@ class PlaybackObservationTest final : public QObject
         QCOMPARE(d->lyrics.original.standard.availability, LyricAvailability::Missing);
         QVERIFY(!d->lyrics.instrumental && !d->lyrics.providerNoLyric);
         QVERIFY(h.owner.replaceQueue({{"2"}}));
+        h.selectSource();
+        QVERIFY(!h.reads.isEmpty());
         const auto r = h.reads.last();
         h.facade.deliverMusic({r.id, r.generation, r.context, MusicFailure{MusicError::Network}});
         QTRY_COMPARE(h.publisher.snapshot().lyricsState, LyricsState::Failed);

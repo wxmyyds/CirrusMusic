@@ -799,19 +799,20 @@ void BackendFacade::invalidatePlayback()
     });
 }
 quint64 BackendFacade::playSong(domain::SongId song, domain::AudioQuality quality,
-                                domain::TransportIntent intent)
+                                domain::TransportIntent intent, bool permitBiliSource)
 {
     PlaybackCommand command;
     command.action = PlaybackAction::Play;
-    command.query = {std::move(song), quality, m_allowBiliSource};
+    command.query = {std::move(song), quality, m_allowBiliSource && permitBiliSource};
     command.intent = intent;
     return submitPlayback(command);
 }
-quint64 BackendFacade::preloadSong(domain::SongId song, domain::AudioQuality quality)
+quint64 BackendFacade::preloadSong(domain::SongId song, domain::AudioQuality quality,
+                                   bool permitBiliSource)
 {
     PlaybackCommand command;
     command.action = PlaybackAction::Preload;
-    command.query = {std::move(song), quality, m_allowBiliSource};
+    command.query = {std::move(song), quality, m_allowBiliSource && permitBiliSource};
     return submitPlayback(command);
 }
 quint64 BackendFacade::pausePlayback()

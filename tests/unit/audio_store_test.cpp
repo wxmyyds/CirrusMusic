@@ -467,6 +467,28 @@ class AudioStoreTest : public QObject
         QCOMPARE(head.get(), server.body.left(512));
     }
 
+    // A seek's read past the download that ends interrupted (the engine's wake-up for it)
+    // still sends the download there: the seek tries again and finds it coming (2026-11-22).
+    void anInterruptedReadStillMovesTheDownload()
+    {
+        test::RangeServer server{noise(Chunk * 8, 17)};
+        server.intervalMs = 50;
+        server.blockBytes = 16 * 1024;
+        auto s = store(server);
+        auto stream = s->open(source(server.body));
+        stream->interrupt(); // no read waits: it stays for the next one that would
+        auto read = readAsync(stream, Chunk * 6, 1024);
+        QTRY_VERIFY_WITH_TIMEOUT(ready(read), 1000);
+        QCOMPARE(read.get(), QByteArray("FAILED"));
+        const QByteArray there = "bytes=" + QByteArray::number(Chunk * 6) + '-';
+        QTRY_VERIFY_WITH_TIMEOUT(std::any_of(server.ranges.cbegin(), server.ranges.cend(),
+                                             [&](auto& range) { return range.startsWith(there); }),
+                                 2000);
+        auto again = readAsync(stream, Chunk * 6, 1024);
+        QTRY_VERIFY_WITH_TIMEOUT(ready(again), 2000);
+        QCOMPARE(again.get(), server.body.mid(Chunk * 6, 1024));
+    }
+
     void prefetchedHeadIsReused()
     {
         test::RangeServer server{noise(Chunk * 8, 13)};
@@ -603,7 +625,7 @@ class AudioStoreTest : public QObject
         QVERIFY(!s->open(unsafe, &error));
         QCOMPARE(error, PlaybackError::UnsafeSource);
         auto huge = source(server.body);
-        huge.size = 600LL * 1024 * 1024;
+        huge.size = 1025LL * 1024 * 1024; // past 1 GiB
         QVERIFY(!s->open(huge, &error));
         QCOMPARE(error, PlaybackError::TooLarge);
     }

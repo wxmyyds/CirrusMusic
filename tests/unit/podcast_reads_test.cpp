@@ -167,6 +167,7 @@ class PodcastReadsTest : public QObject
         const auto page = std::get<PodcastProgramsPage>(list);
         QCOMPARE(page.programs.first().id.value, "5");
         QCOMPARE(page.programs.first().serialNumber, std::optional<qint64>(0));
+        QCOMPARE(page.programs.first().track, std::optional<SongId>(SongId{"99"}));
         QCOMPARE(page.total, std::optional<qint64>(3));
         QCOMPARE(page.hasMore, std::optional<bool>(true));
         QCOMPARE(page.query.podcast.value, "4");
@@ -174,6 +175,7 @@ class PodcastReadsTest : public QObject
         const auto detail = mapped(2, bodies()[2]);
         QVERIFY(std::holds_alternative<ProgramDetails>(detail));
         QCOMPARE(std::get<ProgramDetails>(detail).program.id.value, "5");
+        QCOMPARE(std::get<ProgramDetails>(detail).program.track->value, "99");
         const auto pl = mapped(3, bodies()[3]);
         QVERIFY(std::holds_alternative<CloudRecentPlaylists>(pl));
         const auto playlists = std::get<CloudRecentPlaylists>(pl);
@@ -197,12 +199,22 @@ class PodcastReadsTest : public QObject
         QCOMPARE(voice.id.value, "5");
         QVERIFY(voice.podcast);
         QCOMPARE(voice.providerDuration, std::optional<qint64>(2000));
+        QCOMPARE(voice.track->value, "99");
         const auto unknown = mapped(2, R"({"code":200,"program":{"id":5}})");
         QVERIFY(std::holds_alternative<ProgramDetails>(unknown));
         const auto program = std::get<ProgramDetails>(unknown).program;
         QVERIFY(!program.podcast);
         QVERIFY(!program.providerDuration);
         QVERIFY(!program.description);
+        QVERIFY(!program.track);
+        // mainSong without a usable id: no track, the program itself still reads.
+        for (const auto* body :
+             {R"({"code":200,"program":{"id":5,"mainSong":{"id":0}}})",
+              R"({"code":200,"program":{"id":5,"mainSong":7,"mainTrackId":7}})"}) {
+            const auto bad = mapped(2, body);
+            QVERIFY(std::holds_alternative<ProgramDetails>(bad));
+            QVERIFY(!std::get<ProgramDetails>(bad).program.track);
+        }
         const auto wide =
             mapMusicResponse(ProgramDetailQuery{{"9007199254740993"}},
                              json(R"({"code":200,"program":{"id":"9007199254740993"}})"));

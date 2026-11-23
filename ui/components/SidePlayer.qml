@@ -118,6 +118,12 @@ Rectangle {
             cursorShape: Qt.PointingHandCursor
             onClicked: root.openRequested()
         }
+        TogetherBadge {
+            x: parent.width - width - 4
+            y: parent.height - height - 4
+            size: 32
+            opacity: cover.opacity
+        }
     }
 
     Item {

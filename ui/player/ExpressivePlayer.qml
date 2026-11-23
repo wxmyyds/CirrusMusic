@@ -63,11 +63,13 @@ Item {
     signal sheetRequested(int sheet)
     signal artistRequested(string key)
     signal albumRequested(string key)
+    signal podcastRequested(string key) // a voice's podcast
     signal songRequested
     signal commentsRequested
     signal addToPlaylistRequested(string key, string title)
     signal copyRequested
     signal loginRequested
+    signal togetherRequested // listen together's dialog (pages/together.md §1)
 
     // A spring that follows `to`, or jumps there while the layout doesn't animate.
     component Follow: Spring {
@@ -156,6 +158,30 @@ Item {
                         root.sheetRequested(root.sheet === 2 ? 0 : 2);
                     }
                 }
+            }
+            // Listen together: a button; in a room, what it is (pages/together.md §4).
+            IconButton {
+                anchors.verticalCenter: parent.verticalCenter
+                visible: App.together.available && App.together.state === TogetherState.Idle
+                containerTint: root.tones.tray
+                tint: root.tones.ink
+                glyph: Symbols.group
+                text: qsTr("一起听")
+                onClicked: root.togetherRequested()
+            }
+            Button {
+                anchors.verticalCenter: parent.verticalCenter
+                visible: App.together.available && App.together.state !== TogetherState.Idle
+                containerTint: root.tones.tray
+                tint: root.tones.ink
+                iconFill: 1
+                glyph: App.together.active && !App.together.connected ? Symbols.sync_problem
+                                                                      : Symbols.group
+                text: !App.together.active ? qsTr("一起听…")
+                      : !App.together.connected ? qsTr("重新连接…")
+                      : App.together.partnerName !== "" ? qsTr("和 %1").arg(App.together.partnerName)
+                      : qsTr("等好友加入")
+                onClicked: root.togetherRequested()
             }
             IconButton {
                 id: moreButton
@@ -303,10 +329,12 @@ Item {
     Menu {
         id: songMenu
         MenuItem {
-            text: qsTr("查看专辑")
-            glyph: Symbols.album
+            text: App.player.current.voice ? qsTr("查看播客") : qsTr("查看专辑")
+            glyph: App.player.current.voice ? Symbols.podcasts : Symbols.album
             enabled: App.player.current.albumKey !== ""
-            onTriggered: root.albumRequested(App.player.current.albumKey)
+            onTriggered: App.player.current.voice
+                         ? root.podcastRequested(App.player.current.albumKey)
+                         : root.albumRequested(App.player.current.albumKey)
         }
         MenuItem {
             text: qsTr("歌曲详情")
@@ -327,9 +355,22 @@ Item {
             onTriggered: root.addToPlaylistRequested(App.player.current.key, App.player.current.title)
         }
         MenuItem {
+            text: qsTr("复制链接")
+            glyph: Symbols.link
+            enabled: App.player.current.key !== ""
+            onTriggered: App.share.copy(App.player.current.voice ? Share.Voice : Share.Song,
+                                        App.player.current.key, App.player.current.title,
+                                        App.player.current.artistText)
+        }
+        MenuItem {
             text: qsTr("复制歌曲信息")
             glyph: Symbols.content_copy
             onTriggered: root.copyRequested()
+        }
+        MenuItem {
+            text: qsTr("一起听…")
+            glyph: Symbols.group
+            onTriggered: root.togetherRequested()
         }
     }
 }

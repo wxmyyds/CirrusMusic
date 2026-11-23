@@ -510,6 +510,12 @@ Item {
             onTriggered: page.shell.addToPlaylist([page.song.key])
         }
         MenuItem {
+            text: qsTr("复制链接")
+            glyph: Symbols.link
+            onTriggered: App.share.copy(Share.Song, page.song.key, page.song.title,
+                                        page.song.artistText)
+        }
+        MenuItem {
             text: qsTr("复制歌曲信息")
             glyph: Symbols.content_copy
             onTriggered: page.copyInfo()

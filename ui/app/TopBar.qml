@@ -68,7 +68,9 @@ Item {
         id: field
         // Centred on the panel below where there is room, else after back and forward.
         readonly property real minX: history.x + history.width + 12
-        readonly property real maxRight: Math.min(actionRow.x, bar.shell.panelRight) - 16
+        readonly property real maxRight: Math.min(actionRow.x, bar.shell.panelRight - bar.x,
+                                                  pageActions.visible ? pageActions.x : Infinity)
+                                         - 16
         readonly property real panelCenter: bar.shell.panelCenter
         x: Math.max(minX, Math.min(maxRight - width, panelCenter - width / 2))
         anchors.verticalCenter: parent.verticalCenter
@@ -85,6 +87,20 @@ Item {
         onHistoryRemoved: value => bar.shell.searchModel.removeHistory(value)
         onHistoryCleared: bar.shell.searchModel.clearHistory()
         onDismissed: bar.shell.focusContent()
+    }
+
+    // At the right end of the content panel, before the side player: the page's own link
+    // (pages/share.md §3).
+    Row {
+        id: pageActions
+        x: Math.min(actionRow.x, bar.shell.panelRight - bar.x) - width - 8
+        anchors.verticalCenter: parent.verticalCenter
+        visible: bar.shell.pageShare !== null
+        IconButton {
+            glyph: Symbols.link
+            text: qsTr("复制链接（Ctrl+Shift+C）")
+            onClicked: bar.shell.copyPageLink()
+        }
     }
 
     Row {

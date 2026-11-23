@@ -238,6 +238,11 @@ target_link_libraries(tst_listening_reporter PRIVATE cirrus_application Qt6::Tes
 add_test(NAME listening_reporter COMMAND tst_listening_reporter)
 set_tests_properties(listening_reporter PROPERTIES TIMEOUT 15)
 
+qt_add_executable(tst_together_session unit/together_session_test.cpp)
+target_link_libraries(tst_together_session PRIVATE cirrus_application Qt6::Test)
+add_test(NAME together_session COMMAND tst_together_session)
+set_tests_properties(together_session PROPERTIES TIMEOUT 30)
+
 qt_add_executable(tst_client_log unit/client_log_test.cpp)
 target_link_libraries(tst_client_log PRIVATE cirrus_netease_protocol Qt6::Test)
 add_test(NAME client_log COMMAND tst_client_log)
@@ -428,3 +433,16 @@ qt_add_executable(tst_bili_resolver unit/bili_resolver_test.cpp support/syntheti
 target_link_libraries(tst_bili_resolver PRIVATE cirrus_bilibili Qt6::Test)
 add_test(NAME bili_resolver COMMAND tst_bili_resolver)
 set_tests_properties(bili_resolver PROPERTIES TIMEOUT 20)
+# Romaji over Japanese lyrics (docs/ui/pages/player.md §6.3), on its own (no QML).
+qt_add_executable(tst_ruby unit/ruby_test.cpp ${PROJECT_SOURCE_DIR}/ui/presentation/ruby.cpp)
+target_include_directories(tst_ruby PRIVATE ${PROJECT_SOURCE_DIR}/ui/presentation)
+target_compile_definitions(tst_ruby PRIVATE
+    CIRRUS_SAMPLES_DIR="${PROJECT_SOURCE_DIR}/ui/samples")
+target_link_libraries(tst_ruby PRIVATE Qt6::Test Qt6::Core Qt6::Qml)
+add_test(NAME ruby COMMAND tst_ruby)
+
+# The share text and links (docs/ui/pages/share.md), on its own.
+qt_add_executable(tst_share unit/share_test.cpp ${PROJECT_SOURCE_DIR}/ui/presentation/share_text.cpp)
+target_include_directories(tst_share PRIVATE ${PROJECT_SOURCE_DIR}/ui/presentation)
+target_link_libraries(tst_share PRIVATE Qt6::Test Qt6::Core)
+add_test(NAME share COMMAND tst_share)

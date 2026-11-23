@@ -100,6 +100,9 @@ struct PlaybackSnapshot {
     // songs so far and the next one), and the current song's place in it (-1: Empty).
     QStringList queue;
     int queueIndex = -1;
+    // The details of the queue's podcast voices, as far as the source has them (their keys
+    // are no songs': never ask for them as songs); a voice without them has only its key.
+    QList<SongInfo> voices;
 };
 
 } // namespace cirrus::ui

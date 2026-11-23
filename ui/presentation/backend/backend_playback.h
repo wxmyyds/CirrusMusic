@@ -56,9 +56,11 @@ class BackendPlayback : public QObject, public PlaybackSource
     // Where a queue entry's song came from (the listening reports); remembered per
     // account with the queue, so a restored queue keeps it.
     [[nodiscard]] PlayOrigin originOf(QUuid entry);
-    // The backend doesn't play podcast voices yet (integration.md §4).
-    void playVoices(const QStringList&, int) override {}
-    [[nodiscard]] bool canPlayVoices() const override { return false; }
+    // Podcast voices the catalog or library read (KnownVoices): each plays its track and
+    // is shown, recorded and reported as the voice (docs/api/podcast-playback.md). Those
+    // without a track are left out.
+    void playVoices(const QStringList& keys, int index) override;
+    [[nodiscard]] bool canPlayVoices() const override { return true; }
     void playPause() override;
     void next() override;
     void previous() override;
@@ -112,7 +114,7 @@ class BackendPlayback : public QObject, public PlaybackSource
     [[nodiscard]] bool showingKept() const;
     void replay(int index);
     // After replay(): to where it was, once the song can seek.
-    void seekWhereKept(const domain::PlaybackSnapshot& play);
+    void seekWhereKept(const QString& key, const domain::PlaybackSnapshot& play);
     // Signed in or a guest, not in the middle of a change.
     [[nodiscard]] bool settled() const;
     [[nodiscard]] bool canResume() const;
@@ -131,11 +133,18 @@ class BackendPlayback : public QObject, public PlaybackSource
         qint64 previewStartMs = -1;
         bool resume = false;       // playing when a session change stopped it
         QList<PlayOrigin> origins; // per key
+        QList<bool> voices;        // per key: a podcast voice
     };
     void applyVolume();
     void applyNormalization();
     void applyTransition();
-    void startQueue(const QStringList& keys, int index, const QList<PlayOrigin>& origins);
+    // `voices` (per key, or none): which keys are podcast voices (in m_voices or
+    // KnownVoices).
+    void startQueue(const QStringList& keys, int index, const QList<PlayOrigin>& origins,
+                    const QList<bool>& voices = {});
+    // The details of the voices in the queue, per account, for the next start.
+    void loadVoices();
+    void saveVoices();
     void loadOrigins();
     void saveOrigins() const;
 
@@ -146,7 +155,12 @@ class BackendPlayback : public QObject, public PlaybackSource
     QPointer<application::BackendFacade> m_facade;
     CatalogSource& m_catalog;
     QHash<QUuid, PlayOrigin> m_origins;
-    QString m_originsAccount; // whose m_origins are
+    // Details of the podcast voices in the queue (by voice key), with their tracks.
+    QHash<QString, SongInfo> m_voices;
+    QString m_voicesAccount; // whose m_voices are
+    bool m_voicesLoaded = false;
+    QList<bool> m_queueVoices; // per key of the snapshot's queue: a voice
+    QString m_originsAccount;  // whose m_origins are
     bool m_originsLoaded = false;
     std::function<void()> m_changed;
     PlaybackSnapshot m_state;

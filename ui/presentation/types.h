@@ -39,6 +39,9 @@ struct SongInfo {
     // podcast's, `serial` its episode number (-1 when unknown).
     bool voice = false;
     int serial = -1;
+    // A voice's audio: the song the service plays for it (its key); empty when unknown,
+    // and for songs.
+    QString trackKey;
 };
 
 struct PlaylistInfo {

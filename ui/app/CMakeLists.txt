@@ -65,6 +65,8 @@ qt_add_qml_module(appCirrusMusic
         settings/AppearanceSettings.qml
         settings/WindowSettings.qml
         settings/StorageSettings.qml
+        settings/ShareSettings.qml
+        settings/ShareTemplateDialog.qml
         settings/DiagnosticsSettings.qml
         settings/ExportLogsDialog.qml
         settings/ShortcutSettings.qml
@@ -84,6 +86,7 @@ qt_add_qml_module(appCirrusMusic
         TopBar.qml
         PanelCorner.qml
         CloseDialog.qml
+        TogetherDialog.qml
         DateTile.qml
     SOURCES
         desktop.h

@@ -1,5 +1,6 @@
 #pragma once
 #include "domain/music/catalog_types.h"
+#include "domain/music/podcast_types.h"
 #include "logging/log.h"
 #include <QUuid>
 
@@ -13,9 +14,20 @@ CIRRUS_LOG_ENUM(ListeningReportAction, StartPlay, Play, ActiveClient)
 // Where the song was played from, as the web client names it (`source`): a playlist,
 // album, artist page, chart, daily recommendations, a search (sourceId is the
 // keywords) or a song page. Evidence: docs/ui/integration.md §6.1; the PC client's
-// values are not verified (docs/api/explicit-listening-reports.md §2).
-enum class ListeningReportSource { List, Album, Artist, Toplist, DailyRecommend, Search, Song };
-CIRRUS_LOG_ENUM(ListeningReportSource, List, Album, Artist, Toplist, DailyRecommend, Search, Song)
+// values are not verified (docs/api/explicit-listening-reports.md §2). DjRadio: a podcast's
+// program (sourceId the podcast, possibly empty), as the Android app names it.
+enum class ListeningReportSource {
+    List,
+    Album,
+    Artist,
+    Toplist,
+    DailyRecommend,
+    Search,
+    Song,
+    DjRadio
+};
+CIRRUS_LOG_ENUM(ListeningReportSource, List, Album, Artist, Toplist, DailyRecommend, Search, Song,
+                DjRadio)
 // Why the listening ended (`end`): played to the end, the user went on, interrupted
 // (stopped, paused for long, closed), an error.
 enum class ListeningReportEnd { PlayEnd, Ui, Interrupt, Exception };
@@ -37,6 +49,8 @@ inline QString sourceName(ListeningReportSource source)
         return QStringLiteral("search");
     case ListeningReportSource::Song:
         return QStringLiteral("song");
+    case ListeningReportSource::DjRadio:
+        return QStringLiteral("djradio");
     }
     return {};
 }
@@ -59,7 +73,7 @@ inline QString endName(ListeningReportEnd end)
 // the web client doesn't show.
 inline bool validSourceId(ListeningReportSource source, const QString& id)
 {
-    if (source == ListeningReportSource::DailyRecommend)
+    if (source == ListeningReportSource::DailyRecommend || source == ListeningReportSource::DjRadio)
         return id.size() <= 64 && (id.isEmpty() || validMusicId(id));
     if (source == ListeningReportSource::Search) {
         if (id.trimmed().isEmpty() || id.size() > 256)
@@ -82,6 +96,9 @@ struct ListeningReport {
     qint64 durationSeconds = 0;                           // the song's length, when known (0: not)
     QString quality;        // the level played ("exhigh", "lossless"…), when known
     qint64 startedAtMs = 0; // when the load began playing (epoch ms), when known
+    // A podcast program played through `song` (its track), reported as the program; its
+    // source is DjRadio. Empty for songs.
+    ProgramId program;
     [[nodiscard]] bool isValid() const
     {
         if (action == ListeningReportAction::ActiveClient)
@@ -91,6 +108,9 @@ struct ListeningReport {
         for (const QChar c : quality)
             if (!c.isLetterOrNumber())
                 return false;
+        if (!program.value.isEmpty() &&
+            (!validMusicId(program.value) || source != ListeningReportSource::DjRadio))
+            return false;
         return !eventId.isNull() && validMusicId(song.value) && validSourceId(source, sourceId) &&
                ((action == ListeningReportAction::StartPlay && playedSeconds == 0) ||
                 (action == ListeningReportAction::Play && playedSeconds > 0 &&

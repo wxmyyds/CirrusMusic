@@ -160,6 +160,8 @@ std::optional<ApiOperationContract> operationContract(ApiOperation operation,
     case ApiOperation::ArtistUnsubscribe:
     case ApiOperation::PodcastSubscribe:
     case ApiOperation::PodcastUnsubscribe:
+    case ApiOperation::PlaylistSubscribe:
+    case ApiOperation::PlaylistUnsubscribe:
     case ApiOperation::PlaylistCreate:
     case ApiOperation::PlaylistRename:
     case ApiOperation::PlaylistDescription:
@@ -638,11 +640,13 @@ std::optional<QJsonObject> operationPayload(ApiOperation operation, const QJsonO
         const auto duration = parameters.value(QStringLiteral("duration")).toInteger(-1);
         const auto quality = parameters.value(QStringLiteral("quality")).toString();
         const auto startedMs = parameters.value(QStringLiteral("started")).toInteger(0);
+        const bool isProgram = parameters.contains(QStringLiteral("program"));
+        const auto program = parameters.value(QStringLiteral("program")).toString();
         std::optional<ListeningReportSource> kind;
         for (auto k : {ListeningReportSource::List, ListeningReportSource::Album,
                        ListeningReportSource::Artist, ListeningReportSource::Toplist,
                        ListeningReportSource::DailyRecommend, ListeningReportSource::Search,
-                       ListeningReportSource::Song})
+                       ListeningReportSource::Song, ListeningReportSource::DjRadio})
             if (domain::sourceName(k) == sourceText)
                 kind = k;
         bool endKnown = !play;
@@ -652,8 +656,11 @@ std::optional<QJsonObject> operationPayload(ApiOperation operation, const QJsonO
         bool qualityKnown = quality.size() <= 16;
         for (const QChar c : quality)
             qualityKnown = qualityKnown && c.isLetterOrNumber();
-        if (parameters.size() != (play ? 8 : 6) || !domain::validMusicId(id) || !kind ||
-            startedMs < 0 || !domain::validSourceId(*kind, source) || !endKnown || duration < 0 ||
+        if (parameters.size() != (play ? 8 : 6) + (isProgram ? 1 : 0) ||
+            (isProgram &&
+             (!domain::validMusicId(program) || kind != ListeningReportSource::DjRadio)) ||
+            !domain::validMusicId(id) || !kind || startedMs < 0 ||
+            !domain::validSourceId(*kind, source) || !endKnown || duration < 0 ||
             duration > 86400 || !qualityKnown ||
             (play && (seconds <= 0 || seconds > 604800 || time != QJsonValue(seconds))))
             return std::nullopt;
@@ -671,6 +678,60 @@ std::optional<QJsonObject> operationPayload(ApiOperation operation, const QJsonO
             quality == QStringLiteral("lossless") || quality == QStringLiteral("hires");
         const qint64 numericId = id.toLongLong();
         const qint64 startedSecs = startedMs / 1000;
+        const int ratio =
+            play ? (duration > 0 ? int(qMin<qint64>(100, seconds * 100 / duration)) : 0) : 0;
+        const auto record = [](const QString& stream, const QString& action,
+                               const QJsonObject& data) {
+            return QJsonObject{{QStringLiteral("stream"), stream},
+                               {QStringLiteral("action"), action},
+                               {QStringLiteral("data"), data}};
+        };
+        const auto code = play ? QStringLiteral("_pld") : QStringLiteral("_plv");
+        if (isProgram) {
+            // A podcast program, as the app's program record (og0/c.b, docs/api/
+            // podcast-playback.md): `id` the program, `musicId` its track, from its podcast
+            // (`djradio`). Null values it leaves out are left out; no program name.
+            QJsonObject event;
+            for (const auto& [key, value] :
+                 std::initializer_list<std::pair<const char*, QJsonValue>>{
+                     {"_addUndefineRefer", QString()},
+                     {"_addrefer", QString()},
+                     {"_multirefers", QString()},
+                     {"bitrate", bitrate},
+                     {"categoryId", 0},
+                     {"download", 0},
+                     {"fee", 0},
+                     {"file", 4},
+                     {"fixed_type", 0},
+                     {"id", program.toLongLong()},
+                     {"is_mix_play", 1},
+                     {"isviponly", 0},
+                     {"lags", QString()},
+                     {"musicId", numericId},
+                     {"resource_ratio", ratio},
+                     {"resource_time", duration},
+                     {"source", sourceText},
+                     {"sourceId", source.isEmpty() ? 0 : source.toLongLong()},
+                     {"startlogtime", startedSecs},
+                     {"status", QStringLiteral("front")},
+                     {"time", play ? double(seconds) : 0.0},
+                     {"type", QStringLiteral("dj")},
+                     {"volumeBalance", QStringLiteral("[2,0]")},
+                     {"wifi", 0}})
+                event.insert(QString::fromLatin1(key), value);
+            if (play) {
+                event.insert(QStringLiteral("end"), endText);
+                event.insert(QStringLiteral("end_source"), 100);
+                event.insert(QStringLiteral("errorcode"), endText == u"exception" ? 1 : -1);
+                event.insert(QStringLiteral("format"),
+                             lossless ? QStringLiteral("flac") : QStringLiteral("mp3"));
+                event.insert(QStringLiteral("progressTime"), seconds);
+                event.insert(QStringLiteral("play_speed"), 1);
+            }
+            event.insert(QStringLiteral("_eventcode"), code);
+            return QJsonObject{
+                {QStringLiteral("records"), QJsonArray{record(QStringLiteral("ua"), code, event)}}};
+        }
         QJsonObject event;
         for (const auto& [key, value] : std::initializer_list<std::pair<const char*, QJsonValue>>{
                  {"_addUndefineRefer", QString()},
@@ -703,8 +764,7 @@ std::optional<QJsonObject> operationPayload(ApiOperation operation, const QJsonO
                  {"preferrefer", QString()},
                  {"privilege_viptype", 0},
                  {"reference_id", QString()},
-                 {"resource_ratio",
-                  play ? (duration > 0 ? int(qMin<qint64>(100, seconds * 100 / duration)) : 0) : 0},
+                 {"resource_ratio", ratio},
                  {"resource_time", duration},
                  {"rightSource", 0},
                  {"s_position", 1},
@@ -756,14 +816,7 @@ std::optional<QJsonObject> operationPayload(ApiOperation operation, const QJsonO
                                                             : QStringLiteral("next"));
             event.insert(QStringLiteral("transitionSwitchStatus"), 0);
         }
-        const auto code = play ? QStringLiteral("_pld") : QStringLiteral("_plv");
         event.insert(QStringLiteral("_eventcode"), code);
-        const auto record = [](const QString& stream, const QString& action,
-                               const QJsonObject& data) {
-            return QJsonObject{{QStringLiteral("stream"), stream},
-                               {QStringLiteral("action"), action},
-                               {QStringLiteral("data"), data}};
-        };
         const QJsonArray records{record(QStringLiteral("ua"), code, event)};
         return QJsonObject{{QStringLiteral("records"), records}};
     }

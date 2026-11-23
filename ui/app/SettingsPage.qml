@@ -155,6 +155,7 @@ PageScaffold {
             PlayerSettings {}
             AppearanceSettings {}
             WindowSettings {}
+            ShareSettings {}
             StorageSettings {
                 shell: page.shell
             }

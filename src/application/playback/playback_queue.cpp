@@ -40,11 +40,16 @@ bool PlaybackQueue::restore(const QueueSnapshot& saved)
     }
     return true;
 }
-bool PlaybackQueue::replace(const QList<SongId>& songs, const QList<PlayOrigin>& origins)
+bool PlaybackQueue::replace(const QList<SongId>& songs, const QList<PlayOrigin>& origins,
+                            const QList<ProgramId>& programs)
 {
     if (songs.isEmpty() || songs.size() > MaximumEntries ||
-        (!origins.isEmpty() && origins.size() != songs.size()))
+        (!origins.isEmpty() && origins.size() != songs.size()) ||
+        (!programs.isEmpty() && programs.size() != songs.size()))
         return false;
+    for (const auto& program : programs)
+        if (!validQueueProgram(program))
+            return false;
     for (const auto& song : songs)
         if (!validMusicId(song.value))
             return false;
@@ -52,25 +57,30 @@ bool PlaybackQueue::replace(const QList<SongId>& songs, const QList<PlayOrigin>&
         if (!validPlayOrigin(origin))
             return false;
     clear();
-    if (!append(songs))
+    if (!append(songs, false, {}, programs))
         return false;
     for (qsizetype i = 0; i < origins.size(); ++i)
         m_state.entries[i].origin = origins.at(i);
     return true;
 }
-bool PlaybackQueue::append(const QList<SongId>& songs, bool playNext, const PlayOrigin& origin)
+bool PlaybackQueue::append(const QList<SongId>& songs, bool playNext, const PlayOrigin& origin,
+                           const QList<ProgramId>& programs)
 {
     if (songs.isEmpty() || songs.size() > MaximumEntries - m_state.entries.size() ||
-        !validPlayOrigin(origin))
+        !validPlayOrigin(origin) || (!programs.isEmpty() && programs.size() != songs.size()))
         return false;
     for (const auto& song : songs)
         if (!validMusicId(song.value))
             return false;
+    for (const auto& program : programs)
+        if (!validQueueProgram(program))
+            return false;
     QList<QueueEntry> entries;
     QList<QUuid> ids;
-    for (const auto& song : songs) {
+    for (qsizetype i = 0; i < songs.size(); ++i) {
         const auto id = QUuid::createUuid();
-        entries.append({id, song, origin});
+        entries.append(
+            {id, songs.at(i), origin, programs.isEmpty() ? ProgramId{} : programs.at(i)});
         ids.append(id);
     }
     if (playNext && !m_state.active.isNull()) {

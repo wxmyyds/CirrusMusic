@@ -47,8 +47,17 @@ std::optional<Voice> voiceFrom(const QJsonObject& o)
         if (!v.podcast)
             return std::nullopt;
     }
-    // Embedded mainSong/mainTrackId are not a Voice identity or an audio permission.
+    v.track = trackFrom(o);
     return v;
+}
+std::optional<SongId> trackFrom(const QJsonObject& program)
+{
+    // The app reads mainSong only (never mainTrackId) and plays it as a song.
+    const auto song = program.value(QStringLiteral("mainSong"));
+    if (!song.isObject())
+        return std::nullopt;
+    SongId id{providerId(song.toObject().value(QStringLiteral("id")))};
+    return validMusicId(id.value) ? std::optional(id) : std::nullopt;
 }
 std::optional<DiscoveryPlaylist> discoveryPlaylistFrom(const QJsonObject& o)
 {

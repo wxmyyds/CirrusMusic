@@ -57,7 +57,7 @@ class BackendLibrary : public QObject, public LibrarySource
     Request updatePlaylist(const QString& playlistKey, const QString& title,
                            const QString& description, Reply<bool> reply) override;
     Request deletePlaylist(const QString& playlistKey, Reply<bool> reply) override;
-    [[nodiscard]] bool canSavePlaylists() const override { return false; }
+    [[nodiscard]] bool canSavePlaylists() const override { return true; }
 
   private:
     // Replies `value` once every step was acknowledged.

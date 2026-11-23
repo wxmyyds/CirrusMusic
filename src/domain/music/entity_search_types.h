@@ -58,6 +58,7 @@ struct Voice {
     QUrl cover;
     std::optional<Podcast> podcast;
     std::optional<qint64> providerDuration; // raw metadata, not a verified clock/unit contract
+    std::optional<SongId> track;            // mainSong.id, as for Program (a voice is a program)
 };
 struct AlbumSearchPage {
     EntitySearchQuery query;

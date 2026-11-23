@@ -22,6 +22,9 @@ SettingsGroup {
             text: qsTr("喜欢正在播放的歌曲"),
             keys: ["Ctrl+L"]
         }, {
+            text: qsTr("复制链接"),
+            keys: ["Ctrl+Shift+C"]
+        }, {
             text: qsTr("搜索"),
             keys: ["Ctrl+K", "Ctrl+F"]
         }, {

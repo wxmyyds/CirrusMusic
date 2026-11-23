@@ -39,7 +39,9 @@ class AudioDecoder final
     [[nodiscard]] qint64 position() const { return m_position; }
     // Appends up to `frames` frames (2 floats each). False at the end or on failure.
     bool read(std::vector<float>& out, qsizetype frames);
-    // Sample-exact: seeks a little earlier, then drops frames up to `ms`.
+    // Sample-exact: seeks a little earlier, then drops frames up to `ms`. False when it
+    // fails, or when a read under it was interrupted (interrupted(); FFmpeg may call that
+    // seek a success while it never got where it went).
     bool seek(qint64 ms);
     [[nodiscard]] bool atEnd() const { return m_done && m_pending.empty(); }
     [[nodiscard]] std::optional<domain::PlaybackError> error() const { return m_error; }

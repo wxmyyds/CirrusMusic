@@ -16,6 +16,7 @@ FocusScope {
 
     signal artistRequested(string key)
     signal albumRequested(string key)
+    signal podcastRequested(string key) // a voice's podcast
     signal addToPlaylistRequested(string key, string title)
 
     readonly property int playing: App.player.queueIndex
@@ -170,7 +171,9 @@ FocusScope {
             required property string artistText
             required property var artists
             required property string albumKey
+            required property string albumTitle
             required property string coverKey
+            required property bool voice
             required property bool loaded
             required property bool unavailable
 
@@ -200,7 +203,8 @@ FocusScope {
                 enabled: !row.unavailable
                 leftPadding: 40
                 text: row.loaded ? row.title : " "
-                supportingText: row.loaded ? row.artistText : " "
+                // A voice: its podcast.
+                supportingText: !row.loaded ? " " : row.voice ? row.albumTitle : row.artistText
                 outerRadius: Theme.shape.medium
                 first: true
                 last: true
@@ -330,14 +334,17 @@ FocusScope {
             onObjectRemoved: (index, object) => menu.removeItem(object as MenuItem)
         }
         MenuItem {
-            text: qsTr("查看专辑")
-            glyph: Symbols.album
+            text: menu.song.voice ? qsTr("查看播客") : qsTr("查看专辑")
+            glyph: menu.song.voice ? Symbols.podcasts : Symbols.album
             enabled: (menu.song.albumKey ?? "") !== ""
-            onTriggered: root.albumRequested(menu.song.albumKey)
+            onTriggered: menu.song.voice ? root.podcastRequested(menu.song.albumKey)
+                                         : root.albumRequested(menu.song.albumKey)
         }
         MenuItem {
             text: qsTr("加入歌单")
             glyph: Symbols.playlist_add
+            visible: !(menu.song.voice ?? false)
+            height: visible ? implicitHeight : 0
             enabled: menu.song.loaded ?? false
             onTriggered: root.addToPlaylistRequested(menu.song.key, menu.song.title)
         }

@@ -73,6 +73,8 @@ enum class ApiOperation {
     ArtistUnsubscribe,
     PodcastSubscribe,
     PodcastUnsubscribe,
+    PlaylistSubscribe,
+    PlaylistUnsubscribe,
     PlaylistCreate,
     PlaylistRename,
     PlaylistDescription,

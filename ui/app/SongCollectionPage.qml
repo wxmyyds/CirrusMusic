@@ -31,6 +31,11 @@ Item {
     property int origin: Playback.NoOrigin
     property string originId
     property string originName: title
+    // What 复制链接 in the top bar copies (pages/share.md §3): a Share.Kind and its key; -1
+    // for pages without a link of their own.
+    property int shareKind: -1
+    property string shareKey
+    property string shareAuthor // artists, creator; empty for the rest
     property string coverKey
     property string coverGlyph: Symbols.queue_music
     // Drawn instead of the cover art (fills the size it gets: 200, 140 or 32).
@@ -265,6 +270,11 @@ Item {
                     visible: page.showActions
                     spacing: 8
                     Button {
+                        // Actions as tall as it (PageActions) stay on its row: its side
+                        // padding gives way for them (#9). Others (button groups) go under it.
+                        readonly property real beside: paneOthers.height === height
+                                                        ? paneOthers.width + paneActions.spacing : 0
+                        readonly property real widest: pane.compact ? sidePadding : 40
                         visible: page.showPlay
                         enabled: page.canPlay
                         variant: Md.Filled
@@ -274,8 +284,10 @@ Item {
                         // Short: the pane says what it plays.
                         text: qsTr("播放")
                         font: pane.compact ? labelStyle.font : Fonts.font(700, 24)
-                        // 172 wide at Large: two square actions fit beside it.
-                        leftPadding: pane.compact ? sidePadding : 40
+                        // 172 wide at Large; narrower panes take it down to 8 a side, where
+                        // two square actions still fit beside it.
+                        leftPadding: Math.max(8, Math.min(widest, Math.floor(
+                            (paneActions.width - beside - implicitContentWidth) / 2)))
                         rightPadding: leftPadding
                         width: implicitContentWidth + leftPadding + rightPadding
                         Accessible.name: page.playText
@@ -283,6 +295,7 @@ Item {
                     }
                     // At its own size: the actions' Flow keeps one row.
                     Loader {
+                        id: paneOthers
                         active: page.twoPane
                         sourceComponent: page.actionsContent
                     }
@@ -472,6 +485,8 @@ Item {
         visible: opacity > 0
         songs: sortedModel
         pinnedTop: compactBar.y + compactBar.height + (page.tabsContent ? page.tabsHeight : 0)
+        // The pinned titles start beside the pane, like the compact bar.
+        pinnedLeft: page.twoPane ? pane.x + pane.width - x : 0
         // No titles over an empty list.
         showColumnTitles: page.showSongs && page.hasSongs
         footerContent: page.footerContent

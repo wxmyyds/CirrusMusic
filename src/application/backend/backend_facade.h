@@ -265,12 +265,14 @@ class BackendFacade final : public QObject
     [[nodiscard]] domain::PlaybackSnapshot playback() const { return m_playback; }
     [[nodiscard]] quint64 playSong(domain::SongId song,
                                    domain::AudioQuality quality = domain::AudioQuality::Standard,
-                                   domain::TransportIntent intent = domain::TransportIntent::Play);
+                                   domain::TransportIntent intent = domain::TransportIntent::Play,
+                                   bool permitBiliSource = true);
     // The song to follow the current one without a gap; it plays under the returned
     // generation (playback().token changes to it when it starts). A new play, stop or
     // preload replaces it; an empty song cancels.
     [[nodiscard]] quint64
-    preloadSong(domain::SongId song, domain::AudioQuality quality = domain::AudioQuality::Standard);
+    preloadSong(domain::SongId song, domain::AudioQuality quality = domain::AudioQuality::Standard,
+                bool permitBiliSource = true);
     [[nodiscard]] quint64 pausePlayback();
     [[nodiscard]] quint64 resumePlayback();
     [[nodiscard]] quint64 stopPlayback();

@@ -48,6 +48,7 @@ struct Harness {
     void state(qint64 position = 0, quint64 revision = 1)
     {
         const auto c = play();
+        facade.deliverPlaybackSource({c.token, c.query.song, SourceProvider::Netease, {}});
         PlaybackSnapshot p;
         p.token = c.token;
         p.song = c.query.song;
@@ -71,6 +72,9 @@ struct Harness {
     }
     void lyrics()
     {
+        const auto selected = play();
+        facade.deliverPlaybackSource({selected.token, selected.query.song, SourceProvider::Netease, {}});
+        QVERIFY(!reads.isEmpty());
         SongLyrics l;
         l.song = play().query.song;
         l.original.standard.availability = LyricAvailability::Present;

@@ -254,7 +254,9 @@ void ListeningStateService::deliver(ListeningStateResult result)
 }
 void ListeningStateService::recordChanged(domain::StoredListeningRecord record)
 {
-    if (m_closed)
+    // Podcast programs are not kept: the local history and its statistics are about songs
+    // (a program's song id is only its track). They are still reported.
+    if (m_closed || !record.program.value.isEmpty())
         return;
     const auto existing = m_historyDirty.constFind(record.id);
     const bool changedIdentity =

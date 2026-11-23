@@ -122,7 +122,7 @@ class StreamTest : public QObject
         QTest::newRow("string-preview") << QString("freeTrialInfo") << QJsonValue("null");
         QTest::newRow("invalid-preview")
             << QString("freeTrialInfo") << QJsonValue(QJsonObject{{"start", 20}, {"end", 10}});
-        QTest::newRow("missing-quality") << QString("level") << QJsonValue(QJsonValue::Undefined);
+        QTest::newRow("odd-quality") << QString("level") << QJsonValue("Hi-Res");
     }
     void malformed()
     {
@@ -131,6 +131,13 @@ class StreamTest : public QObject
         auto r = row();
         r[field] = value;
         QCOMPARE(std::get<PlaybackFailure>(map(r)).error, PlaybackError::InvalidResponse);
+    }
+    void aProgramsAudioHasNoLevel()
+    {
+        auto r = row();
+        r.remove("level"); // a podcast program's track, as the service sends it
+        const auto source = std::get<StreamSource>(map(r));
+        QVERIFY(source.actualQuality.isEmpty());
     }
     void expiredAndRejected()
     {

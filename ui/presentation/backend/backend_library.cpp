@@ -194,10 +194,14 @@ Request BackendLibrary::recentSongs(int limit, Reply<QList<SongInfo>> reply)
         listSongs);
 }
 
-Request BackendLibrary::setPlaylistSubscribed(const QString&, bool, Reply<bool> reply)
+Request BackendLibrary::setPlaylistSubscribed(const QString& key, bool subscribed,
+                                              Reply<bool> reply)
 {
-    return replyLater(this, std::move(reply),
-                      Outcome<bool>{std::nullopt, false, Failure{failure::Invalid, std::nullopt}});
+    const domain::PlaylistSubscription change{domain::PlaylistId{key},
+                                              subscribed ? domain::CollectionAction::Collect
+                                                         : domain::CollectionAction::Remove};
+    return write({[change](BackendFacade&) { return domain::CollectionChange(change); }},
+                 std::move(reply), subscribed);
 }
 
 Request BackendLibrary::setAlbumSubscribed(const QString& key, bool subscribed, Reply<bool> reply)

@@ -105,8 +105,10 @@ FocusScope {
     signal songRequested
     signal artistRequested(string key)
     signal albumRequested(string key)
+    signal podcastRequested(string key) // a voice's podcast
     signal addToPlaylistRequested(string key, string title)
     signal loginRequested
+    signal togetherRequested // listen together's dialog (pages/together.md §1)
 
     function open(): void {
         if (App.player.current.key === "" || opened)
@@ -720,9 +722,11 @@ FocusScope {
                         onSongRequested: page.songRequested()
                         onArtistRequested: key => page.artistRequested(key)
                         onAlbumRequested: key => page.albumRequested(key)
+                        onPodcastRequested: key => page.podcastRequested(key)
                         onAddToPlaylistRequested: (key, title) => page.addToPlaylistRequested(key,
                                                                                               title)
                         onCopyRequested: songInfo.open()
+                        onTogetherRequested: page.togetherRequested()
                     }
                 }
 
@@ -912,11 +916,13 @@ FocusScope {
                     onSheetRequested: next => page.sheet = next
                     onArtistRequested: key => page.artistRequested(key)
                     onAlbumRequested: key => page.albumRequested(key)
+                    onPodcastRequested: key => page.podcastRequested(key)
                     onSongRequested: page.songRequested()
                     onCommentsRequested: page.commentsRequested()
                     onAddToPlaylistRequested: (key, title) => page.addToPlaylistRequested(key, title)
                     onCopyRequested: songInfo.open()
                     onLoginRequested: page.loginRequested()
+                    onTogetherRequested: page.togetherRequested()
                 }
             }
 
@@ -945,6 +951,7 @@ FocusScope {
                     anchors.fill: parent
                     onArtistRequested: key => page.artistRequested(key)
                     onAlbumRequested: key => page.albumRequested(key)
+                    onPodcastRequested: key => page.podcastRequested(key)
                     onAddToPlaylistRequested: (key, title) => page.addToPlaylistRequested(key, title)
                 }
             }

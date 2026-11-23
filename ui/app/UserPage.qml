@@ -17,6 +17,8 @@ SongCollectionPage {
     originId: pageModel.userKey
 
     property alias userKey: pageModel.userKey
+    shareKind: Share.User
+    shareKey: pageModel.userKey
     // 0 playlists, 1 listening ranking, 2 follows, 3 fans.
     property int currentTab: 0
     readonly property int tabCount: 4

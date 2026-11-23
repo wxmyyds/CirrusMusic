@@ -4,6 +4,7 @@
 #include "application/backend/backend_facade.h"
 #include "application/playback/listening_reporter.h"
 #include "application/playback/listening_session.h"
+#include "application/playback/together_session.h"
 #include "infrastructure/runtime/backend_runtime.h"
 
 #include <QDir>
@@ -62,6 +63,7 @@ BackendHost::BackendHost(const Paths& paths, QObject* parent)
 {
     auto& facade = m_runtime->facade();
     m_reporter = std::make_unique<application::ListeningReporter>(facade, m_runtime->listening());
+    m_together = std::make_unique<application::TogetherSession>(facade, m_runtime->listening());
     connect(&facade, &application::BackendFacade::started, this,
             [](application::StartupError error) {
                 if (error == application::StartupError::None)
@@ -91,7 +93,7 @@ BackendHost::BackendHost(const Paths& paths, QObject* parent)
     });
 }
 
-BackendHost::~BackendHost() = default; // the reporter goes first (declared last)
+BackendHost::~BackendHost() = default; // together and the reporter go first (declared last)
 
 void BackendHost::start() { m_runtime->facade().start(); }
 
@@ -106,7 +108,9 @@ void BackendHost::shutdown(std::function<void()> done)
         finish();
         return;
     }
-    // The song playing now is reported first (at most 2 s), then the backend closes.
+    // Listen together keeps its room for the next start (BackendTogether saves it); the song
+    // playing now is reported first (at most 2 s), then the backend closes.
+    m_together->close();
     m_reporter->flush([this] {
         if (m_runtime->facade().state() != application::BackendState::Stopped)
             m_runtime->facade().close();

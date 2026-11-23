@@ -86,9 +86,11 @@ void Player::update()
     const bool detailed = !current.key.isEmpty() && !current.title.isEmpty();
     if (queueChanged) {
         // Details come as views ask; those known already stay (a reorder keeps them).
+        // Voices come with the snapshot: they are never asked for as songs.
         QList<SongInfo> known = m_queue->loadedSongs();
         if (detailed)
             known.append(current);
+        known += m_snapshot.voices;
         m_queueDetails->clear();
         m_queue->reset(m_snapshot.queue, known);
     } else if (detailed && !m_queue->songAt(m_snapshot.queueIndex)) {
