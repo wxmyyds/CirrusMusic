@@ -6,6 +6,9 @@
 #include "application/music/music_query_service.h"
 #include "application/playback/listening_session.h"
 #include "application/playback/playback_coordinator.h"
+#include "application/playback/provider_router.h"
+#include "infrastructure/bilibili/bili_api.h"
+#include "infrastructure/bilibili/bili_stream_resolver.h"
 #include "infrastructure/bootstrap/anonymous_bootstrap.h"
 #include "infrastructure/cache/cached_music_query_service.h"
 #include "infrastructure/cache/resource_cache_service.h"
@@ -377,6 +380,8 @@ class BackendWorker final : public QObject
         m_anonymous.reset();
         m_registrar.reset();
         m_playback.reset();
+        m_providerRouter.reset();
+        m_biliResolver.reset();
         m_streamResolver.reset();
         m_player.reset();
         m_audioStore.reset(); // after the engine: its streams are gone
@@ -563,8 +568,11 @@ class BackendWorker final : public QObject
             return;
         }
         m_streamResolver = std::make_unique<netease::StreamResolver>(*m_client);
+        m_biliResolver = std::make_unique<bilibili::StreamResolver>(
+            *m_musicGateway, std::make_unique<bilibili::BiliApi>());
+        m_providerRouter = std::make_unique<ProviderRouter>(*m_streamResolver, *m_biliResolver);
         m_playback =
-            std::make_unique<PlaybackCoordinator>(*m_session, *m_streamResolver, *m_player);
+            std::make_unique<PlaybackCoordinator>(*m_session, *m_providerRouter, *m_player);
         connect(m_playback.get(), &PlaybackCoordinator::changed, this,
                 [this](domain::PlaybackSnapshot snapshot) {
                     if (m_preloadToken.generation && snapshot.token == m_preloadToken) {
@@ -723,6 +731,8 @@ class BackendWorker final : public QObject
     qint64 m_audioCapacity = 0; // 0: the store's default
     std::unique_ptr<IPlaybackBackend> m_player;
     std::unique_ptr<netease::StreamResolver> m_streamResolver;
+    std::unique_ptr<bilibili::StreamResolver> m_biliResolver;
+    std::unique_ptr<ProviderRouter> m_providerRouter;
     std::unique_ptr<PlaybackCoordinator> m_playback;
     domain::LoadToken m_playbackToken;
     domain::LoadToken m_preloadToken; // becomes m_playbackToken when playback gets there

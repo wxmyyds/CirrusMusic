@@ -13,6 +13,14 @@ decoder's MP4 container paths (`tst_audio_decoder`). `tone_aac.m4a` has its `moo
 `mdat`; `tone_fmp4.m4a` is fragmented (moof/mdat, no trailing moov); `tone_eac3.m4a` is E-AC-3.
 The codec is named by `format` (`aac`/`eac3`), never by the file suffix.
 
+`tone_flac.m4a` wraps the existing `tone.flac` frames without encoding in an ISO BMFF
+container: `ftyp(isom/iso2/mp41)`, one `mdat`, then `moov` with a single `soun` track,
+`fLaC` sample entry and `dfLa` STREAMINFO. The six frame sizes are 2491, 2488, 2494, 2488,
+2495 and 970 bytes, starting at byte 8304 in `tone.flac`; five last 4096 samples, the last
+1570. The 34-byte STREAMINFO is at offset 8. This covers `format=flac-mp4` separately from
+native `flac`. `ffprobe` inspection reports FLAC, 44100 Hz, stereo, 0.5 s and six frames;
+actual decoder execution is verified only by GitHub Actions.
+
 ```bash
 ffmpeg -f lavfi -i "aevalsrc=0.5*sin(2*PI*440*t)|0.5*sin(2*PI*660*t):s=44100:d=0.5" -c:a pcm_s16le tone.wav
 lame -b 128 tone.wav tone.mp3

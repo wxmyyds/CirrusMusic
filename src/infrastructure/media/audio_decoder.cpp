@@ -36,6 +36,8 @@ std::optional<FormatRule> ruleFor(const QString& format)
         return FormatRule{"mp3", "mp3float,mp3", "mp3", AV_CODEC_ID_MP3};
     if (format == QStringLiteral("flac"))
         return FormatRule{"flac", "flac", "flac", AV_CODEC_ID_FLAC};
+    if (format == QStringLiteral("flac-mp4"))
+        return FormatRule{"mov", "flac", "mov", AV_CODEC_ID_FLAC};
     if (format == QStringLiteral("aac"))
         return FormatRule{"mov", "aac", "mov", AV_CODEC_ID_AAC};
     if (format == QStringLiteral("eac3"))

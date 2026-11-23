@@ -87,6 +87,7 @@ class AudioDecoderTest : public QObject
         QTest::newRow("aac-fmp4")
             << QStringLiteral("tone_fmp4.m4a") << QStringLiteral("aac");
         QTest::newRow("eac3") << QStringLiteral("tone_eac3.m4a") << QStringLiteral("eac3");
+        QTest::newRow("flac-mp4") << QStringLiteral("tone_flac.m4a") << QStringLiteral("flac-mp4");
     }
     void decodesMp4Audio()
     {
