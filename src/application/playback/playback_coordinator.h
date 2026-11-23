@@ -43,6 +43,7 @@ class PlaybackCoordinator final : public QObject
         QList<domain::VocalSpan> vocals; // until it is
         QString actualQuality;
         std::optional<domain::PreviewRange> preview;
+        domain::SourceProvider provider = domain::SourceProvider::Netease;
     };
     struct Refresh {
         domain::LoadToken token;

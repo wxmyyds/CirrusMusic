@@ -74,10 +74,11 @@ class AudioStream final : public ByteSource
 };
 
 // The persistent audio cache with streaming download (docs/tasks/audio-engine.md §4.1).
-// Files are keyed by the provider's md5 and size; a source without md5 streams through a
-// temporary file that is never kept. Owner-thread object; AudioStream reads are
-// thread-safe. Linux only for now: elsewhere, or when the root fails the private-path
-// checks, nothing is kept (every file is temporary).
+// Files are keyed by the source's identity: a provider md5 plus size (content-addressed,
+// checked against the finished file) or a stream name (stream-addressed, trusted once it
+// decodes). A source without either streams through a temporary file that is never kept.
+// Owner-thread object; AudioStream reads are thread-safe. Linux only for now: elsewhere, or
+// when the root fails the private-path checks, nothing is kept (every file is temporary).
 class AudioStore : public QObject
 {
     Q_OBJECT
@@ -144,7 +145,7 @@ class AudioStore : public QObject
     void saveMeta(const Download& download) const;
     Download* create(const domain::MediaSource& source, domain::PlaybackError* failure);
     void enforceCapacity();
-    // partition directory + md5-size, empty when the source can't be kept
+    // partition directory + identity token and size, empty when the source can't be kept
     QString baseFor(const domain::MediaSource& source) const;
     [[nodiscard]] bool isOpenPath(const QString& path) const;
     struct Entry {

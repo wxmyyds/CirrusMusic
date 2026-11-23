@@ -38,6 +38,29 @@ bool validMd5(const QByteArray& md5)
            });
 }
 
+// The cache identity as one file-name token: the provider's md5 (content-addressed) or its
+// stream name, sanitized (stream-addressed). Empty when the source can't be kept.
+QString identityToken(const MediaSource& source)
+{
+    if (const auto* hash = std::get_if<ContentHash>(&source.identity))
+        return validMd5(hash->md5) ? QString::fromLatin1(hash->md5) : QString{};
+    const auto* key = std::get_if<StreamKey>(&source.identity);
+    if (!key || key->key.isEmpty())
+        return {};
+    QString safe;
+    safe.reserve(key->key.size());
+    for (const auto c : key->key)
+        safe.append(c.isLetterOrNumber() || c == u'_' || c == u'-' || c == u'.' ? c : u'_');
+    if (safe.isEmpty() || safe.size() > 160)
+        return {};
+    return QStringLiteral("s-") + safe;
+}
+
+bool contentAddressed(const MediaSource& source)
+{
+    return std::holds_alternative<ContentHash>(source.identity);
+}
+
 // The same rules as the resource cache (storage/private_files.h).
 using storage::makePrivateDirectory;
 using storage::openPrivateFile;
@@ -254,10 +277,10 @@ void AudioStore::setPartition(const QString& partition)
 
 QString AudioStore::baseFor(const MediaSource& source) const
 {
-    if (m_partitionDir.isEmpty() || !validMd5(source.md5))
+    const auto token = identityToken(source);
+    if (m_partitionDir.isEmpty() || token.isEmpty())
         return {};
-    return m_partitionDir + u'/' + QString::fromLatin1(source.md5) + u'-' +
-           QString::number(source.size);
+    return m_partitionDir + u'/' + token + u'-' + QString::number(source.size);
 }
 
 AudioStore::Download* AudioStore::findByBase(const QString& base)
@@ -309,7 +332,7 @@ AudioStore::Download* AudioStore::create(const MediaSource& source, PlaybackErro
             *failure = error;
         return nullptr;
     };
-    if (!approvedMediaUrl(source.url))
+    if (!approvedMediaUrl(source.provider, source.url))
         return refuse(PlaybackError::UnsafeSource);
     if (source.size <= 0 || source.size > m_options.maximumFileBytes)
         return refuse(PlaybackError::TooLarge);
@@ -334,7 +357,7 @@ AudioStore::Download* AudioStore::create(const MediaSource& source, PlaybackErro
             const bool matches =
                 json.value(QStringLiteral("v")).toInt() == kMetaVersion &&
                 json.value(QStringLiteral("size")).toInteger() == source.size &&
-                json.value(QStringLiteral("md5")).toString().toLatin1() == source.md5 &&
+                json.value(QStringLiteral("identity")).toString() == identityToken(source) &&
                 json.value(QStringLiteral("chunk")).toInteger() == m_options.chunkBytes &&
                 d->writer->size() == source.size;
             if (matches) {
@@ -401,12 +424,12 @@ void AudioStore::refresh(quint64 stream, QUrl url, QDeadlineTimer validUntil)
     const auto d = m_downloads.value(stream);
     if (!d || !d->waitingUrl)
         return;
-    if (!approvedMediaUrl(url, true)) {
+    if (!approvedMediaUrl(d->source.provider, url, true)) {
         fail(*d, PlaybackError::UnsafeSource);
         return;
     }
     log::info(lcMedia, "audio.url_refreshed", {"dl", d->id});
-    d->url = *approvedMediaUrl(url, true);
+    d->url = *approvedMediaUrl(d->source.provider, url, true);
     d->source.validUntil = validUntil;
     d->waitingUrl = false;
     d->refreshTimer.stop();
@@ -524,6 +547,14 @@ void AudioStore::request(Download& d, qint64 start, qint64 end)
                          QNetworkRequest::AlwaysNetwork);
     request.setAttribute(QNetworkRequest::CacheSaveControlAttribute, false);
     request.setRawHeader("Accept-Encoding", "identity");
+    // Provider headers: Bilibili's CDN needs its Referer and User-Agent; Netease needs none.
+    // The store never sends a Cookie (none is in MediaSource).
+    if (d.source.provider == domain::SourceProvider::Bilibili) {
+        if (!d.source.referer.isEmpty())
+            request.setRawHeader("Referer", d.source.referer.toUtf8());
+        if (!d.source.userAgent.isEmpty())
+            request.setRawHeader("User-Agent", d.source.userAgent.toUtf8());
+    }
     request.setRawHeader("Range",
                          "bytes=" + QByteArray::number(start) + '-' + QByteArray::number(end - 1));
     request.setTransferTimeout(15000);
@@ -653,7 +684,7 @@ void AudioStore::finished(quint64 id)
     if (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) {
         const auto url = base.resolved(QUrl::fromEncoded(location, QUrl::StrictMode));
         if (++d->redirects > kMaximumRedirects || location.isEmpty() || location.size() > 8192 ||
-            !approvedMediaUrl(url)) {
+            !approvedMediaUrl(d->source.provider, url)) {
             fail(*d, PlaybackError::UnsafeSource);
             return;
         }
@@ -746,10 +777,24 @@ void AudioStore::completed(Download& d)
         return; // a temporary file is complete as it is
     d.verifying = true;
     d.writer->flush();
+    if (!contentAddressed(d.source)) {
+        // Stream-addressed (Bilibili): no digest to check. A finished file is trusted as it is;
+        // a damaged one fails to decode and asks for the address again on the next open.
+        d.verifying = false;
+        d.verifiedComplete = true;
+        log::debug(lcMedia, "audio.cached", {{"dl", d.id}, {"bytes", d.state->size}});
+        if (d.handles == 0 && d.prefetchLimit >= 0)
+            retire(d.id);
+        else
+            saveMeta(d);
+        enforceCapacity();
+        return;
+    }
+    const auto md5 = contentMd5(d.source);
     // Hash off the owner thread; up to the file limit.
     QThreadPool::globalInstance()->start([self = QPointer<AudioStore>(this), base = d.base,
                                           path = d.state->path, size = d.state->size,
-                                          md5 = d.source.md5] {
+                                          md5] {
         QFile file(path);
         QCryptographicHash hash(QCryptographicHash::Md5);
         bool good = file.open(QIODevice::ReadOnly) && file.size() == size;
@@ -796,7 +841,7 @@ void AudioStore::verified(QString base, qint64 size, QByteArray md5, bool good)
         Download done; // released before the check finished
         done.base = base;
         done.source.size = size;
-        done.source.md5 = md5;
+        done.source.identity = ContentHash{md5};
         done.verifiedComplete = true;
         done.state = std::make_shared<AudioStreamState>();
         done.state->have.assign(size_t((size + m_options.chunkBytes - 1) / m_options.chunkBytes),
@@ -842,7 +887,7 @@ void AudioStore::saveMeta(const Download& d) const
     }
     QJsonObject json{{QStringLiteral("v"), kMetaVersion},
                      {QStringLiteral("size"), d.source.size},
-                     {QStringLiteral("md5"), QString::fromLatin1(d.source.md5)},
+                     {QStringLiteral("identity"), identityToken(d.source)},
                      {QStringLiteral("chunk"), m_options.chunkBytes},
                      {QStringLiteral("have"), QString::fromLatin1(bits.toBase64())},
                      {QStringLiteral("complete"), d.verifiedComplete},

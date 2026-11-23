@@ -29,7 +29,18 @@ MediaSource source(const QByteArray& body, bool withMd5 = true, const char* name
     MediaSource s{QUrl(QStringLiteral("https://m801.music.126.net/") + QLatin1String(name)),
                   "exhigh", "mp3", body.size(), QDeadlineTimer(60000)};
     if (withMd5)
-        s.md5 = QCryptographicHash::hash(body, QCryptographicHash::Md5).toHex();
+        s.identity = ContentHash{QCryptographicHash::hash(body, QCryptographicHash::Md5).toHex()};
+    return s;
+}
+// A Bilibili stream-addressed source: no digest, a stream name, its CDN, its headers.
+MediaSource biliSource(const QByteArray& body, const QString& key = QStringLiteral("bili-auto-BV1-1-id-30280"))
+{
+    MediaSource s{QUrl(QStringLiteral("https://upos-sz-mirrorcos.bilivideo.com/a.m4s")), "hires",
+                  "aac", body.size(), QDeadlineTimer(60000)};
+    s.provider = SourceProvider::Bilibili;
+    s.identity = StreamKey{key};
+    s.referer = QStringLiteral("https://www.bilibili.com/");
+    s.userAgent = QStringLiteral("Mozilla/5.0 CirrusTest");
     return s;
 }
 // Reads on another thread (reads block) while the test spins the event loop.
@@ -253,7 +264,7 @@ class AudioStoreTest : public QObject
         test::RangeServer server{noise(Chunk * 2, 9)};
         auto s = store(server);
         auto bad = source(server.body);
-        bad.md5 = QByteArray(32, 'a');
+        bad.identity = ContentHash{QByteArray(32, 'a')};
         auto stream = s->open(bad);
         auto read = readAsync(stream);
         QTRY_VERIFY_WITH_TIMEOUT(ready(read), 5000);
@@ -365,7 +376,7 @@ class AudioStoreTest : public QObject
         QVERIFY(s->analysis(a).isEmpty());
 
         auto plain = a;
-        plain.md5.clear(); // streams through a temporary file
+        plain.identity = ContentHash{}; // streams through a temporary file
         s->keepAnalysis(plain, "plain");
         QVERIFY(s->analysis(plain).isEmpty());
     }
@@ -482,6 +493,42 @@ class AudioStoreTest : public QObject
         stream.reset();
         QTest::qWait(50);
         QCOMPARE(s->usage(), 0);
+    }
+
+    // A stream-addressed source (Bilibili) is kept too, keyed by its stream name, with no
+    // digest: the finished file is trusted as it is.
+    void streamAddressedSourceIsKept()
+    {
+        test::RangeServer server{noise(Chunk * 2, 31)};
+        auto s = store(server);
+        auto stream = s->open(biliSource(server.body));
+        auto read = readAsync(stream);
+        QTRY_VERIFY_WITH_TIMEOUT(ready(read), 5000);
+        QCOMPARE(read.get(), server.body);
+        stream.reset();
+        settle(*s, server.body.size());
+        QCOMPARE(dataFiles(), 1);
+        const auto requests = server.ranges.size();
+        auto again = s->open(biliSource(server.body));
+        auto second = readAsync(again);
+        QTRY_VERIFY_WITH_TIMEOUT(ready(second), 5000);
+        QCOMPARE(second.get(), server.body);
+        QCOMPARE(server.ranges.size(), requests); // served from the cache, not downloaded again
+    }
+
+    // Bilibili's CDN needs its Referer and User-Agent, and still never a Cookie.
+    void bilibiliRequestsCarryItsHeaders()
+    {
+        test::RangeServer server{noise(Chunk * 2, 32)};
+        auto s = store(server);
+        auto read = readAsync(s->open(biliSource(server.body)));
+        QTRY_VERIFY_WITH_TIMEOUT(ready(read), 5000);
+        QCOMPARE(read.get(), server.body);
+        QVERIFY(!server.requests.isEmpty());
+        const auto& request = server.requests.first();
+        QCOMPARE(request.rawHeader("Referer"), QByteArray("https://www.bilibili.com/"));
+        QCOMPARE(request.rawHeader("User-Agent"), QByteArray("Mozilla/5.0 CirrusTest"));
+        QVERIFY(!request.hasRawHeader("Cookie"));
     }
 
     // The download rules (docs/tasks/audio-engine.md §5): no cookies or account headers,
