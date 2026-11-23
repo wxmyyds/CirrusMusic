@@ -19,6 +19,29 @@ namespace
 {
 constexpr int kIoBuffer = 64 * 1024;
 constexpr qint64 kPrerollMs = 300; // decode this much before a seek target
+
+// One accepted container/codec pair. The provider's `format` selects the demuxer, the codec
+// whitelist and the expected decoder; FFmpeg never probes anything else. MP3 and FLAC keep
+// their own demuxers; AAC and E-AC-3 arrive in an MP4/fMP4 container (the Bilibili CDN's
+// audio/mp4), demuxed by "mov".
+struct FormatRule {
+    const char* input;          // av_find_input_format name, null when unsupported
+    const char* codecs;         // avcodec whitelist
+    const char* demuxer;        // avformat whitelist
+    AVCodecID expected;
+};
+std::optional<FormatRule> ruleFor(const QString& format)
+{
+    if (format == QStringLiteral("mp3"))
+        return FormatRule{"mp3", "mp3float,mp3", "mp3", AV_CODEC_ID_MP3};
+    if (format == QStringLiteral("flac"))
+        return FormatRule{"flac", "flac", "flac", AV_CODEC_ID_FLAC};
+    if (format == QStringLiteral("aac"))
+        return FormatRule{"mov", "aac", "mov", AV_CODEC_ID_AAC};
+    if (format == QStringLiteral("eac3"))
+        return FormatRule{"mov", "eac3", "mov", AV_CODEC_ID_EAC3};
+    return std::nullopt;
+}
 } // namespace
 
 AudioDecoder::~AudioDecoder()
@@ -93,19 +116,10 @@ bool AudioDecoder::open(std::shared_ptr<ByteSource> stream, const QString& forma
     static std::once_flag quiet;
     std::call_once(quiet, [] { av_log_set_level(AV_LOG_ERROR); });
     m_stream = std::move(stream);
-    const AVInputFormat* input = nullptr;
-    const char* codecs = nullptr;
-    AVCodecID expected = AV_CODEC_ID_NONE;
-    if (format == QStringLiteral("mp3")) {
-        input = av_find_input_format("mp3");
-        codecs = "mp3float,mp3";
-        expected = AV_CODEC_ID_MP3;
-    } else if (format == QStringLiteral("flac")) {
-        input = av_find_input_format("flac");
-        codecs = "flac";
-        expected = AV_CODEC_ID_FLAC;
-    }
-    if (!input) {
+    const auto rule = ruleFor(format);
+    const AVInputFormat* input = rule ? av_find_input_format(rule->input) : nullptr;
+    const AVCodecID expected = rule ? rule->expected : AV_CODEC_ID_NONE;
+    if (!rule || !input) {
         failWith(PlaybackError::UnsupportedFormat);
         return false;
     }
@@ -124,8 +138,8 @@ bool AudioDecoder::open(std::shared_ptr<ByteSource> stream, const QString& forma
                                         return int(self->m_interrupted || self->m_error);
                                     },
                                     this};
-    m_format->codec_whitelist = av_strdup(codecs);
-    m_format->format_whitelist = av_strdup(format == QStringLiteral("mp3") ? "mp3" : "flac");
+    m_format->codec_whitelist = av_strdup(rule->codecs);
+    m_format->format_whitelist = av_strdup(rule->demuxer);
     if (avformat_open_input(&m_format, nullptr, input, nullptr) < 0) {
         // avformat_open_input frees the context on failure.
         failWith(PlaybackError::UnsupportedFormat);

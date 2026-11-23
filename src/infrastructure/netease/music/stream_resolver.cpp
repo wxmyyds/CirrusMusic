@@ -57,13 +57,33 @@ StreamResult mapStreamResponse(const StreamQuery& query, const QJsonObject& obje
     if (!code)
         return invalid;
     if (*code != 200)
-        return PlaybackFailure{PlaybackError::Unavailable, int(*code)};
+        return PlaybackFailure{*code == 404 ? PlaybackError::NeedPermission
+                                            : PlaybackError::Unavailable,
+                               int(*code)};
+    // The provider's own verdict on entitlement, read from the same row: a positive fee or
+    // cannotListenReason 1 means it has the song but withholds it (VIP, region, restriction).
+    // This is a semantic change: fee is now read, not ignored. Any other empty address (a
+    // network/expiry symptom) stays Unavailable.
+    const auto denyReason = [&row] {
+        const auto fee = integer(row.value(QStringLiteral("fee")), 1000);
+        if (fee && *fee > 0)
+            return true;
+        const auto reason = integer(
+            row.value(QStringLiteral("freeTrialPrivilege"))
+                .toObject()
+                .value(QStringLiteral("cannotListenReason")),
+            1000);
+        return reason && *reason == 1;
+    };
     const auto urlField = row.value(QStringLiteral("url"));
     if (urlField.isNull() || (urlField.isString() && urlField.toString().isEmpty()))
-        return PlaybackFailure{PlaybackError::Unavailable, int(*code)};
+        return PlaybackFailure{denyReason() ? PlaybackError::NeedPermission
+                                            : PlaybackError::Unavailable,
+                               int(*code)};
     if (!urlField.isString())
         return invalid;
-    const auto url = media::approvedMediaUrl(QUrl(urlField.toString(), QUrl::StrictMode), true);
+    const auto url = media::approvedMediaUrl(domain::SourceProvider::Netease,
+                                             QUrl(urlField.toString(), QUrl::StrictMode), true);
     if (!url)
         return PlaybackFailure{PlaybackError::UnsafeSource};
     const auto ttl = integer(row.value(QStringLiteral("expi")), 86400);
@@ -88,7 +108,7 @@ StreamResult mapStreamResponse(const StreamQuery& query, const QJsonObject& obje
     if (md5.size() == 32 && std::all_of(md5.begin(), md5.end(), [](char c) {
             return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
         }))
-        source.md5 = md5;
+        source.identity = ContentHash{md5};
     // Optional loudness (docs/tasks/audio-engine.md §6.5): measured 23 full tracks,
     // integrated loudness + gain = −17.96 ± 0.04 LUFS. A peak of 0 is the placeholder
     // preview clips carry; an odd value is dropped, not a failure.
@@ -109,7 +129,8 @@ StreamResult mapStreamResponse(const StreamQuery& query, const QJsonObject& obje
             return invalid;
         source.preview = PreviewRange{*start, *end};
     }
-    // fee/payed/advertised privileges alone neither grant nor deny this source.
+    // fee/payed/advertised privileges: fee and the cannotListenReason already decided
+    // NeedPermission above; the rest neither grant nor deny this source.
     // Absence of preview metadata is NOT proof of full-track/download entitlement.
     return source;
 }

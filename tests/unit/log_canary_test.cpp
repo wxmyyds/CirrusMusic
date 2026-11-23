@@ -103,7 +103,7 @@ class LogCanaryTest : public QObject
         MediaSource source{QUrl(QStringLiteral("https://m801.music.126.net/CANARY-SIGN/a.mp3"
                                                "?vuutv=CANARY-QUERY")),
                            "exhigh", "mp3", body.size(), QDeadlineTimer(60000)};
-        source.md5 = QCryptographicHash::hash(body, QCryptographicHash::Md5).toHex();
+        source.identity = ContentHash{QCryptographicHash::hash(body, QCryptographicHash::Md5).toHex()};
         auto stream = store.open(source);
         QVERIFY(stream);
         auto read = std::async(std::launch::async, [stream] {

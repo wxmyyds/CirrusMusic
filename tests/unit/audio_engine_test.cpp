@@ -29,7 +29,7 @@ MediaSource source(const QByteArray& body, const QString& format,
 {
     MediaSource s{QUrl(QStringLiteral("https://m801.music.126.net") + path), "standard", format,
                   body.size(), QDeadlineTimer(60000)};
-    s.md5 = QCryptographicHash::hash(body, QCryptographicHash::Md5).toHex();
+    s.identity = ContentHash{QCryptographicHash::hash(body, QCryptographicHash::Md5).toHex()};
     return s;
 }
 LoadToken token(quint64 n) { return LoadToken{{QUuid::createUuid(), 1}, n}; }
@@ -81,7 +81,7 @@ class AudioEngineTest : public QObject
     {
         load(QStringLiteral("long.mp3"), QStringLiteral("mp3"), current);
         auto other = source(m_server.body, QStringLiteral("mp3"));
-        other.md5.clear(); // another file to the engine (the fake CDN has one body)
+        other.identity = ContentHash{}; // another file to the engine (the fake CDN has one body)
         m_engine->preload(other, next);
         if (!QTest::qWaitFor([this] { return has(Kind::Ready); }, 5000))
             return false;
@@ -255,7 +255,7 @@ class AudioEngineTest : public QObject
         const auto first = token(13), second = token(14);
         load(QStringLiteral("long.mp3"), QStringLiteral("mp3"), first);
         auto next = source(m_server.body, QStringLiteral("mp3"));
-        next.md5.clear(); // another file to the engine (the fake CDN has one body)
+        next.identity = ContentHash{}; // another file to the engine (the fake CDN has one body)
         m_engine->preload(next, second);
         QTRY_VERIFY_WITH_TIMEOUT(has(Kind::Ready), 5000);
         m_engine->play();
@@ -391,7 +391,7 @@ class AudioEngineTest : public QObject
         const auto one = token(29), two = token(30);
         load(QStringLiteral("long.mp3"), QStringLiteral("mp3"), one);
         auto other = source(m_server.body, QStringLiteral("mp3"));
-        other.md5.clear();
+        other.identity = ContentHash{};
         m_engine->preload(other, two);
         QTRY_VERIFY_WITH_TIMEOUT(has(Kind::Ready), 5000);
         m_engine->play();
@@ -408,7 +408,7 @@ class AudioEngineTest : public QObject
         const auto first = token(15), second = token(16);
         load(QStringLiteral("long.mp3"), QStringLiteral("mp3"), first);
         auto next = source(m_server.body, QStringLiteral("mp3"));
-        next.md5.clear();
+        next.identity = ContentHash{};
         m_engine->preload(next, second);
         QTRY_VERIFY_WITH_TIMEOUT(has(Kind::Ready), 5000);
         m_engine->play();

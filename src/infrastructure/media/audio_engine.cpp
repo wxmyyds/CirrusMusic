@@ -46,9 +46,10 @@ constexpr qint64 kPlanBeforeMs = 60000;
 constexpr qint64 kNextAnalysisMs = 60000;
 
 // The same file again (repeat one, the same song twice in a row): not mixed with itself.
+// Compared by cache identity: content digest, or (Bilibili) the stream name.
 bool sameFile(const MediaSource& a, const MediaSource& b)
 {
-    return !a.md5.isEmpty() && a.md5 == b.md5;
+    return hasIdentity(a) && a.identity == b.identity;
 }
 
 // What the plans go by. `cached`: kept from when it played before (`ms` 0).
@@ -1127,7 +1128,7 @@ void AudioEngine::planned(TransitionMode mode, const automix::Plan& plan, bool a
 void AudioEngine::analyseCurrent()
 {
     if (m_curFull || m_curReader || !m_stream || !m_active || m_source.preview ||
-        m_source.md5.isEmpty() || m_transition.mode == TransitionMode::Gapless)
+        !hasIdentity(m_source) || m_transition.mode == TransitionMode::Gapless)
         return;
     if (!std::exchange(m_curLookedUp, true)) {
         if (auto kept = keptAnalysis(m_source)) { // analysed when it played before
@@ -1153,7 +1154,7 @@ void AudioEngine::analyseNext()
 {
     // Its start while it downloads (all of it when it's cached already).
     if (!m_next || m_next->reader || m_next->analysis || m_next->source.preview ||
-        m_next->source.md5.isEmpty() || m_transition.mode == TransitionMode::Gapless)
+        !hasIdentity(m_next->source) || m_transition.mode == TransitionMode::Gapless)
         return;
     if (auto kept = keptAnalysis(m_next->source)) {
         logAnalysis(m_next->token, *kept, 0, true);

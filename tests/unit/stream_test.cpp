@@ -94,20 +94,20 @@ class StreamTest : public QObject
         QCOMPARE(source.preview->startMs, 30500);
         QCOMPARE(source.preview->endMs, 60500);
         QVERIFY(source.validUntil.remainingTime() <= 1200000);
-        QVERIFY(source.md5.isEmpty()); // none given: nothing to key a cache on
+        QVERIFY(contentMd5(source).isEmpty()); // none given: nothing to key a cache on
         auto r = row();
         r["md5"] = "8BE6391A4A129BE0AD9FEF58192DF3CC";
-        QCOMPARE(std::get<StreamSource>(map(r)).md5,
+        QCOMPARE(contentMd5(std::get<StreamSource>(map(r))),
                  QByteArray("8be6391a4a129be0ad9fef58192df3cc"));
         r["md5"] = "not-a-digest"; // dropped, not a failure
-        QVERIFY(std::get<StreamSource>(map(r)).md5.isEmpty());
+        QVERIFY(contentMd5(std::get<StreamSource>(map(r))).isEmpty());
         r = row();
         r["freeTrialInfo"] = QJsonValue::Null;
         result = map(r);
         QVERIFY(std::holds_alternative<StreamSource>(result));
         QVERIFY(!std::get<StreamSource>(result).preview); // no inferred full-track grant
         r["url"] = QJsonValue::Null;
-        QCOMPARE(std::get<PlaybackFailure>(map(r)).error, PlaybackError::Unavailable);
+        QCOMPARE(std::get<PlaybackFailure>(map(r)).error, PlaybackError::NeedPermission);
     }
     void malformed_data()
     {
@@ -138,7 +138,7 @@ class StreamTest : public QObject
         auto r = row();
         r["code"] = 404;
         const auto f = std::get<PlaybackFailure>(map(r));
-        QCOMPARE(f.error, PlaybackError::Unavailable);
+        QCOMPARE(f.error, PlaybackError::NeedPermission);
         QCOMPARE(f.providerCode, 404);
         r = row();
         r["url"] = "https://example.com/test.mp3";
@@ -148,6 +148,23 @@ class StreamTest : public QObject
         QCOMPARE(std::get<PlaybackFailure>(map(r)).error, PlaybackError::UnsupportedFormat);
         QVERIFY(std::holds_alternative<PlaybackFailure>(netease::mapStreamResponse(
             {{"1"}}, {{"code", 200}, {"data", QJsonArray{row(), row()}}})));
+    }
+    // An empty address is NeedPermission only on the provider's own evidence (fee > 0 or
+    // cannotListenReason 1); otherwise it stays Unavailable (a network/expiry symptom).
+    void emptyAddressIsClassifiedByEvidence()
+    {
+        auto r = row(); // fee 1, freeTrialInfo present
+        r["url"] = QJsonValue::Null;
+        QCOMPARE(std::get<PlaybackFailure>(map(r)).error, PlaybackError::NeedPermission); // fee 1
+        r["fee"] = 0;
+        QCOMPARE(std::get<PlaybackFailure>(map(r)).error, PlaybackError::Unavailable);
+        r["freeTrialPrivilege"] = QJsonObject{{"cannotListenReason", 1}};
+        QCOMPARE(std::get<PlaybackFailure>(map(r)).error, PlaybackError::NeedPermission);
+        r["freeTrialPrivilege"] = QJsonObject{{"cannotListenReason", 2}};
+        QCOMPARE(std::get<PlaybackFailure>(map(r)).error, PlaybackError::Unavailable);
+        r["freeTrialPrivilege"] = QJsonValue::Null;
+        r["code"] = 404; // the row's own code too
+        QCOMPARE(std::get<PlaybackFailure>(map(r)).error, PlaybackError::NeedPermission);
     }
     void errorEnvelopeMapping()
     {

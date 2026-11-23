@@ -109,6 +109,7 @@ failure::Kind kindOf(domain::PlaybackError error)
     case PlaybackError::InvalidRequest:
         return failure::Invalid;
     case PlaybackError::Unavailable:
+    case PlaybackError::NeedPermission:
     case PlaybackError::ProtocolKeyMissing:
     case PlaybackError::InvalidResponse:
     case PlaybackError::UnsafeSource:

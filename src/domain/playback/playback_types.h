@@ -26,6 +26,9 @@ inline QString qualityName(AudioQuality quality)
 struct StreamQuery {
     SongId song;
     AudioQuality quality = AudioQuality::Standard;
+    // Whether a provider outside Netease may answer when Netease refuses the song. Off by
+    // default; the single source is the user's setting, set where the play commands are built.
+    bool allowBiliSource = false;
 };
 // Song resolver envelope. Identity is checked before the physical base is moved to media.
 // Public value inheritance preserves existing song-source field access/initialization;
@@ -46,6 +49,10 @@ enum class PlaybackError {
     StaleContext,
     Canceled,
     Unavailable,
+    // The provider explicitly withholds this song: not entitled (VIP), region/copyright
+    // restriction, or only a preview offered. Distinct from Unavailable (no playable
+    // resource for other reasons) so a router can decide on evidence, not guesswork.
+    NeedPermission,
     ProtocolKeyMissing,
     Network,
     Timeout,
@@ -60,7 +67,8 @@ enum class PlaybackError {
     NoOutput
 };
 CIRRUS_LOG_ENUM(PlaybackError, InvalidRequest, StaleContext, Canceled, Unavailable,
-                ProtocolKeyMissing, Network, Timeout, RateLimited, InvalidResponse, UnsafeSource,
+                NeedPermission, ProtocolKeyMissing, Network, Timeout, RateLimited, InvalidResponse,
+                UnsafeSource,
                 Expired, TooLarge, Storage, UnsupportedFormat, Decode, NoOutput)
 CIRRUS_LOG_ENUM(AudioQuality, Standard, Exhigh, Lossless, HiRes)
 struct PlaybackFailure {
@@ -101,6 +109,9 @@ struct PlaybackSnapshot {
     TransportIntent intent = TransportIntent::Stop;
     QString actualQuality;
     std::optional<PreviewRange> preview;
+    // Which provider served this load. Drives the source marker, the report filter and the
+    // lyrics path; set by the resolver, never carried across loads.
+    SourceProvider provider = SourceProvider::Netease;
     qint64 positionMs = 0;
     std::optional<qint64> durationMs;
     bool seekable = false;

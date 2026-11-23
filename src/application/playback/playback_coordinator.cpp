@@ -111,6 +111,7 @@ void PlaybackCoordinator::resolved(quint64 id, SessionToken context, StreamResul
                 {"ms", m_loadClock.elapsed()}});
     m_snapshot.actualQuality = source.actualQuality;
     m_snapshot.preview = source.preview;
+    m_snapshot.provider = source.provider;
     m_snapshot.state = PlaybackState::Loading;
     emit changed(m_snapshot);
     if (current(token)) {
@@ -164,6 +165,7 @@ void PlaybackCoordinator::preloaded(StreamResult result)
     auto& source = std::get<StreamSource>(checked);
     m_next->actualQuality = source.actualQuality;
     m_next->preview = source.preview;
+    m_next->provider = source.provider;
     m_next->loaded = true;
     log::debug(lcPlayback, "preload.resolved",
                {{"token", m_next->token.generation},
@@ -203,6 +205,7 @@ void PlaybackCoordinator::advance()
         m_snapshot.intent == TransportIntent::Play ? PlaybackState::Playing : PlaybackState::Paused;
     snapshot.actualQuality = next.actualQuality;
     snapshot.preview = next.preview;
+    snapshot.provider = next.provider;
     snapshot.volumeLinear = m_snapshot.volumeLinear;
     m_snapshot = std::move(snapshot);
     m_query = next.query;

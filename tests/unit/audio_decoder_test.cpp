@@ -25,7 +25,7 @@ MediaSource source(const QByteArray& body, const QString& format)
 {
     MediaSource s{QUrl(QStringLiteral("https://m801.music.126.net/tone")), "standard", format,
                   body.size(), QDeadlineTimer(60000)};
-    s.md5 = QCryptographicHash::hash(body, QCryptographicHash::Md5).toHex();
+    s.identity = ContentHash{QCryptographicHash::hash(body, QCryptographicHash::Md5).toHex()};
     return s;
 }
 // Decoding blocks on the download: run it on a thread while the test spins the loop.
@@ -75,6 +75,38 @@ class AudioDecoderTest : public QObject
         QTest::addColumn<QString>("format");
         QTest::newRow("mp3") << QStringLiteral("mp3");
         QTest::newRow("flac") << QStringLiteral("flac");
+    }
+
+    // MP4/fMP4 audio: AAC (moov after mdat and fragmented) and E-AC-3, the Bilibili CDN's
+    // audio/mp4 formats. Same 0.5 s / 44.1 kHz / 22050 frames as the tones.
+    void decodesMp4Audio_data()
+    {
+        QTest::addColumn<QString>("file");
+        QTest::addColumn<QString>("format");
+        QTest::newRow("aac") << QStringLiteral("tone_aac.m4a") << QStringLiteral("aac");
+        QTest::newRow("aac-fmp4")
+            << QStringLiteral("tone_fmp4.m4a") << QStringLiteral("aac");
+        QTest::newRow("eac3") << QStringLiteral("tone_eac3.m4a") << QStringLiteral("eac3");
+    }
+    void decodesMp4Audio()
+    {
+        QFETCH(QString, file);
+        QFETCH(QString, format);
+        test::RangeServer server{fixture(file)};
+        QVERIFY(!server.body.isEmpty());
+        auto s = store(server);
+        auto stream = s->open(source(server.body, format));
+        QVERIFY(stream);
+        const auto [opened, rate, frames] = onThread([stream, format] {
+            AudioDecoder decoder;
+            const bool ok = decoder.open(stream, format);
+            const auto all = ok ? decodeAll(decoder) : std::vector<float>();
+            return std::tuple{ok, decoder.sampleRate(), qint64(all.size() / 2)};
+        });
+        QVERIFY(opened);
+        QCOMPARE(rate, 44100);
+        // Lossy codecs pad: the count is near the source, not frame-exact.
+        QVERIFY(std::abs(frames - ToneFrames) <= 2048);
     }
     void decodesTheWholeFile()
     {
