@@ -123,9 +123,16 @@ void Account::clear()
     });
 }
 
+void Account::close()
+{
+    m_closing = true;
+    if (const auto id = std::exchange(m_httpId, 0))
+        m_http->cancel(id);
+}
+
 void Account::check(quint64 revision)
 {
-    if (revision != m_revision)
+    if (revision != m_revision || m_closing)
         return;
     if (m_cookie.isEmpty()) {
         m_busy = false;

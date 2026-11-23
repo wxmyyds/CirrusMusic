@@ -17,6 +17,7 @@ class Account final : public QObject
     void restore();
     void save(QByteArray cookie);
     void clear();
+    void close();
     [[nodiscard]] QByteArray cookie() const { return m_cookie; }
 
   signals:
@@ -34,5 +35,6 @@ class Account final : public QObject
     quint64 m_httpId = 0;
     bool m_busy = false;
     bool m_clearRequested = false;
+    bool m_closing = false;
 };
 } // namespace cirrus::bilibili

@@ -432,8 +432,11 @@ class BackendWorker final : public QObject
         m_registrar.reset();
         m_playback.reset();
         m_providerRouter.reset();
+        if (m_biliAccount) {
+            disconnect(m_biliAccount.get(), nullptr, this, nullptr);
+            m_biliAccount->close();
+        }
         m_biliResolver.reset();
-        m_biliAccount.reset();
         m_biliLyrics.reset();
         m_biliLyricRequests.clear();
         m_sourceSelections.clear();
@@ -766,6 +769,7 @@ class BackendWorker final : public QObject
             m_client.reset();
             m_ring.reset();
             m_session.reset();
+            m_biliAccount.reset();
             m_store.reset();
             m_installation.reset();
             m_stateStore.reset();

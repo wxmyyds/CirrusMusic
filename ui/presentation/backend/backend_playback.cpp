@@ -1187,7 +1187,11 @@ bool BackendLyrics::routePlayback(const std::shared_ptr<Job>& job)
     }
     job->service.cancel();
     job->service = m_requests->submit(
-        [generation](application::BackendFacade& facade) { return facade.playbackLyrics(generation); },
+        [generation](application::BackendFacade& facade) {
+            if (!facade.playbackSource(generation))
+                return MusicRequests::Refused;
+            return facade.playbackLyrics(generation);
+        },
         [job](const application::MusicResult& result) {
             if (const auto* lyrics = std::get_if<domain::SongLyrics>(&result))
                 job->finish(Outcome<SongLyrics>{lyricsOf(*lyrics)});

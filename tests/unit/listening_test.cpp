@@ -58,7 +58,7 @@ struct Harness {
         const auto c = latestPlay();
         facade.deliverPlaybackSource({c.token, c.query.song, provider,
             provider == SourceProvider::Bilibili
-                ? std::optional<BiliStreamMeta>({"BV1testpage", "456", "30280", {}})
+                ? std::optional<BiliStreamMeta>(BiliStreamMeta{"BV1testpage", "456", "30280", {}})
                 : std::nullopt});
     }
     void publish(PlaybackState state, qint64 position = 0, std::optional<PreviewRange> preview = {})
