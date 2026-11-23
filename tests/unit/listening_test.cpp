@@ -504,6 +504,47 @@ class ListeningTest : public QObject
         QTRY_COMPARE(stopped.size(), 1);
         QCOMPARE(h.plays(), 10);
     }
+    void wrongSongObservationCannotResetFailureStreak()
+    {
+        Harness h;
+        QList<SongId> songs;
+        for (int i = 1; i <= 12; ++i)
+            songs.append({QString::number(i)});
+        QVERIFY(h.player.replaceQueue(songs));
+        for (int i = 0; i < 9; ++i) {
+            h.publish(PlaybackState::Failed);
+            QTRY_COMPARE(h.plays(), i + 2);
+        }
+        auto wrong = h.facade.playback();
+        wrong.song = {"99"};
+        wrong.state = PlaybackState::Playing;
+        wrong.observed = ObservedPlayback{1000};
+        h.facade.deliverPlayback({h.latestPlay().generation, wrong});
+        QSignalSpy stopped(&h.player, &ListeningSession::failureStreakExceeded);
+        h.publish(PlaybackState::Failed);
+        QTRY_COMPARE(stopped.size(), 1);
+    }
+    void supersededStopDoesNotNotifyForNewPlayback()
+    {
+        Harness h;
+        QList<SongId> songs;
+        for (int i = 1; i <= 12; ++i)
+            songs.append({QString::number(i)});
+        QVERIFY(h.player.replaceQueue(songs));
+        for (int i = 0; i < 9; ++i) {
+            h.publish(PlaybackState::Failed);
+            QTRY_COMPARE(h.plays(), i + 2);
+        }
+        connect(&h.player, &ListeningSession::playbackChanged, this, [&](PlaybackSnapshot s) {
+            if (s.state == PlaybackState::Empty)
+                QVERIFY(h.player.replaceQueue({{"99"}}));
+        });
+        QSignalSpy stopped(&h.player, &ListeningSession::failureStreakExceeded);
+        h.publish(PlaybackState::Failed);
+        QTRY_COMPARE(h.plays(), 11);
+        QCOMPARE(stopped.size(), 0);
+        QCOMPARE(h.player.playback().song.value, QString("99"));
+    }
     void rejectedThresholdStopWaitsForMailboxSpace()
     {
         Harness h;

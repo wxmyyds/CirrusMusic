@@ -919,7 +919,7 @@ void BackendRuntimeTest::closeDuringRead()
     QSignalSpy stopped(&f, &BackendFacade::stopped), started(&f, &BackendFacade::started);
     QSignalSpy delayed(&f, &BackendFacade::closeDelayed);
     f.start();
-    QTRY_COMPARE(state->reads.load(), 1);
+    QTRY_COMPARE(state->reads.load(), 2); // Bilibili Cookie + bootstrap key
     f.close();
     QTRY_COMPARE_WITH_TIMEOUT(delayed.size(), 1, 6500);
     QCOMPARE(stopped.size(), 0);
@@ -1101,7 +1101,7 @@ void BackendRuntimeTest::destructionStillDrains()
     Gate gate;
     auto runtime = std::make_unique<BackendRuntime>(config, factories(state, gate));
     runtime->facade().start();
-    QTRY_COMPARE(state->reads.load(), 1);
+    QTRY_COMPARE(state->reads.load(), 2); // Bilibili Cookie + bootstrap key
     runtime.reset(); // must not destroy a running QThread or block caller
     QTest::qWait(30);
     QVERIFY(state->destroyed.load() < state->created.load());
