@@ -61,7 +61,9 @@ TogetherSession::TogetherSession(BackendFacade& facade, ListeningSession& player
     connect(&m_player, &ListeningSession::queueChanged, this, [this] { queueChanged(); });
     connect(&m_facade, &BackendFacade::playbackSourceSelected, this,
             [this](PlaybackSourceSelection source) {
-                if (m_state != State::Idle && source.provider == SourceProvider::Bilibili)
+                const auto live = m_facade.playbackSource(source.token.generation);
+                if (m_state != State::Idle && live && live->token == source.token &&
+                    live->provider == SourceProvider::Bilibili)
                     end(Reason::UnsupportedSource, true);
             });
     for (auto* t : {&m_reportTimer, &m_replaceTimer, &m_leaveTimer})
@@ -80,9 +82,11 @@ TogetherSession::TogetherSession(BackendFacade& facade, ListeningSession& player
 
 TogetherSession::~TogetherSession()
 {
-    m_player.setBiliSourcePermitted(true);
+    disconnect(&m_facade, nullptr, this, nullptr);
+    disconnect(&m_player, nullptr, this, nullptr);
     for (auto it = m_pending.cbegin(); it != m_pending.cend(); ++it)
         m_facade.cancelTogether(it.key());
+    m_player.setBiliSourcePermitted(true);
 }
 
 // ---- requests ----
@@ -171,7 +175,7 @@ void TogetherSession::begin()
     m_afterReplace.reset();
     m_connected = true;
     m_local = m_player.playback();
-    m_forceRoomReload = m_facade.allowBiliSource();
+    m_forceRoomReload = true;
     m_player.setBiliSourcePermitted(false);
 }
 
@@ -180,6 +184,8 @@ bool TogetherSession::create()
     if (!canCreate())
         return false;
     begin();
+    if (m_state != State::Starting)
+        return false;
     m_joining = false;
     log::info(lcTogether, "together.start", {"join", false});
     emit changed();
@@ -221,13 +227,22 @@ void TogetherSession::replaceInitial()
     }
     const auto list = localList();
     if (m_forceRoomReload && !list.display.isEmpty()) {
-        m_forceRoomReload = false;
         const TogetherReportedPlay play{
             .status = playing(m_local) ? TogetherPlayStatus::Play : TogetherPlayStatus::Pause,
             .target = list.anchor,
             .progressMs = m_local.positionMs};
-        rebuild(effective(list.display, list.random, list.mode), list.mode, &play);
-        m_seek = PendingSeek{list.anchor, play.progressMs, now(), playing(m_local)};
+        const QPointer<TogetherSession> self(this);
+        const auto generation = m_generation;
+        const bool ok = rebuild(effective(list.display, list.random, list.mode), list.mode, &play);
+        if (!self || generation != m_generation || m_state != State::Starting)
+            return;
+        if (!ok) {
+            end(Reason::Failed, true);
+            return;
+        }
+        m_forceRoomReload = false;
+        m_seek = PendingSeek{list.anchor, play.progressMs, now(),
+                             play.status == TogetherPlayStatus::Play};
     }
     if (list.display.isEmpty()) {
         end(Reason::EmptyRoom, true);
@@ -270,6 +285,8 @@ bool TogetherSession::join(const Invite& invite)
     if (!supportedLocalPlayback())
         return false;
     begin();
+    if (m_state != State::Starting)
+        return false;
     m_joining = true;
     m_room = invite.room;
     m_inviter = invite.inviterId;
@@ -315,6 +332,8 @@ bool TogetherSession::resume(const Saved& saved)
     if (!supportedLocalPlayback())
         return false;
     begin();
+    if (m_state != State::Starting)
+        return false;
     m_joining = saved.joining;
     m_resuming = true;
     m_room = saved.room;
@@ -352,7 +371,11 @@ void TogetherSession::readRoom()
             end(Reason::EmptyRoom, true);
             return;
         }
+        const QPointer<TogetherSession> self(this);
+        const auto generation = m_generation;
         applyList(p, r.reportedPlay ? &*r.reportedPlay : nullptr);
+        if (!self || generation != m_generation || m_state != State::Starting)
+            return;
         if (r.reportedPlay)
             applyPlay(*r.reportedPlay, true);
         // Tells the service a member who accepted has the room's list.
@@ -535,7 +558,6 @@ void TogetherSession::end(Reason reason, bool sendEnd)
     m_leaveTimer.stop();
     m_leaving = 0;
     m_state = State::Idle;
-    m_player.setBiliSourcePermitted(true);
     log::info(lcTogether, "together.end", {"reason", reason});
     // Results still in flight (the best-effort end) belong to the session that ended.
     ++m_generation;
@@ -543,8 +565,14 @@ void TogetherSession::end(Reason reason, bool sendEnd)
     m_members.clear();
     m_creator.clear();
     m_connected = true;
+    const auto generation = m_generation;
+    const QPointer<TogetherSession> self(this);
+    m_player.setBiliSourcePermitted(true);
+    if (!self || m_generation != generation || m_state != State::Idle)
+        return;
     emit changed();
-    emit ended(reason);
+    if (self && m_generation == generation && m_state == State::Idle)
+        emit ended(reason);
 }
 
 void TogetherSession::leave()
@@ -558,12 +586,12 @@ void TogetherSession::close()
     // The official app keeps the room when it goes away; resume() picks it up again.
     if (m_state != State::Idle)
         log::info(lcTogether, "together.close", {"state", m_state});
-    stopAll();
-    m_player.setBiliSourcePermitted(true);
-    m_leaveTimer.stop();
-    ++m_generation;
     disconnect(&m_facade, nullptr, this, nullptr);
     disconnect(&m_player, nullptr, this, nullptr);
+    stopAll();
+    m_leaveTimer.stop();
+    ++m_generation;
+    m_player.setBiliSourcePermitted(true);
 }
 
 std::optional<TogetherSession::Saved> TogetherSession::saved() const
@@ -628,12 +656,21 @@ void TogetherSession::applyList(const TogetherPlaylist& p, const TogetherReporte
     // The local queue holds the first kTogetherSongsMax songs of a longer list.
     const auto order = roomOrder().mid(0, kTogetherSongsMax);
     if (!order.isEmpty() && (order != localOrder() || m_forceRoomReload)) {
+        const QPointer<TogetherSession> self(this);
+        const auto generation = m_generation;
+        const auto state = m_state;
+        const bool ok = rebuild(order, m_mode, play);
+        if (!self || generation != m_generation || state != m_state)
+            return;
+        if (!ok) {
+            end(Reason::Failed, true);
+            return;
+        }
         m_forceRoomReload = false;
-        rebuild(order, m_mode, play);
     }
 }
 
-void TogetherSession::rebuild(const QList<SongId>& order, TogetherPlayMode mode,
+bool TogetherSession::rebuild(const QList<SongId>& order, TogetherPlayMode mode,
                               const TogetherReportedPlay* play)
 {
     qsizetype start = 0;
@@ -650,20 +687,31 @@ void TogetherSession::rebuild(const QList<SongId>& order, TogetherPlayMode mode,
     log::info(lcTogether, "together.list", {{"songs", order.size()}, {"mode", int(mode)}});
     m_rebuilding = true;
     const QPointer<TogetherSession> self(this);
+    const auto generation = m_generation;
+    const auto state = m_state;
     const bool ok = m_player.replaceQueue(order, start, m_quality());
     if (!self)
-        return;
+        return false;
+    if (generation != m_generation || state != m_state) {
+        m_rebuilding = false;
+        return false;
+    }
     if (ok)
         m_player.setModes(QueueOrder::Sequential, mode == TogetherPlayMode::SingleLoop
                                                       ? QueueRepeat::One
                                                       : QueueRepeat::All);
+    if (!self)
+        return false;
     m_rebuilding = false;
+    if (generation != m_generation || state != m_state)
+        return false;
     if (!ok) {
         log::warn(lcTogether, "together.list_not_applied", {"songs", order.size()});
-        return;
+        return false;
     }
     if (!on)
         m_player.pause();
+    return self && generation == m_generation && state == m_state;
 }
 
 void TogetherSession::applyPlay(const TogetherReportedPlay& c, bool force)
@@ -852,7 +900,7 @@ void TogetherSession::queueChanged()
 
 void TogetherSession::sendReplace()
 {
-    if (m_state != State::Active || m_replacing)
+    if (m_state != State::Active || m_replacing || !supportedLocalPlayback())
         return;
     const auto list = localList();
     if (list.display.isEmpty() || inStep()) {

@@ -123,6 +123,29 @@ class FmListeningTest : public QObject
 {
     Q_OBJECT
   private slots:
+    void fmPreloadKeepsTheEnabledSourceAndSelectedLyrics()
+    {
+        Harness h;
+        h.f.setAllowBiliSource(true);
+        QVERIFY(h.player.startFm());
+        h.batch({1, 2, 3});
+        QTRY_COMPARE(h.plays(), 1);
+        h.publish(PlaybackState::Playing);
+        QTRY_VERIFY(std::any_of(h.commands.cbegin(), h.commands.cend(), [](const auto& c) {
+            return c.action == PlaybackAction::Preload && c.query.song.value == "2";
+        }));
+        const auto at = std::find_if(h.commands.crbegin(), h.commands.crend(), [](const auto& c) {
+            return c.action == PlaybackAction::Preload && c.query.song.value == "2";
+        });
+        const auto c = *at;
+        QVERIFY(c.query.allowBiliSource);
+        h.f.deliverPlaybackSource({c.next, c.query.song, SourceProvider::Bilibili,
+                                  BiliStreamMeta{"BV1testpage", "456", "30280", {}}});
+        QVERIFY(std::any_of(h.music.cbegin(), h.music.cend(), [&](const auto& read) {
+            const auto query = std::get_if<PlaybackLyricQuery>(&read.query);
+            return query && query->source.token == c.next;
+        }));
+    }
     void gates()
     {
         Harness guest(false);

@@ -150,7 +150,7 @@ class TogetherSession : public QObject
 
     void applyList(const domain::TogetherPlaylist& p, const domain::TogetherReportedPlay* play);
     void applyPlay(const domain::TogetherReportedPlay& c, bool force);
-    void rebuild(const QList<domain::SongId>& order, domain::TogetherPlayMode mode,
+    bool rebuild(const QList<domain::SongId>& order, domain::TogetherPlayMode mode,
                  const domain::TogetherReportedPlay* play);
 
     void playbackChanged(const domain::PlaybackSnapshot& s);

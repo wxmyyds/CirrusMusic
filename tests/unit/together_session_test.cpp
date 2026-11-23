@@ -181,6 +181,7 @@ struct Harness {
         QCOMPARE(a.list.anchor.value, "2");
         QCOMPARE(a.list.anchorPosition, 1);
         QCOMPARE(a.versions, (QList<TogetherVersion>{{kMe, 0}}));
+        publish(PlaybackState::Playing, 5000);
         reply(q, ok());
         const auto play = take(TogetherKind::Play);
         const auto& p = std::get<TogetherPlay>(play.request.action);
@@ -236,6 +237,89 @@ class TogetherSessionTest : public QObject
         QVERIFY(h.facade.allowBiliSource());
         QVERIFY(h.player.replaceQueue({{"9"}}));
         QVERIFY(h.latestPlay().query.allowBiliSource);
+    }
+    void roomEntryRetiresAllowedLoadsAfterSettingIsDisabled()
+    {
+        for (bool resume : {false, true}) {
+            Harness h;
+            h.facade.setAllowBiliSource(true);
+            QVERIFY(h.player.replaceQueue({{"1"}, {"2"}, {"3"}}, 1));
+            h.publish(PlaybackState::Playing, 5000);
+            const auto old = h.latestPlay();
+            QVERIFY(old.query.allowBiliSource);
+            h.facade.setAllowBiliSource(false);
+            if (resume) {
+                QVERIFY(h.together.resume({kRoom, kMe, false}));
+                auto r = Harness::ok();
+                r.inRoom = true;
+                r.room = Harness::room();
+                h.reply(h.take(TogetherKind::Status), r);
+            } else {
+                QVERIFY(h.together.join({kRoom, kFriend}));
+                auto r = Harness::ok();
+                r.joinable = true;
+                h.reply(h.take(TogetherKind::Check), r);
+                r = Harness::ok();
+                r.room = Harness::room();
+                h.reply(h.take(TogetherKind::Join), r);
+            }
+            h.reply(h.take(TogetherKind::Queue),
+                    Harness::list({{"1"}, {"2"}, {"3"}}, {{kMe, 0}},
+                                  Harness::command(TogetherPlayAction::Play, {"2"},
+                                                   TogetherPlayStatus::Play, 5000, h.clock)));
+            QCOMPARE(h.together.state(), TogetherSession::State::Active);
+            QVERIFY(h.latestPlay().id != old.id);
+            QVERIFY(!h.latestPlay().query.allowBiliSource);
+            QVERIFY(!h.facade.allowBiliSource());
+        }
+    }
+    void failedOrCanceledRoomReloadNeverPublishesTheQueue()
+    {
+        Harness h;
+        QVERIFY(h.player.replaceQueue({{"1"}}));
+        QVERIFY(h.together.create());
+        auto r = Harness::ok();
+        r.inRoom = false;
+        h.reply(h.take(TogetherKind::Status), r);
+        const auto create = h.take(TogetherKind::Create);
+        QCoreApplication::processEvents();
+        for (int i = 0; i < 32; ++i)
+            QVERIFY(h.facade.setPlaybackVolume(0));
+        r = Harness::ok();
+        r.room = Harness::room();
+        h.reply(create, r);
+        QCOMPARE(h.together.state(), TogetherSession::State::Idle);
+        QCOMPARE(h.count(TogetherKind::ReplaceQueue), 0);
+        QCOMPARE(h.count(TogetherKind::Play), 0);
+
+        Harness canceled;
+        QVERIFY(canceled.player.replaceQueue({{"1"}}));
+        QVERIFY(canceled.together.create());
+        r = Harness::ok();
+        r.inRoom = false;
+        canceled.reply(canceled.take(TogetherKind::Status), r);
+        const auto pending = canceled.take(TogetherKind::Create);
+        connect(&canceled.player, &ListeningSession::playbackChanged, this,
+                [&] { canceled.together.leave(); });
+        r = Harness::ok();
+        r.room = Harness::room();
+        canceled.reply(pending, r);
+        QCOMPARE(canceled.together.state(), TogetherSession::State::Leaving);
+        QCOMPARE(canceled.count(TogetherKind::ReplaceQueue), 0);
+        QCOMPARE(canceled.count(TogetherKind::Play), 0);
+    }
+    void bilibiliSelectionDuringStartupEndsTheRoom()
+    {
+        Harness h;
+        QVERIFY(h.player.replaceQueue({{"1"}}));
+        QVERIFY(h.together.create());
+        const auto c = h.latestPlay();
+        h.facade.deliverPlaybackSource(
+            {c.token, c.query.song, SourceProvider::Bilibili,
+             BiliStreamMeta{"BV1testpage", "456", "30280", {}}});
+        QCOMPARE(h.together.state(), TogetherSession::State::Idle);
+        QCOMPARE(h.count(TogetherKind::ReplaceQueue), 0);
+        QCOMPARE(h.count(TogetherKind::Play), 0);
     }
     void parsesShareLinks()
     {
