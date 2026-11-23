@@ -58,6 +58,22 @@ class BiliAccountTest : public QObject
         QVERIFY(account.cookie().isEmpty());
         QCOMPARE(fake->requests.size(), 0);
     }
+    void clearDuringWriteStillDrainsWhenClosing()
+    {
+        test::FakeSecretStore store;
+        store.hold = true;
+        auto manager = std::make_unique<test::FakeGetManager>();
+        auto* fake = manager.get();
+        Account account(store, std::move(manager));
+        account.save("SESSDATA=synthetic");
+        account.clear();
+        account.close();
+        store.release();
+        store.release();
+        QVERIFY(!store.entries.contains("bilibili.cookie"));
+        QVERIFY(account.cookie().isEmpty());
+        QCOMPARE(fake->requests.size(), 0);
+    }
     void storageFailureNeverAppliesCookie()
     {
         test::FakeSecretStore store;
