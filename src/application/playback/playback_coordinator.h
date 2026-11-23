@@ -31,6 +31,7 @@ class PlaybackCoordinator final : public QObject
     bool preload(domain::LoadToken current, domain::LoadToken next,
                  std::optional<domain::StreamQuery> query);
     [[nodiscard]] domain::PlaybackSnapshot snapshot() const { return m_snapshot; }
+    [[nodiscard]] bool acceptsLyrics(domain::LoadToken token) const;
   signals:
     void changed(cirrus::domain::PlaybackSnapshot snapshot);
     void sourceSelected(cirrus::domain::PlaybackSourceSelection selection);

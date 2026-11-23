@@ -195,9 +195,8 @@ class BackendPlayback : public QObject, public PlaybackSource
     qint64 m_seekSongMs = 0;
 };
 
-// Lyrics: the playing song's from the session, which fetches them anyway (waiting
-// while it does); others, or when the session's failed, from the resource cache, then
-// the service (integration.md §4 LyricsSource).
+// Playback lyrics come from the selected load's session document; Bilibili subtitle
+// absence may resolve to NetEase lyrics there. Non-playback songs use the resource cache.
 class BackendLyrics : public QObject, public LyricsSource
 {
   public:

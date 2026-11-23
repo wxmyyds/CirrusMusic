@@ -808,6 +808,8 @@ void ListeningSession::refreshPreload()
     if (!entry) {
         if (m_preload) {
             m_preload.reset();
+            if (const auto id = std::exchange(m_preloadLyricRequest, 0))
+                m_backend.cancelMusic(id);
             static_cast<void>(m_backend.preloadSong({}, m_quality));
         }
         return;

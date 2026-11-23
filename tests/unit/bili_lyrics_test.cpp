@@ -55,6 +55,8 @@ class BiliLyricsTest : public QObject
         QVERIFY(track.lines.first().words.isEmpty());
         QCOMPARE(track.malformedLines, 1);
         QCOMPARE(subtitleTrack({{"body", QJsonArray{}}}).availability, LyricAvailability::Empty);
+        QCOMPARE(subtitleTrack({{"body", QJsonArray{QJsonObject{
+            {"from", 0}, {"to", 2}, {"content", "   "}}}}}).availability, LyricAvailability::Empty);
         QCOMPARE(subtitleTrack({}).availability, LyricAvailability::Malformed);
     }
     void selectedSubtitleNeverReceivesCookie()
@@ -100,6 +102,34 @@ class BiliLyricsTest : public QObject
             else
                 QCOMPARE(std::get<SongLyrics>(result).providerNoLyric, std::optional<bool>(true));
         }
+    }
+    void malformedSubtitleIsNotAbsence()
+    {
+        for (const bool unsafeUrl : {false, true}) {
+            auto manager = std::make_unique<test::FakeGetManager>();
+            auto* fake = manager.get();
+            fake->plans = {test::biliJson(envelope(discovery(
+                unsafeUrl ? "https://untrusted.example/a.json" : "//aisubtitle.hdslb.com/a.json"))),
+                test::biliJson("{\"body\":[{\"from\":-1,\"to\":2,\"content\":\"bad\"}]}")};
+            Lyrics lyrics(std::move(manager));
+            QSignalSpy done(&lyrics, &Lyrics::completed);
+            QVERIFY(lyrics.request(source()));
+            QTRY_COMPARE(done.size(), 1);
+            const auto result = qvariant_cast<MusicResult>(done.first().at(1));
+            QVERIFY(std::holds_alternative<MusicFailure>(result));
+            QCOMPARE(std::get<MusicFailure>(result).error, MusicError::InvalidResponse);
+            QCOMPARE(fake->requests.size(), unsafeUrl ? 1 : 2);
+        }
+    }
+    void fractionalDiscoveryCodeIsNotAbsence()
+    {
+        auto manager = std::make_unique<test::FakeGetManager>();
+        manager->plans = {test::biliJson("{\"code\":0.5,\"data\":{}}")};
+        Lyrics lyrics(std::move(manager));
+        QSignalSpy done(&lyrics, &Lyrics::completed);
+        QVERIFY(lyrics.request(source()));
+        QTRY_COMPARE(done.size(), 1);
+        QVERIFY(std::holds_alternative<MusicFailure>(qvariant_cast<MusicResult>(done.first().at(1))));
     }
     void cancelBeforeDispatch()
     {

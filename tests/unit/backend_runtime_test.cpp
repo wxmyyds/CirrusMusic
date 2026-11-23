@@ -278,6 +278,7 @@ class BackendRuntimeTest : public QObject
     void songWikiTextThroughThread();
     void recommendationHistoryThroughThread();
     void togetherHttpThroughThread();
+    void biliLyricsAndCookieThroughThread_data();
     void biliLyricsAndCookieThroughThread();
     void playbackThroughThread_data();
     void playbackThroughThread();
@@ -297,8 +298,23 @@ class BackendRuntimeTest : public QObject
     void trackedStoreKeepsDeadRecipientsAccounted();
 };
 
+void BackendRuntimeTest::biliLyricsAndCookieThroughThread_data()
+{
+    QTest::addColumn<int>("subtitleCase");
+    QTest::newRow("subtitle-present") << 0;
+    QTest::newRow("subtitle-missing-netease") << 1;
+    QTest::newRow("subtitle-empty-netease") << 2;
+    QTest::newRow("subtitle-risk-no-netease") << 3;
+    QTest::newRow("subtitle-malformed-no-netease") << 4;
+    QTest::newRow("subtitle-network-no-netease") << 5;
+    QTest::newRow("subtitle-whitespace-netease") << 6;
+    QTest::newRow("netease-lyric-error-is-final") << 7;
+    QTest::newRow("stop-before-fallback-result") << 8;
+}
+
 void BackendRuntimeTest::biliLyricsAndCookieThroughThread()
 {
+    QFETCH(int, subtitleCase);
     QTemporaryDir directory;
     auto state = std::make_shared<SharedState>();
     Gate gate;
@@ -309,8 +325,19 @@ void BackendRuntimeTest::biliLyricsAndCookieThroughThread()
         "{\"code\":200,\"data\":[{\"id\":1,\"code\":404,\"fee\":1,\"url\":\"\"}]}",
         "e82ckenh8dichen8", EVP_aes_128_ecb(), true);
     QVERIFY(permission);
-    auto f = factories(state, gate, {Plan{*permission}, Plan{
-        "{\"code\":200,\"songs\":[{\"id\":1,\"name\":\"Song\",\"dt\":200000,\"ar\":[{\"id\":2,\"name\":\"Artist\"}]}]}"}});
+    QList<Plan> plans{Plan{*permission}, Plan{
+        "{\"code\":200,\"songs\":[{\"id\":1,\"name\":\"Song\",\"dt\":200000,\"ar\":[{\"id\":2,\"name\":\"Artist\"}]}]}"}};
+    const bool useNetease = subtitleCase == 1 || subtitleCase == 2 || subtitleCase >= 6;
+    if (useNetease) {
+        auto lyric = Plan{QJsonDocument(QJsonObject{
+            {"code", 200}, {"lrc", QJsonObject{{"lyric", "[00:00.00]Netease\n[00:02.00]"}}}}).toJson()};
+        if (subtitleCase == 7)
+            lyric.error = QNetworkReply::ConnectionRefusedError;
+        if (subtitleCase == 8)
+            lyric.delayMs = 250;
+        plans.append(lyric);
+    }
+    auto f = factories(state, gate, std::move(plans));
     f.playback = [] { return std::make_unique<FakePlaybackBackend>(); };
     f.biliAccountHttp = [] {
         auto manager = std::make_unique<FakeGetManager>();
@@ -323,15 +350,28 @@ void BackendRuntimeTest::biliLyricsAndCookieThroughThread()
                           biliJson(kBiliView), biliJson(kBiliPlayUrlSized)};
         return manager;
     };
-    f.biliLyricsHttp = [] {
+    f.biliLyricsHttp = [subtitleCase] {
         auto manager = std::make_unique<FakeGetManager>();
         const QJsonObject subtitle{{"subtitle", QJsonObject{{"subtitles", QJsonArray{
             QJsonObject{{"lan", "zh-CN"}, {"subtitle_url", "//aisubtitle.hdslb.com/a.json"}}}}}}};
         auto body = biliJson(QJsonDocument(QJsonObject{{"body", QJsonArray{
             QJsonObject{{"from", 0}, {"to", 2}, {"content", "Subtitle"}}}}}).toJson());
         body.delayMs = 250;
-        manager->plans = {biliJson(QJsonDocument(QJsonObject{{"code", 0}, {"data", subtitle}}).toJson()),
-                          body};
+        auto discovery = biliJson(QJsonDocument(QJsonObject{{"code", 0}, {"data", subtitle}}).toJson());
+        if (subtitleCase == 1 || subtitleCase >= 7)
+            discovery = biliJson("{\"code\":0,\"data\":{}}");
+        if (subtitleCase == 2)
+            body.body = "{\"body\":[]}";
+        if (subtitleCase == 3)
+            discovery.status = 412;
+        if (subtitleCase == 4)
+            body.body = "{\"body\":[{\"from\":-1,\"to\":2,\"content\":\"bad\"}]}";
+        if (subtitleCase == 5)
+            discovery.error = QNetworkReply::ConnectionRefusedError;
+        if (subtitleCase == 6)
+            body.body = "{\"body\":[{\"from\":0,\"to\":2,\"content\":\"   \"}]}";
+        manager->plans = subtitleCase == 1 || subtitleCase >= 7 ? QList<Plan>{discovery}
+                                           : QList<Plan>{discovery, body};
         return manager;
     };
     BackendRuntime runtime(config, std::move(f));
@@ -360,18 +400,40 @@ void BackendRuntimeTest::biliLyricsAndCookieThroughThread()
     QVERIFY(runtime.listening().replaceQueue({{"1"}}));
     QCOMPARE(shown.status(), ui::lyrics::Loading);
     QTRY_COMPARE(facade.playback().provider, domain::SourceProvider::Bilibili);
+    if (subtitleCase == 8) {
+        QTRY_COMPARE(state->requests.load(), 3);
+        QVERIFY(runtime.listening().stop());
+        QTest::qWait(350);
+        QVERIFY(!runtime.listening().lyrics());
+        QCOMPARE(shown.lines()->rowCount(), 0);
+        QVERIFY(shown.status() != ui::lyrics::Ready);
+        facade.close();
+        QTRY_COMPARE(stopped.size(), 1);
+        return;
+    }
+    if ((subtitleCase >= 3 && !useNetease) || subtitleCase == 7) {
+        QTRY_COMPARE(runtime.listening().lyricsState(), domain::LyricsState::Failed);
+        QTRY_COMPARE(shown.status(), ui::lyrics::Failed);
+        QCOMPARE(state->requests.load(), useNetease ? 3 : 2);
+        facade.close();
+        QTRY_COMPARE(stopped.size(), 1);
+        return;
+    }
+    const QString expected = subtitleCase == 0 ? "Subtitle" : "Netease";
     QTRY_COMPARE(runtime.listening().lyricsState(), domain::LyricsState::Ready);
     QTRY_COMPARE(shown.status(), ui::lyrics::Ready);
     QCOMPARE(shown.lines()->rowCount(), 1);
-    QCOMPARE(shown.lines()->lines().first().text, QString("Subtitle"));
+    QCOMPARE(shown.lines()->lines().first().text, expected);
     QCOMPARE(shown.lines()->lines().first().startMs, 0);
-    QCOMPARE(shown.lines()->lines().first().endMs, 2000);
+    if (subtitleCase == 0)
+        QCOMPARE(shown.lines()->lines().first().endMs, 2000);
     QCOMPARE(shown.timing(), ui::lyrics::Lines);
     ui::CurrentLyrics openedLater(&lyricsSource, &player);
     QTRY_COMPARE(openedLater.status(), ui::lyrics::Ready);
     QCOMPARE(openedLater.lines()->rowCount(), 1);
-    QCOMPARE(runtime.listening().lyrics()->original.standard.lines.first().text, QString("Subtitle"));
-    QCOMPARE(state->requests.load(), 2); // permission + original metadata, never NetEase lyrics
+    QCOMPARE(runtime.listening().lyrics()->original.standard.lines.first().text, expected);
+    QCOMPARE(state->requests.load(), subtitleCase == 0 ? 2 : 3);
+    QCOMPARE(facade.playback().provider, domain::SourceProvider::Bilibili);
     runtime.clearBiliCookie();
     QTRY_COMPARE(runtime.biliAccount().status, domain::BiliAccountStatus::LoggedOut);
     facade.close();

@@ -252,6 +252,11 @@ bool PlaybackCoordinator::current(LoadToken token) const
            m_snapshot.state != PlaybackState::Empty && m_snapshot.state != PlaybackState::Failed &&
            m_snapshot.state != PlaybackState::Ended;
 }
+bool PlaybackCoordinator::acceptsLyrics(LoadToken token) const
+{
+    return current(token) || (current(m_snapshot.token) && m_next && m_next->loaded &&
+                              m_next->token == token);
+}
 void PlaybackCoordinator::retire()
 {
     m_ready = false;

@@ -180,20 +180,66 @@ class BackendWorker final : public QObject
         emit delivered(event);
     }
 
+    bool acceptsPlaybackLyrics(const MusicCommand& command) const
+    {
+        const auto* lyrics = std::get_if<PlaybackLyricQuery>(&command.query);
+        if (!lyrics || !m_ready || m_closing || !m_session->accepts(command.context) ||
+            !m_playback || !m_playback->acceptsLyrics(lyrics->source.token))
+            return false;
+        const auto source = m_sourceSelections.constFind(lyrics->source.token.generation);
+        return source != m_sourceSelections.cend() && source->token == lyrics->source.token &&
+               source->song == lyrics->source.song && source->provider == lyrics->source.provider &&
+               source->bili == lyrics->source.bili;
+    }
+
+    void cancelRetiredPlaybackLyrics()
+    {
+        for (const auto id : m_biliLyricRequests.keys()) {
+            if (acceptsPlaybackLyrics(m_biliLyricRequests.value(id)))
+                continue;
+            const auto command = m_biliLyricRequests.take(id);
+            m_biliLyrics->cancel(id);
+            emit musicDelivered({command.id, command.generation, command.context,
+                                 MusicFailure{MusicError::StaleContext}});
+        }
+        for (const auto id : m_musicRequests.keys()) {
+            const auto command = m_musicRequests.value(id);
+            if (!std::holds_alternative<PlaybackLyricQuery>(command.query) ||
+                acceptsPlaybackLyrics(command))
+                continue;
+            m_musicRequests.remove(id);
+            m_musicService->cancel(id);
+            emit musicDelivered({command.id, command.generation, command.context,
+                                 MusicFailure{MusicError::StaleContext}});
+        }
+    }
+
+    void requestNeteaseLyrics(MusicCommand command)
+    {
+        if (!acceptsPlaybackLyrics(command)) {
+            emit musicDelivered({command.id, command.generation, command.context,
+                                 MusicFailure{MusicError::StaleContext}});
+            return;
+        }
+        const auto& source = std::get<PlaybackLyricQuery>(command.query).source;
+        const auto id = m_musicService->request(command.context, LyricQuery{source.song});
+        if (id)
+            m_musicRequests.insert(id, command);
+        else
+            emit musicDelivered({command.id, command.generation, command.context,
+                                 MusicFailure{MusicError::Busy}});
+    }
+
     void music(MusicCommand command)
     {
         if (const auto* lyrics = std::get_if<PlaybackLyricQuery>(&command.query)) {
-            const auto source = m_sourceSelections.constFind(lyrics->source.token.generation);
-            if (!m_ready || m_closing || !m_session->accepts(command.context) ||
-                source == m_sourceSelections.cend() || source->token != lyrics->source.token ||
-                source->song != lyrics->source.song || source->provider != lyrics->source.provider ||
-                source->bili != lyrics->source.bili) {
+            if (!acceptsPlaybackLyrics(command)) {
                 emit musicDelivered({command.id, command.generation, command.context,
                                      MusicFailure{MusicError::StaleContext}});
                 return;
             }
-            if (source->provider == domain::SourceProvider::Bilibili) {
-                const auto id = m_biliLyrics->request(*source);
+            if (lyrics->source.provider == domain::SourceProvider::Bilibili) {
+                const auto id = m_biliLyrics->request(lyrics->source);
                 if (id)
                     m_biliLyricRequests.insert(id, command);
                 else
@@ -201,12 +247,7 @@ class BackendWorker final : public QObject
                                          MusicFailure{MusicError::Busy}});
                 return;
             }
-            const auto id = m_musicService->request(command.context, LyricQuery{source->song});
-            if (id)
-                m_musicRequests.insert(id, command);
-            else
-                emit musicDelivered({command.id, command.generation, command.context,
-                                     MusicFailure{MusicError::Busy}});
+            requestNeteaseLyrics(std::move(command));
             return;
         }
         const auto id = m_ready && !m_closing && m_musicService
@@ -395,6 +436,7 @@ class BackendWorker final : public QObject
             else if (command.action == PlaybackAction::Seek)
                 accepted = m_playback->seek(command.positionMs);
         }
+        cancelRetiredPlaybackLyrics();
         auto event = makeEvent(Kind::Acknowledged);
         event.commandId = command.id;
         event.accepted = accepted;
@@ -641,6 +683,21 @@ class BackendWorker final : public QObject
                     if (!m_biliLyricRequests.contains(id))
                         return;
                     const auto command = m_biliLyricRequests.take(id);
+                    if (!acceptsPlaybackLyrics(command)) {
+                        emit musicDelivered({command.id, command.generation, command.context,
+                                             MusicFailure{MusicError::StaleContext}});
+                        return;
+                    }
+                    const auto* lyrics = std::get_if<domain::SongLyrics>(&result);
+                    if (lyrics &&
+                        (lyrics->providerNoLyric == true ||
+                         lyrics->original.standard.availability == domain::LyricAvailability::Empty)) {
+                        log::info(lcPlayback, "lyrics.subtitle_absent",
+                                  {{"song", lyrics->song.value},
+                                   {"token", std::get<PlaybackLyricQuery>(command.query).source.token.generation}});
+                        requestNeteaseLyrics(command);
+                        return;
+                    }
                     emit musicDelivered({command.id, command.generation, command.context,
                                          std::move(result)});
                 });
@@ -665,6 +722,7 @@ class BackendWorker final : public QObject
                 });
         connect(m_playback.get(), &PlaybackCoordinator::changed, this,
                 [this](domain::PlaybackSnapshot snapshot) {
+                    cancelRetiredPlaybackLyrics();
                     if (m_preloadToken.generation && snapshot.token == m_preloadToken) {
                         m_sourceSelections.remove(m_playbackToken.generation);
                         m_advancedFrom = std::exchange(m_playbackToken, snapshot.token);
@@ -679,6 +737,11 @@ class BackendWorker final : public QObject
                     if (!m_musicRequests.contains(id))
                         return;
                     const auto command = m_musicRequests.take(id);
+                    if (std::holds_alternative<PlaybackLyricQuery>(command.query)) {
+                        if (!acceptsPlaybackLyrics(command))
+                            result = MusicFailure{MusicError::StaleContext};
+                        retention = {};
+                    }
                     emit musicDelivered(
                         {command.id, command.generation, context, std::move(result), retention});
                 });

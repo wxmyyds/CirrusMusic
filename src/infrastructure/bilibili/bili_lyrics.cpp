@@ -89,7 +89,8 @@ LyricTrack subtitleTrack(const QJsonObject& data)
             ++track.malformedLines;
             continue;
         }
-        track.lines.append({startMs, endMs, content.toString(), {}});
+        if (!content.toString().trimmed().isEmpty())
+            track.lines.append({startMs, endMs, content.toString(), {}});
     }
     track.availability = !track.lines.isEmpty() ? LyricAvailability::Present
                          : track.malformedLines ? LyricAvailability::Malformed
@@ -160,17 +161,32 @@ void Lyrics::received(quint64 httpId, HttpOutcome outcome)
         SongLyrics lyrics;
         lyrics.song = it->source.song;
         lyrics.original.standard = subtitleTrack(root);
-        finish(id, lyrics);
+        if (lyrics.original.standard.availability == LyricAvailability::Malformed)
+            finish(id, MusicFailure{MusicError::InvalidResponse});
+        else
+            finish(id, lyrics);
         return;
     }
     if (!root.value(QStringLiteral("code")).isDouble() ||
-        root.value(QStringLiteral("code")).toInt() != 0 ||
+        root.value(QStringLiteral("code")).toDouble() != 0 ||
         !root.value(QStringLiteral("data")).isObject()) {
         finish(id, MusicFailure{MusicError::ProviderRejected});
         return;
     }
-    const auto url = subtitleUrl(root.value(QStringLiteral("data")).toObject());
+    const auto data = root.value(QStringLiteral("data")).toObject();
+    const auto subtitle = data.value(QStringLiteral("subtitle"));
+    const auto rows = subtitle.toObject().value(QStringLiteral("subtitles"));
+    if ((!subtitle.isUndefined() && !subtitle.isObject()) ||
+        (!rows.isUndefined() && !rows.isArray())) {
+        finish(id, MusicFailure{MusicError::InvalidResponse});
+        return;
+    }
+    const auto url = subtitleUrl(data);
     if (!url) {
+        if (!rows.toArray().isEmpty()) {
+            finish(id, MusicFailure{MusicError::InvalidResponse});
+            return;
+        }
         SongLyrics missing;
         missing.song = it->source.song;
         missing.providerNoLyric = true;
