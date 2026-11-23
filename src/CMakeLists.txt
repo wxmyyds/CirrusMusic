@@ -120,6 +120,8 @@ add_library(cirrus_application STATIC
     application/playback/system_media_commands.h
     application/playback/playback_coordinator.cpp
     application/playback/playback_coordinator.h
+    application/playback/provider_router.cpp
+    application/playback/provider_router.h
     application/music/personal_fm_source.cpp
     application/music/personal_fm_source.h
     application/music/music_query_service.cpp
@@ -478,10 +480,31 @@ pkg_check_modules(CIRRUS_FFMPEG REQUIRED IMPORTED_TARGET
 target_link_libraries(cirrus_media PUBLIC cirrus_application Qt6::Network Qt6::Multimedia
     PRIVATE PkgConfig::CIRRUS_FFMPEG cirrus_storage)
 
+add_library(cirrus_bilibili STATIC
+    infrastructure/bilibili/bili_models.h
+    infrastructure/bilibili/bili_http_client.h
+    infrastructure/bilibili/bili_http_client.cpp
+    infrastructure/bilibili/bili_wbi.h
+    infrastructure/bilibili/bili_wbi.cpp
+    infrastructure/bilibili/bili_quality.h
+    infrastructure/bilibili/bili_quality.cpp
+    infrastructure/bilibili/bili_matcher.h
+    infrastructure/bilibili/bili_matcher.cpp
+    infrastructure/bilibili/bili_playurl.h
+    infrastructure/bilibili/bili_playurl.cpp
+    infrastructure/bilibili/bili_api.h
+    infrastructure/bilibili/bili_api.cpp
+    infrastructure/bilibili/bili_stream_resolver.h
+    infrastructure/bilibili/bili_stream_resolver.cpp
+)
+target_compile_features(cirrus_bilibili PUBLIC cxx_std_20)
+target_include_directories(cirrus_bilibili PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(cirrus_bilibili PUBLIC cirrus_application cirrus_domain cirrus_logging Qt6::Network PRIVATE OpenSSL::Crypto)
+
 # Composition stays out of application/domain and is not linked into the template UI.
 add_library(cirrus_backend STATIC
     infrastructure/runtime/backend_runtime.cpp
     infrastructure/runtime/backend_runtime.h
 )
 target_link_libraries(cirrus_backend PUBLIC cirrus_application
-    PRIVATE cirrus_bootstrap cirrus_netease_auth cirrus_netease_music cirrus_media cirrus_listening_state cirrus_resource_cache)
+    PRIVATE cirrus_bootstrap cirrus_netease_auth cirrus_netease_music cirrus_media cirrus_bilibili cirrus_listening_state cirrus_resource_cache)

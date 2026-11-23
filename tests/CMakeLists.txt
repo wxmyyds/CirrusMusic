@@ -379,3 +379,42 @@ qt_add_executable(tst_update_release unit/update_release_test.cpp
 target_include_directories(tst_update_release PRIVATE ${PROJECT_SOURCE_DIR}/ui/presentation)
 target_link_libraries(tst_update_release PRIVATE Qt6::Test Qt6::Core)
 add_test(NAME update_release COMMAND tst_update_release)
+
+# Bilibili's pure pieces: WBI signature, matcher score, stream selection, playurl mapping.
+qt_add_executable(tst_bili_wbi unit/bili_wbi_test.cpp)
+target_link_libraries(tst_bili_wbi PRIVATE cirrus_bilibili Qt6::Test OpenSSL::Crypto)
+add_test(NAME bili_wbi COMMAND tst_bili_wbi)
+set_tests_properties(bili_wbi PROPERTIES TIMEOUT 20)
+
+qt_add_executable(tst_bili_matcher unit/bili_matcher_test.cpp)
+target_link_libraries(tst_bili_matcher PRIVATE cirrus_bilibili Qt6::Test)
+add_test(NAME bili_matcher COMMAND tst_bili_matcher)
+set_tests_properties(bili_matcher PROPERTIES TIMEOUT 20)
+
+qt_add_executable(tst_bili_quality unit/bili_quality_test.cpp)
+target_link_libraries(tst_bili_quality PRIVATE cirrus_bilibili Qt6::Test)
+add_test(NAME bili_quality COMMAND tst_bili_quality)
+set_tests_properties(bili_quality PROPERTIES TIMEOUT 20)
+
+# The router's decision table (fake resolvers, no network).
+qt_add_executable(tst_provider_router unit/provider_router_test.cpp)
+target_link_libraries(tst_provider_router PRIVATE cirrus_application Qt6::Test)
+add_test(NAME provider_router COMMAND tst_provider_router)
+set_tests_properties(provider_router PROPERTIES TIMEOUT 20)
+
+# The Bilibili API chain over a synthetic QNetworkAccessManager: fingerprint -> nav -> search
+# -> view -> playurl -> size probe, and each typed failure.
+qt_add_executable(tst_bili_api unit/bili_api_test.cpp support/fake_http.h support/synthetic_bilibili.h)
+target_link_libraries(tst_bili_api PRIVATE cirrus_bilibili Qt6::Test Qt6::Network)
+add_test(NAME bili_api COMMAND tst_bili_api)
+set_tests_properties(bili_api PROPERTIES TIMEOUT 20)
+
+qt_add_executable(tst_bili_http unit/bili_http_test.cpp support/fake_http.h)
+target_link_libraries(tst_bili_http PRIVATE cirrus_bilibili Qt6::Test)
+add_test(NAME bili_http COMMAND tst_bili_http)
+set_tests_properties(bili_http PROPERTIES TIMEOUT 20)
+
+qt_add_executable(tst_bili_resolver unit/bili_resolver_test.cpp support/synthetic_bilibili.h)
+target_link_libraries(tst_bili_resolver PRIVATE cirrus_bilibili Qt6::Test)
+add_test(NAME bili_resolver COMMAND tst_bili_resolver)
+set_tests_properties(bili_resolver PROPERTIES TIMEOUT 20)
