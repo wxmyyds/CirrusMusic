@@ -380,6 +380,16 @@ target_include_directories(tst_update_release PRIVATE ${PROJECT_SOURCE_DIR}/ui/p
 target_link_libraries(tst_update_release PRIVATE Qt6::Test Qt6::Core)
 add_test(NAME update_release COMMAND tst_update_release)
 
+qt_add_executable(tst_bili_lyrics unit/bili_lyrics_test.cpp support/synthetic_bilibili.h)
+target_link_libraries(tst_bili_lyrics PRIVATE cirrus_bilibili Qt6::Test)
+add_test(NAME bili_lyrics COMMAND tst_bili_lyrics)
+set_tests_properties(bili_lyrics PROPERTIES TIMEOUT 20)
+
+qt_add_executable(tst_bili_account unit/bili_account_test.cpp support/synthetic_bilibili.h)
+target_link_libraries(tst_bili_account PRIVATE cirrus_bilibili cirrus_secrets Qt6::Test)
+add_test(NAME bili_account COMMAND tst_bili_account)
+set_tests_properties(bili_account PROPERTIES TIMEOUT 20)
+
 # Bilibili's pure pieces: WBI signature, matcher score, stream selection, playurl mapping.
 qt_add_executable(tst_bili_wbi unit/bili_wbi_test.cpp)
 target_link_libraries(tst_bili_wbi PRIVATE cirrus_bilibili Qt6::Test OpenSSL::Crypto)

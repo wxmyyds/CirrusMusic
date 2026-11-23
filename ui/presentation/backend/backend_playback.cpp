@@ -162,7 +162,8 @@ bool sameState(const PlaybackSnapshot& a, const PlaybackSnapshot& b)
     const auto failureKind = [](const PlaybackSnapshot& s) {
         return s.failure ? int(s.failure->kind) : -1;
     };
-    return a.status == b.status && a.current.key == b.current.key &&
+    return a.status == b.status && a.provider == b.provider && a.generation == b.generation &&
+           a.current.key == b.current.key &&
            failureKind(a) == failureKind(b) && a.rate == b.rate && a.durationMs == b.durationMs &&
            a.seekable == b.seekable && a.previewStartMs == b.previewStartMs &&
            a.volume == b.volume && a.order == b.order && a.repeat == b.repeat &&
@@ -224,13 +225,21 @@ template <class T> Request replyLater(QObject* context, Reply<T> reply, Outcome<
 
 BackendPlayback::BackendPlayback(runtime::BackendRuntime& runtime, CatalogSource& catalog,
                                  QObject* parent)
-    : QObject(parent), m_session(&runtime.listening()), m_facade(&runtime.facade()),
+    : QObject(parent), m_runtime(runtime), m_session(&runtime.listening()), m_facade(&runtime.facade()),
       m_catalog(catalog)
 {
+    connect(&runtime, &runtime::BackendRuntime::biliAccountChanged, this, [this] {
+        if (m_biliChanged)
+            m_biliChanged();
+    });
     const auto changed = [this] { update(); };
     connect(m_session, &ListeningSession::queueChanged, this, changed);
     connect(m_session, &ListeningSession::playbackChanged, this, changed);
     connect(m_session, &ListeningSession::fmChanged, this, changed);
+    connect(m_session, &ListeningSession::failureStreakExceeded, this, [this] {
+        if (m_notice)
+            m_notice(tr("多首歌曲无法播放，已停止"));
+    });
     // A session change retires the queue and playback.
     connect(&runtime.facade(), &application::BackendFacade::sessionChanged, this,
             [this](const domain::SessionSnapshot&) {
@@ -325,12 +334,19 @@ void BackendPlayback::update()
         next.repeat = m_state.repeat;
     }
 
+    next.generation = play.token.generation;
+    next.provider = play.provider == domain::SourceProvider::Bilibili ? playback::Bilibili
+                                                                     : playback::Netease;
     next.status = statusOf(play);
     if (next.status == playback::Empty && next.fmWaiting)
-        next.status = playback::Loading;
+        next.status = session.fmBlocked() ? playback::Ended : playback::Loading;
     if (next.status == playback::Failed && play.failure)
         next.failure = Failure{kindOf(play.failure->error), std::nullopt};
     next.current = songInfo(play.song.value);
+    if (next.fmWaiting && session.fmBlocked() && next.queueIndex >= 0) {
+        next.current = songInfo(next.queue.at(next.queueIndex));
+        next.provider = m_state.provider;
+    }
     next.durationMs = play.durationMs.value_or(-1);
     next.seekable = play.seekable;
     next.previewStartMs = play.preview ? play.preview->startMs : -1;
@@ -411,6 +427,7 @@ void BackendPlayback::keep(qint64 now)
         return;
     Kept kept;
     kept.current = m_state.current;
+    kept.provider = m_state.provider;
     kept.durationMs = m_state.durationMs;
     kept.previewStartMs = m_state.previewStartMs;
     if (!m_removing) {
@@ -525,6 +542,8 @@ void BackendPlayback::showKept(PlaybackSnapshot& next, qint64 now)
     next.status = kept.songPositionMs > 0 || kept.resume ? playback::Paused : playback::Ended;
     next.failure.reset();
     next.current = kept.current;
+    next.provider = kept.provider;
+    next.generation = 0;
     next.durationMs = kept.durationMs;
     next.previewStartMs = kept.previewStartMs;
     next.seekable = kept.durationMs > 0;
@@ -1016,6 +1035,24 @@ void BackendPlayback::applyNormalization()
         static_cast<void>(m_facade->setPlaybackNormalization(*m_normalize));
 }
 
+BiliAccountState BackendPlayback::biliAccount() const
+{
+    const auto state = m_runtime.biliAccount();
+    return {int(state.status), state.name};
+}
+
+void BackendPlayback::saveBiliCookie(const QString& cookie)
+{
+    m_runtime.saveBiliCookie(cookie.toUtf8());
+}
+
+void BackendPlayback::clearBiliCookie() { m_runtime.clearBiliCookie(); }
+
+void BackendPlayback::setBiliSourceEnabled(bool on)
+{
+    m_facade->setAllowBiliSource(on);
+}
+
 void BackendPlayback::setNormalization(bool on)
 {
     m_normalize = on;
@@ -1073,6 +1110,7 @@ void BackendPlayback::startFm()
 struct BackendLyrics::Job {
     QString key;
     Reply<SongLyrics> reply;
+    quint64 generation = 0;
     quint64 query = 0; // the cache's
     Request service;   // the service's
     void finish(const Outcome<SongLyrics>& outcome)
@@ -1084,12 +1122,16 @@ struct BackendLyrics::Job {
 
 BackendLyrics::BackendLyrics(runtime::BackendRuntime& runtime, QObject* parent)
     : QObject(parent), m_session(&runtime.listening()), m_queries(runtime.resourceQueries()),
-      m_requests(new MusicRequests(runtime.facade(), this))
+      m_requests(new MusicRequests(runtime.facade(), this)), m_facade(&runtime.facade())
 {
     if (m_queries)
         connect(m_queries, &cache::CachedMusicQueryService::completed, this,
                 &BackendLyrics::completed);
     connect(m_session, &ListeningSession::lyricsChanged, this, &BackendLyrics::sessionLyrics);
+    connect(m_facade, &application::BackendFacade::playbackSourceSelected, this,
+            [this] { sessionLyrics(); });
+    connect(m_facade, &application::BackendFacade::playbackChanged, this,
+            [this] { sessionLyrics(); });
 }
 
 BackendLyrics::~BackendLyrics() = default;
@@ -1100,16 +1142,11 @@ Request BackendLyrics::lyrics(const QString& songKey, Reply<SongLyrics> reply)
         return replyLater(
             this, std::move(reply),
             Outcome<SongLyrics>{std::nullopt, false, Failure{failure::Rejected, std::nullopt}});
-    // The playing song's are already here, or on their way.
-    if (const auto own = m_session ? m_session->lyrics() : std::nullopt;
-        own && own->song.value == songKey)
-        return replyLater(this, std::move(reply), Outcome<SongLyrics>{lyricsOf(*own)});
     auto job = std::make_shared<Job>(Job{songKey, std::move(reply)});
-    if (m_session && m_session->playback().song.value == songKey &&
-        m_session->lyricsState() == domain::LyricsState::Loading)
-        m_waiting.append(job);
-    else
-        start(job);
+    QTimer::singleShot(0, this, [this, job] {
+        if (job->reply && !routePlayback(job))
+            start(job);
+    });
     return Request([self = QPointer<BackendLyrics>(this), job] {
         job->reply = {};
         job->service.cancel();
@@ -1121,19 +1158,55 @@ Request BackendLyrics::lyrics(const QString& songKey, Reply<SongLyrics> reply)
     });
 }
 
-void BackendLyrics::sessionLyrics()
+bool BackendLyrics::routePlayback(const std::shared_ptr<Job>& job)
 {
-    const auto own = m_session ? m_session->lyrics() : std::nullopt;
-    const bool loading = m_session && m_session->lyricsState() == domain::LyricsState::Loading;
-    const QString playing = m_session ? m_session->playback().song.value : QString();
-    for (const auto& job : std::exchange(m_waiting, {})) {
+    const auto generation = m_facade ? m_facade->playbackLyricGeneration({job->key}) : 0;
+    if (job->generation && generation != job->generation) {
+        job->finish(Outcome<SongLyrics>{std::nullopt, false,
+                                       Failure{failure::Rejected, std::nullopt}});
+        return true;
+    }
+    if (!generation)
+        return false;
+    job->generation = generation;
+    if (m_session && m_session->playback().token.generation == generation) {
+        const auto own = m_session->lyrics();
         if (own && own->song.value == job->key)
             job->finish(Outcome<SongLyrics>{lyricsOf(*own)});
-        else if (loading && playing == job->key)
+        else if (m_session->lyricsState() == domain::LyricsState::Loading ||
+                 m_session->playback().state == domain::PlaybackState::Resolving)
             m_waiting.append(job);
         else
-            start(job); // the session's failed, or it moved on
+            job->finish(Outcome<SongLyrics>{std::nullopt, false,
+                                           Failure{failure::Rejected, std::nullopt}});
+        return true;
     }
+    if (!m_facade->playbackSource(generation)) {
+        m_waiting.append(job);
+        return true;
+    }
+    job->service.cancel();
+    job->service = m_requests->submit(
+        [generation](application::BackendFacade& facade) { return facade.playbackLyrics(generation); },
+        [job](const application::MusicResult& result) {
+            if (const auto* lyrics = std::get_if<domain::SongLyrics>(&result))
+                job->finish(Outcome<SongLyrics>{lyricsOf(*lyrics)});
+            else
+                job->finish(Outcome<SongLyrics>{std::nullopt, false,
+                                               Failure{failure::Rejected, std::nullopt}});
+        },
+        [job](failure::Kind kind, std::optional<qint64> retryAfterMs) {
+            job->finish(Outcome<SongLyrics>{std::nullopt, false, Failure{kind, retryAfterMs}});
+        });
+    return true;
+}
+
+void BackendLyrics::sessionLyrics()
+{
+    for (const auto& job : std::exchange(m_waiting, {}))
+        if (job->reply && !routePlayback(job))
+            job->finish(Outcome<SongLyrics>{std::nullopt, false,
+                                           Failure{failure::Rejected, std::nullopt}});
 }
 
 void BackendLyrics::start(const std::shared_ptr<Job>& job)
@@ -1153,6 +1226,8 @@ void BackendLyrics::completed(const cache::CachedMusicResult& result)
     if (!job)
         return;
     job->query = 0;
+    if (!job->reply || routePlayback(job))
+        return;
     if (result.value) {
         if (const auto* lyrics = std::get_if<domain::SongLyrics>(&*result.value)) {
             job->finish(Outcome<SongLyrics>{lyricsOf(*lyrics)});
@@ -1171,10 +1246,14 @@ void BackendLyrics::completed(const cache::CachedMusicResult& result)
 
 void BackendLyrics::fromService(const std::shared_ptr<Job>& job)
 {
+    if (!job->reply || routePlayback(job))
+        return;
     const domain::SongId id{job->key};
     job->service = m_requests->submit(
         [id](application::BackendFacade& facade) { return facade.lyrics(id); },
-        [job](const application::MusicResult& result) {
+        [this, job](const application::MusicResult& result) {
+            if (!job->reply || routePlayback(job))
+                return;
             if (const auto* lyrics = std::get_if<domain::SongLyrics>(&result))
                 job->finish(Outcome<SongLyrics>{lyricsOf(*lyrics)});
             else

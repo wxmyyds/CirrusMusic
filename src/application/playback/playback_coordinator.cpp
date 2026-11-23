@@ -1,5 +1,6 @@
 #include "playback_coordinator.h"
 #include "logging/log.h"
+#include <QPointer>
 #include <QThread>
 #include <QTimer>
 #include <algorithm>
@@ -113,11 +114,15 @@ void PlaybackCoordinator::resolved(quint64 id, SessionToken context, StreamResul
     m_snapshot.preview = source.preview;
     m_snapshot.provider = source.provider;
     m_snapshot.state = PlaybackState::Loading;
+    const QPointer<PlaybackCoordinator> guard(this);
+    emit sourceSelected({token, source.song, source.provider, source.bili});
+    if (!guard || !current(token))
+        return;
     emit changed(m_snapshot);
-    if (current(token)) {
+    if (guard && current(token)) {
         MediaSource physical = std::move(source); // retire the song envelope here
         m_backend.load(std::move(physical), token);
-        if (token == m_snapshot.token && !m_vocals.isEmpty())
+        if (guard && token == m_snapshot.token && !m_vocals.isEmpty())
             m_backend.setVocals(token, std::exchange(m_vocals, {}));
     }
 }
@@ -167,13 +172,18 @@ void PlaybackCoordinator::preloaded(StreamResult result)
     m_next->preview = source.preview;
     m_next->provider = source.provider;
     m_next->loaded = true;
+    const auto token = m_next->token;
+    const QPointer<PlaybackCoordinator> guard(this);
+    emit sourceSelected({token, source.song, source.provider, source.bili});
+    if (!guard || !m_next || m_next->token != token)
+        return;
     log::debug(lcPlayback, "preload.resolved",
                {{"token", m_next->token.generation},
                 {"quality", source.actualQuality},
                 {"preview", source.preview.has_value()}});
     MediaSource physical = std::move(source);
-    m_backend.preload(std::move(physical), m_next->token);
-    if (m_next && !m_next->vocals.isEmpty())
+    m_backend.preload(std::move(physical), token);
+    if (guard && m_next && m_next->token == token && !m_next->vocals.isEmpty())
         m_backend.setVocals(m_next->token, std::exchange(m_next->vocals, {}));
 }
 

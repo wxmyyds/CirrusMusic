@@ -48,6 +48,10 @@ class BackendPlayback : public QObject, public PlaybackSource
         m_changed = std::move(changed);
     }
 
+    void setNoticeHandler(std::function<void(const QString&)> notice) override
+    {
+        m_notice = std::move(notice);
+    }
     void playSongs(const QStringList& keys, int index, const PlayOrigin& origin = {}) override;
     // Where a queue entry's song came from (the listening reports); remembered per
     // account with the queue, so a restored queue keeps it.
@@ -66,6 +70,14 @@ class BackendPlayback : public QObject, public PlaybackSource
     void clearQueue() override;
     void setVolume(double volume) override;
     void setNormalization(bool on) override;
+    void setBiliSourceEnabled(bool on) override;
+    [[nodiscard]] BiliAccountState biliAccount() const override;
+    void setBiliAccountHandler(std::function<void()> changed) override
+    {
+        m_biliChanged = std::move(changed);
+    }
+    void saveBiliCookie(const QString& cookie) override;
+    void clearBiliCookie() override;
     void setTransition(int mode, int crossfadeSeconds) override;
     void setOrder(playback::Order order) override;
     void setRepeat(playback::Repeat repeat) override;
@@ -113,6 +125,7 @@ class BackendPlayback : public QObject, public PlaybackSource
         QStringList keys; // play order; empty when the queue was emptied
         int index = -1;
         SongInfo current;
+        playback::Provider provider = playback::Netease;
         qint64 songPositionMs = 0; // on the song's clock (a preview's start added)
         qint64 durationMs = -1;
         qint64 previewStartMs = -1;
@@ -126,7 +139,10 @@ class BackendPlayback : public QObject, public PlaybackSource
     void loadOrigins();
     void saveOrigins() const;
 
+    runtime::BackendRuntime& m_runtime;
     QPointer<application::ListeningSession> m_session;
+    std::function<void(const QString&)> m_notice;
+    std::function<void()> m_biliChanged;
     QPointer<application::BackendFacade> m_facade;
     CatalogSource& m_catalog;
     QHash<QUuid, PlayOrigin> m_origins;
@@ -179,6 +195,7 @@ class BackendLyrics : public QObject, public LyricsSource
   private:
     struct Job;
     void sessionLyrics();
+    bool routePlayback(const std::shared_ptr<Job>& job);
     // The cache first, then the service.
     void start(const std::shared_ptr<Job>& job);
     void completed(const cache::CachedMusicResult& result);
@@ -187,6 +204,7 @@ class BackendLyrics : public QObject, public LyricsSource
     QPointer<application::ListeningSession> m_session;
     QPointer<cache::CachedMusicQueryService> m_queries;
     MusicRequests* m_requests;
+    QPointer<application::BackendFacade> m_facade;
     QList<std::shared_ptr<Job>> m_waiting;          // for the session's
     QHash<quint64, std::shared_ptr<Job>> m_pending; // by cache query id
 };

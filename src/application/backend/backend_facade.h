@@ -205,6 +205,11 @@ class BackendFacade final : public QObject
     [[nodiscard]] quint64 commentInfo(domain::CommentInfoQuery query);
     [[nodiscard]] quint64 songDetails(QList<domain::SongId> songs);
     [[nodiscard]] quint64 lyrics(domain::SongId song);
+    [[nodiscard]] quint64 playbackLyrics(quint64 generation);
+    [[nodiscard]] quint64 playbackLyricGeneration(const domain::SongId& song) const;
+    [[nodiscard]] std::optional<domain::PlaybackSourceSelection>
+    playbackSource(quint64 generation) const;
+    void deliverPlaybackSource(domain::PlaybackSourceSelection selection);
     [[nodiscard]] quint64 albumDetails(domain::AlbumId album);
     [[nodiscard]] quint64 artistDetails(domain::ArtistId artist);
     [[nodiscard]] quint64 artistIntroduction(domain::ArtistId artist);
@@ -255,6 +260,8 @@ class BackendFacade final : public QObject
     void cancelComment(quint64 id);
     [[nodiscard]] quint64 requestTogether(domain::TogetherRequest request);
     void cancelTogether(quint64 id);
+    void setAllowBiliSource(bool enabled) { m_allowBiliSource = enabled; }
+    [[nodiscard]] bool allowBiliSource() const { return m_allowBiliSource; }
     [[nodiscard]] domain::PlaybackSnapshot playback() const { return m_playback; }
     [[nodiscard]] quint64 playSong(domain::SongId song,
                                    domain::AudioQuality quality = domain::AudioQuality::Standard,
@@ -323,6 +330,7 @@ class BackendFacade final : public QObject
     void togetherCompleted(quint64 id, cirrus::domain::SessionToken context,
                            cirrus::domain::TogetherResult result);
     void playbackChanged(cirrus::domain::PlaybackSnapshot snapshot);
+    void playbackSourceSelected(cirrus::domain::PlaybackSourceSelection selection);
 
     // Composition wiring only; emitted on this object's thread.
     void startRequested();
@@ -361,6 +369,9 @@ class BackendFacade final : public QObject
                       domain::CacheRetention retention = {});
     quint64 submitPlayback(PlaybackCommand command);
     void invalidatePlayback();
+    QHash<quint64, domain::PlaybackSourceSelection> m_playbackSources;
+    domain::SongId m_preloadSong;
+    bool m_allowBiliSource = false;
     domain::PlaybackSnapshot m_playback;
     quint64 m_playbackGeneration = 0;
     quint64 m_preloadGeneration = 0; // the preloaded song's, adopted when it starts

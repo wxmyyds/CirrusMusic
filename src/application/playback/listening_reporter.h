@@ -48,7 +48,7 @@ class ListeningReporter final : public QObject
     void flush(std::function<void()> done, int timeoutMs = 2000);
 
   private:
-    void recordChanged(const domain::StoredListeningRecord& row);
+    void recordChanged(const domain::StoredListeningRecord& row, domain::SourceProvider provider);
     void playbackChanged(const domain::PlaybackSnapshot& snapshot);
     void report(const domain::StoredListeningRecord& row, domain::ListeningReportEnd end);
     struct Prepared {

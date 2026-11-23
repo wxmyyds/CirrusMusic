@@ -24,6 +24,22 @@ class BiliHttpTest : public QObject
         QTRY_COMPARE(spy.count(), 1);
     }
 
+    void subtitleScopeCannotSendCookieOrFetchAudio()
+    {
+        auto manager = std::make_unique<test::FakeGetManager>();
+        auto* fake = manager.get();
+        HttpClient client(std::move(manager));
+        QVERIFY(client.get(QUrl("https://aisubtitle.hdslb.com/a"), "SESSDATA=synthetic", true,
+                           15000, 4096, {}, HttpScope::Subtitle));
+        QVERIFY(!fake->requests.first().hasRawHeader("Cookie"));
+        QCOMPARE(client.get(QUrl("https://cn.bilivideo.com/a"), {}, false, 15000, 4096, {},
+                            HttpScope::Subtitle), quint64(0));
+        QCOMPARE(client.get(QUrl("https://api.bilibili.com/a"), {}, false, 15000, 4096, {},
+                            HttpScope::Subtitle), quint64(0));
+        QCOMPARE(client.get(QUrl("https://aisubtitle.hdslb.com/a"), {}, false), quint64(0));
+        QCOMPARE(fake->requests.size(), 1);
+    }
+
     void unsafeUrlsNeverDispatch()
     {
         auto manager = std::make_unique<test::FakeGetManager>();

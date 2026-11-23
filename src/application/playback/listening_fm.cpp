@@ -36,7 +36,6 @@ void ListeningSession::clearFmState()
     m_mode = ListeningMode::Queue;
     m_fmWaiting = m_fmBlocked = false;
     m_fmPending.reset();
-    m_fmAttempts = 0;
     m_fmScheduledRevision = 0;
     m_restoredFm = false;
 }
@@ -178,8 +177,6 @@ bool ListeningSession::enterFmWait(bool automatic, bool stopMedia)
     m_fmBlocked = false;
     m_fmPending.reset();
     m_auto = automatic;
-    if (!automatic)
-        m_fmAttempts = 0;
     m_terminalHandled = true;
     cancelLyrics();
     if (revision != m_revision)
@@ -229,10 +226,6 @@ void ListeningSession::consumeFm()
 {
     if (!m_fm || m_mode != ListeningMode::PersonalFm || !current() || !m_fmWaiting || m_fmBlocked)
         return;
-    if (m_auto && m_fmAttempts >= 5) {
-        blockFm();
-        return;
-    }
     auto revision = m_revision;
     if (!m_fmPending) {
         auto song = m_fm->takeNext();
@@ -298,7 +291,6 @@ bool ListeningSession::retryFm()
     const auto revision = ++m_revision;
     m_fmBlocked = false;
     m_auto = false; // explicit user retry starts a manual chain, never an endless failure loop
-    m_fmAttempts = 0;
     const auto supply = m_fm->snapshot();
     if (!m_fmPending && supply.upcoming.isEmpty() && !supply.fetching) {
         if (!m_fm->retry())

@@ -17,12 +17,16 @@ class ListeningHistory
     [[nodiscard]] domain::SessionToken context() const { return m_context; }
     [[nodiscard]] QList<domain::ListeningRecord> records() const { return m_records; }
     // Single owner consumes each changed/finalized fact before the 256-row view can evict it.
-    QList<domain::StoredListeningRecord> takeUpdates();
+    struct Update {
+        domain::StoredListeningRecord record;
+        domain::SourceProvider provider = domain::SourceProvider::Netease;
+    };
+    QList<Update> takeUpdates();
     bool takeUpdateOverflow();
 
   private:
     void recordUpdate(const domain::ListeningRecord& record);
-    QList<domain::StoredListeningRecord> m_updates; // bounded transient facts, not DB retention
+    QList<Update> m_updates; // bounded transient facts, not DB retention
     bool m_updateOverflow = false;
     domain::SessionToken m_context;
     std::optional<domain::ListeningRecord> m_active;

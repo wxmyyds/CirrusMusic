@@ -1,6 +1,7 @@
 #pragma once
 
 #include "domain/account/session_types.h"
+#include "domain/playback/playback_types.h"
 #include "domain/music/account_library_types.h"
 #include "domain/music/cache_retention.h"
 #include "domain/music/catalog_types.h"
@@ -21,6 +22,7 @@
 #include "domain/music/user_profile_types.h"
 
 #include <QObject>
+#include <algorithm>
 #include <type_traits>
 #include <variant>
 
@@ -65,8 +67,26 @@ struct LyricQuery {
     domain::SongId song;
     [[nodiscard]] bool isValid() const { return domain::validMusicId(song.value); }
 };
+struct PlaybackLyricQuery {
+    domain::PlaybackSourceSelection source;
+    [[nodiscard]] bool isValid() const
+    {
+        if (!domain::validMusicId(source.song.value) || !source.token.session.isValid() ||
+            !source.token.generation)
+            return false;
+        if (source.provider == domain::SourceProvider::Netease)
+            return !source.bili;
+        return source.provider == domain::SourceProvider::Bilibili && source.bili &&
+               source.bili->bvid.startsWith(QStringLiteral("BV")) &&
+               source.bili->bvid.size() <= 32 &&
+               std::all_of(source.bili->bvid.cbegin(), source.bili->bvid.cend(), [](QChar c) {
+                   return (c >= u'A' && c <= u'Z') || (c >= u'a' && c <= u'z') ||
+                          (c >= u'0' && c <= u'9');
+               }) && domain::validMusicId(source.bili->cid);
+    }
+};
 using MusicQuery = std::variant<
-    domain::SongSearch, DetailQuery, LyricQuery, domain::AlbumQuery, domain::ArtistQuery,
+    domain::SongSearch, DetailQuery, LyricQuery, PlaybackLyricQuery, domain::AlbumQuery, domain::ArtistQuery,
     domain::ArtistSongsQuery, domain::ArtistAlbumsQuery, domain::PlaylistQuery,
     domain::PlaylistSongsQuery, domain::DailyRecommendationsQuery, domain::PersonalFmQuery,
     domain::MyPlaylistsQuery, domain::LikedSongIdsQuery, domain::SavedAlbumsQuery,

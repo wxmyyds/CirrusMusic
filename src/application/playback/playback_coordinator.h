@@ -33,6 +33,7 @@ class PlaybackCoordinator final : public QObject
     [[nodiscard]] domain::PlaybackSnapshot snapshot() const { return m_snapshot; }
   signals:
     void changed(cirrus::domain::PlaybackSnapshot snapshot);
+    void sourceSelected(cirrus::domain::PlaybackSourceSelection selection);
 
   private:
     struct Next {

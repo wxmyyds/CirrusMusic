@@ -10,6 +10,7 @@
 
 namespace cirrus::bilibili
 {
+enum class HttpScope { Provider, Subtitle };
 
 // The desktop web identity every Bilibili endpoint and CDN request needs. One place, so the
 // API client and the media source's headers cannot drift.
@@ -46,7 +47,8 @@ class HttpClient final : public QObject
     // a provider answer's address is followed by AudioStore under its own policy. A non-empty
     // `range` (e.g. "bytes=0-0") asks only that span, for the size probe.
     quint64 get(QUrl url, QByteArray cookie, bool sendCookie, int timeoutMs = 15000,
-                qsizetype responseLimit = 4 * 1024 * 1024, QByteArray range = {});
+                qsizetype responseLimit = 4 * 1024 * 1024, QByteArray range = {},
+                HttpScope scope = HttpScope::Provider);
     void cancel(quint64 id);
 
   signals:

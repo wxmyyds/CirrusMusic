@@ -1,6 +1,7 @@
 #pragma once
 
 #include "application/backend/backend_facade.h"
+#include "domain/account/bili_account_types.h"
 
 #include <QHash>
 
@@ -86,15 +87,21 @@ class BackendRuntime final : public QObject
     void clearAudioCache(std::function<void(qint64 bytes)> reply);
     // Applies now, and to the store the backend creates when it starts.
     void setAudioCacheCapacity(qint64 bytes);
+    void saveBiliCookie(QByteArray cookie);
+    void clearBiliCookie();
+    [[nodiscard]] domain::BiliAccountState biliAccount() const { return m_biliAccount; }
 
   signals:
     // Internal: carries the calls above to the backend thread.
     void audioCacheRequested(quint64 id, int action, qint64 value);
+    void biliCookieRequested(QByteArray cookie, bool clear);
+    void biliAccountChanged(cirrus::domain::BiliAccountState state);
 
   private:
     void audioCacheDelivered(quint64 id, qint64 bytes);
     QHash<quint64, std::function<void(qint64)>> m_audioReplies;
     quint64 m_audioRequest = 0;
+    domain::BiliAccountState m_biliAccount;
     application::BackendFacade* m_facade = nullptr;
     application::PersonalFmSource* m_fm = nullptr;
     application::ListeningSession* m_listening = nullptr;

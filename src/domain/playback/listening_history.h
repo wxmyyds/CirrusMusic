@@ -21,5 +21,6 @@ struct ListeningRecord {
     QUuid recordId;         // independent local row identity, not the private load token
     qint64 startedAtMs = 0; // UTC calendar metadata; NEVER a duration source
     std::optional<qint64> endedAtMs;
+    SourceProvider provider = SourceProvider::Netease;
 };
 } // namespace cirrus::domain

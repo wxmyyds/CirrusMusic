@@ -191,6 +191,42 @@ quint64 BackendFacade::lyrics(domain::SongId song)
     return submitMusic(LyricQuery{std::move(song)});
 }
 
+std::optional<domain::PlaybackSourceSelection>
+BackendFacade::playbackSource(quint64 generation) const
+{
+    const auto found = m_playbackSources.constFind(generation);
+    return found == m_playbackSources.cend() ? std::nullopt
+                                            : std::optional<domain::PlaybackSourceSelection>(*found);
+}
+
+void BackendFacade::deliverPlaybackSource(domain::PlaybackSourceSelection selection)
+{
+    if (m_state != BackendState::Ready || selection.token.session != m_snapshot.token ||
+        (selection.token.generation != m_playbackGeneration &&
+         selection.token.generation != m_preloadGeneration) ||
+        !PlaybackLyricQuery{selection}.isValid() ||
+        (selection.token.generation == m_playbackGeneration && selection.song != m_playback.song) ||
+        (selection.token.generation == m_preloadGeneration && selection.song != m_preloadSong))
+        return;
+    m_playbackSources.insert(selection.token.generation, selection);
+    emit playbackSourceSelected(std::move(selection));
+}
+
+quint64 BackendFacade::playbackLyricGeneration(const domain::SongId& song) const
+{
+    if (m_state != BackendState::Ready)
+        return 0;
+    if (song == m_playback.song)
+        return m_playbackGeneration;
+    return m_preloadGeneration && song == m_preloadSong ? m_preloadGeneration : 0;
+}
+
+quint64 BackendFacade::playbackLyrics(quint64 generation)
+{
+    const auto source = playbackSource(generation);
+    return source ? submitMusic(PlaybackLyricQuery{*source}) : 0;
+}
+
 quint64 BackendFacade::albumDetails(domain::AlbumId album)
 {
     return submitMusic(domain::AlbumQuery{std::move(album)});
@@ -472,6 +508,12 @@ void BackendFacade::deliverMusic(MusicDelivery delivery)
         if (!page || !domain::matchingSongWikiText(*wiki, *page))
             delivery.result = MusicFailure{MusicError::InvalidResponse};
     }
+    if (const auto* lyrics = std::get_if<PlaybackLyricQuery>(&expected.query)) {
+        const auto source = playbackSource(lyrics->source.token.generation);
+        if (!source || source->token != lyrics->source.token || source->song != lyrics->source.song ||
+            source->provider != lyrics->source.provider || source->bili != lyrics->source.bili)
+            delivery.result = MusicFailure{MusicError::StaleContext};
+    }
     publishMusic(expected, std::move(delivery.result), delivery.cacheRetention);
 }
 
@@ -746,6 +788,8 @@ void BackendFacade::invalidatePlayback()
 {
     m_playbackGeneration = ++m_nextId;
     m_preloadGeneration = 0;
+    m_preloadSong = {};
+    m_playbackSources.clear();
     m_playback = {};
     // Deferred: account intent invalidation must not reenter submit before its command is emitted.
     const auto generation = m_playbackGeneration;
@@ -759,7 +803,7 @@ quint64 BackendFacade::playSong(domain::SongId song, domain::AudioQuality qualit
 {
     PlaybackCommand command;
     command.action = PlaybackAction::Play;
-    command.query = {std::move(song), quality};
+    command.query = {std::move(song), quality, m_allowBiliSource};
     command.intent = intent;
     return submitPlayback(command);
 }
@@ -767,7 +811,7 @@ quint64 BackendFacade::preloadSong(domain::SongId song, domain::AudioQuality qua
 {
     PlaybackCommand command;
     command.action = PlaybackAction::Preload;
-    command.query = {std::move(song), quality};
+    command.query = {std::move(song), quality, m_allowBiliSource};
     return submitPlayback(command);
 }
 quint64 BackendFacade::pausePlayback()
@@ -868,10 +912,17 @@ quint64 BackendFacade::submitPlayback(PlaybackCommand command)
     m_pending.insert(command.id);
     const bool replacing =
         command.action == PlaybackAction::Play || command.action == PlaybackAction::Stop;
-    if (replacing || command.action == PlaybackAction::Preload)
+    if (replacing)
+        m_playbackSources.clear();
+    else if (command.action == PlaybackAction::Preload)
+        m_playbackSources.remove(m_preloadGeneration);
+    if (replacing || command.action == PlaybackAction::Preload) {
         m_preloadGeneration = 0;
+        m_preloadSong = {};
+    }
     if (command.action == PlaybackAction::Preload && !command.query.song.value.isEmpty()) {
         m_preloadGeneration = command.id;
+        m_preloadSong = command.query.song;
         command.next = {m_snapshot.token, command.id};
     }
     if (replacing) {
@@ -898,7 +949,9 @@ void BackendFacade::deliverPlayback(PlaybackDelivery delivery)
         return;
     const auto generation = delivery.snapshot.token.generation;
     if (generation && generation == m_preloadGeneration) {
+        m_playbackSources.remove(m_playbackGeneration);
         m_playbackGeneration = std::exchange(m_preloadGeneration, 0); // played on into it
+        m_preloadSong = {};
     } else if (generation != m_playbackGeneration)
         return;
     m_playback = std::move(delivery.snapshot);

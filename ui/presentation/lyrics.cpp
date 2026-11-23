@@ -173,6 +173,8 @@ CurrentLyrics::CurrentLyrics(LyricsSource* source, Player* player, QObject* pare
             load();
     });
     connect(m_player, &Player::changed, this, [this] {
+        if (m_generation != m_player->generation() || m_provider != m_player->provider())
+            load();
         if (m_player->previewStartMs() == m_previewStartMs)
             return;
         m_previewStartMs = m_player->previewStartMs();
@@ -263,12 +265,15 @@ void CurrentLyrics::load()
 {
     m_request.cancel();
     m_key = m_player->current().key;
+    m_generation = m_player->generation();
+    m_provider = m_player->provider();
     emit offsetChanged();
     m_lines->reset({});
     m_hasTranslation = m_hasRomanization = m_japanese = m_hasRuby = false;
     m_trackOffsetMs = 0;
     m_timing = lyrics::Lines;
-    if (m_key.isEmpty() || !m_source) {
+    if (m_key.isEmpty() || !m_source ||
+        (m_generation == 0 && m_provider == playback::Bilibili)) {
         setStatus(lyrics::None);
     } else {
         setStatus(lyrics::Loading);

@@ -73,10 +73,12 @@ struct Harness {
                 return *i;
         return {};
     }
-    MusicCommand lyric() const
+    MusicCommand lyric()
     {
+        const auto c = play();
+        f.deliverPlaybackSource({c.token, c.query.song, SourceProvider::Netease, {}});
         for (auto i = music.crbegin(); i != music.crend(); ++i)
-            if (std::holds_alternative<LyricQuery>(i->query))
+            if (std::holds_alternative<PlaybackLyricQuery>(i->query))
                 return *i;
         return {};
     }
@@ -315,31 +317,28 @@ class FmListeningTest : public QObject
         QTRY_COMPARE(h.plays(), 4);
         QCOMPARE(h.play().query.song.value, "4");
     }
-    void manualFailureAndBoundedAutomaticFailures()
+    void tenFailuresStopAndKeepFmSongs()
     {
         Harness h;
         QVERIFY(h.player.startFm());
-        h.batch({1, 2, 3, 4, 5, 6, 7, 8, 9, 10});
+        h.batch({1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12});
         QTRY_COMPARE(h.plays(), 1);
-        h.publish(PlaybackState::Failed);
-        QCoreApplication::processEvents();
-        QCOMPARE(h.plays(), 1);
-        QVERIFY(h.player.resume());
-        QCOMPARE(h.plays(), 2);
-        QCOMPARE(h.play().query.song.value, "1");
-        h.publish(PlaybackState::Ended);
-        QTRY_COMPARE(h.plays(), 3);
-        for (int attempt = 1; attempt <= 5; ++attempt) {
+        QSignalSpy stopped(&h.player, &ListeningSession::failureStreakExceeded);
+        for (int attempt = 1; attempt <= 10; ++attempt) {
             h.publish(PlaybackState::Ready);
             h.publish(PlaybackState::Failed);
-            if (attempt < 5)
-                QTRY_COMPARE(h.plays(), 3 + attempt);
+            if (attempt < 10)
+                QTRY_COMPARE(h.plays(), attempt + 1);
         }
-        QTRY_VERIFY(h.player.fmBlocked());
-        QCOMPARE(h.plays(), 7);
+        QSignalSpy fmChanged(&h.player, &ListeningSession::fmChanged);
+        QTRY_COMPARE(stopped.size(), 1);
+        QVERIFY(!fmChanged.isEmpty());
+        QVERIFY(h.player.fmBlocked());
+        QCOMPARE(h.plays(), 10);
+        QCOMPARE(h.player.fmQueue().entries.size(), 10);
         QVERIFY(h.player.retryFm());
-        QTRY_COMPARE(h.plays(), 8);
-        QCOMPARE(h.play().query.song.value, "7");
+        QTRY_COMPARE(h.plays(), 11);
+        QCOMPARE(h.play().query.song.value, "11");
     }
     void switchQueueOnlyAfterAcceptance()
     {

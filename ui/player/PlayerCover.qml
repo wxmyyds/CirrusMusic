@@ -90,6 +90,23 @@ Item {
             sourceSize: Qt.size(root.decodeSize, root.decodeSize)
         }
 
+        Rectangle {
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.margins: 12
+            width: sourceText.implicitWidth + 20
+            height: sourceText.implicitHeight + 12
+            radius: height / 2
+            color: Qt.alpha("black", 0.65)
+            Text {
+                id: sourceText
+                anchors.centerIn: parent
+                text: App.player.provider === Playback.Bilibili ? "Bilibili" : qsTr("网易云")
+                color: "white"
+                font: Theme.type.labelLarge.font
+            }
+        }
+
         // The glare, opposite the pointer, as strong as the tilt.
         Shape {
             id: glare

@@ -134,6 +134,9 @@ class ListeningSession final : public QObject
     void historyChanged(); // notification only, owning-thread getter; never a reporting event
     void
     listeningRecordChanged(cirrus::domain::StoredListeningRecord record); // private local store
+    void reportingRecordChanged(cirrus::domain::StoredListeningRecord record,
+                                cirrus::domain::SourceProvider provider);
+    void failureStreakExceeded();
     void historyCleared(cirrus::domain::SessionSnapshot source);
     void historyStorageOverflow(); // explicit gap, not silent durable retention
     void fmChanged();              // notification only; read current mode/waiting/blocked getters
@@ -171,10 +174,13 @@ class ListeningSession final : public QObject
     [[nodiscard]] QUuid fmNeighbour(int step) const;
     bool playFm(QUuid entry, bool automatic);
     bool acceptLoadCommand(quint64 id, quint64 revision);
+    bool stopPlayback(bool keepFmQueue);
     void receive(domain::PlaybackSnapshot snapshot);
     void advance(bool naturalEnd);
     void reset();
     void cancelLyrics();
+    void requestLyrics();
+    void sourceSelected(domain::PlaybackSourceSelection selection);
     void refreshCursors();
     bool notifyHistory(bool notifyView = true);
     bool current() const;
@@ -189,7 +195,13 @@ class ListeningSession final : public QObject
     domain::ListeningMode m_mode = domain::ListeningMode::Queue;
     std::optional<domain::Song> m_fmPending;
     quint64 m_fmScheduledRevision = 0;
-    int m_fmAttempts = 0;
+    int m_failureStreak = 0;
+    qint64 m_lastObservedPlayedMs = 0;
+    bool m_heard = false;
+    bool m_lyricsRequested = false;
+    bool m_failureStopNotified = false;
+    std::optional<quint64> m_pendingFailureStop;
+    void stopForFailures(quint64 revision);
     bool m_fmWaiting = false, m_fmBlocked = false;
     bool m_restoredFm = false; // the restored queue is a Personal FM's
     PlaybackQueue m_queue;

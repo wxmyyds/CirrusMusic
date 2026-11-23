@@ -36,6 +36,8 @@ bool ListeningHistory::observe(const PlaybackSnapshot& snapshot)
     if (!m_active || snapshot.token != m_active->token || snapshot.song != m_active->song)
         return false;
     bool changed = false;
+    if (m_active->playedMs == 0)
+        m_active->provider = snapshot.provider;
     if (snapshot.observed) {
         const auto value = *snapshot.observed;
         if (value.playedMs >= m_lastTotal && value.playedMs <= ObservedPlayback::MaximumMs &&
@@ -103,17 +105,17 @@ void ListeningHistory::recordUpdate(const ListeningRecord& record)
 {
     auto row = storedListeningRecord(record);
     for (auto& pending : m_updates)
-        if (pending.id == row.id) {
-            pending = std::move(row);
+        if (pending.record.id == row.id) {
+            pending = {std::move(row), record.provider};
             return;
         }
     if (m_updates.size() >= 64) {
         m_updateOverflow = true; // explicit storage gap, never silently truncate durable history
         return;
     }
-    m_updates.append(std::move(row));
+    m_updates.append({std::move(row), record.provider});
 }
-QList<StoredListeningRecord> ListeningHistory::takeUpdates()
+QList<ListeningHistory::Update> ListeningHistory::takeUpdates()
 {
     return std::exchange(m_updates, {});
 }

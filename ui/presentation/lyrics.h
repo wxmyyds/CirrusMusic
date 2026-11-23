@@ -1,6 +1,7 @@
 #pragma once
 
 #include "request.h"
+#include "playback.h"
 #include "ruby.h"
 #include "types.h"
 
@@ -160,6 +161,8 @@ class CurrentLyrics : public QObject
     LyricLinesModel* m_lines;
     Request m_request;
     QString m_key;
+    quint64 m_generation = 0;
+    int m_provider = playback::Netease;
     lyrics::Status m_status = lyrics::None;
     lyrics::Timing m_timing = lyrics::Lines;
     bool m_hasTranslation = false;

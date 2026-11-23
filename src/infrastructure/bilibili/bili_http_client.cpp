@@ -79,10 +79,17 @@ HttpClient::~HttpClient()
 }
 
 quint64 HttpClient::get(QUrl url, QByteArray cookie, bool sendCookie, int timeoutMs,
-                       qsizetype responseLimit, QByteArray range)
+                       qsizetype responseLimit, QByteArray range, HttpScope scope)
 {
-    const bool api = apiUrl(url);
-    if (!api && !media::approvedMediaUrl(domain::SourceProvider::Bilibili, url))
+    const bool api = scope == HttpScope::Provider && apiUrl(url);
+    if (scope == HttpScope::Subtitle) {
+        const auto host = url.host();
+        if (!url.isValid() || url.isRelative() || url.scheme() != QStringLiteral("https") ||
+            !url.userInfo().isEmpty() || url.port(-1) != -1 || url.hasFragment() ||
+            url.path().isEmpty() || url.toEncoded().size() > 8192 ||
+            !(host == QStringLiteral("hdslb.com") || host.endsWith(QStringLiteral(".hdslb.com"))))
+            return 0;
+    } else if (!api && !media::approvedMediaUrl(domain::SourceProvider::Bilibili, url))
         return 0;
     QNetworkRequest request(url);
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,

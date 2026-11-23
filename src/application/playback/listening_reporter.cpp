@@ -39,7 +39,7 @@ ListeningReporter::ListeningReporter(BackendFacade& facade, ListeningSession& se
     });
     m_flushTimer.setSingleShot(true);
     connect(&m_flushTimer, &QTimer::timeout, this, &ListeningReporter::finishFlush);
-    connect(&session, &ListeningSession::listeningRecordChanged, this,
+    connect(&session, &ListeningSession::reportingRecordChanged, this,
             &ListeningReporter::recordChanged);
     connect(&session, &ListeningSession::playbackChanged, this,
             &ListeningReporter::playbackChanged);
@@ -60,8 +60,15 @@ ListeningReporter::ListeningReporter(BackendFacade& facade, ListeningSession& se
 
 ListeningReporter::~ListeningReporter() = default;
 
-void ListeningReporter::recordChanged(const StoredListeningRecord& row)
+void ListeningReporter::recordChanged(const StoredListeningRecord& row, SourceProvider provider)
 {
+    if (provider == SourceProvider::Bilibili) {
+        remember(m_started, m_startedOrder, row.id);
+        remember(m_reported, m_reportedOrder, row.id);
+        if (m_active && m_active->id == row.id)
+            m_active.reset();
+        return;
+    }
     if (row.end == ListeningEnd::Active) {
         m_active = row;
         if (!m_started.contains(row.id)) { // first heard: the web's startplay

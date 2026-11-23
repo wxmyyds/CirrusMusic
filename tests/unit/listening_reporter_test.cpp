@@ -57,7 +57,8 @@ struct Harness {
         return {};
     }
     // The backend's snapshot of the current load: `state`, with `playedMs` observed.
-    void state(PlaybackState state, qint64 playedMs)
+    void state(PlaybackState state, qint64 playedMs,
+               SourceProvider provider = SourceProvider::Netease)
     {
         const auto c = play();
         PlaybackSnapshot p;
@@ -69,6 +70,7 @@ struct Harness {
         p.durationMs = 200000;
         p.seekable = true;
         p.observed = ObservedPlayback{playedMs};
+        p.provider = provider;
         facade.deliverPlayback({c.generation, p});
     }
     QList<ListeningReport> of(ListeningReportAction action) const
@@ -200,6 +202,21 @@ class ListeningReporterTest : public QObject
         QTest::qWait(120);
         QCOMPARE(h.plays().size(), 1);
     }
+    void bilibiliRecordsNeverReportAfterSwitchingSongs()
+    {
+        Harness h;
+        QVERIFY(h.session.replaceQueue({{"1"}, {"2"}}));
+        h.state(PlaybackState::Playing, 60000, SourceProvider::Bilibili);
+        QVERIFY(h.session.next());
+        QVERIFY(h.reports.isEmpty());
+        h.state(PlaybackState::Playing, 6000);
+        QCOMPARE(h.starts().size(), 1);
+        QCOMPARE(h.starts().first().song.value, "2");
+        QVERIFY(h.session.stop());
+        QCOMPARE(h.plays().size(), 1);
+        QCOMPARE(h.plays().first().song.value, "2");
+    }
+
     void guestsAndFmAreNotReported()
     {
         Harness guest(SessionPhase::Guest);
@@ -238,6 +255,24 @@ class ListeningReporterTest : public QObject
         h.state(PlaybackState::Playing, 4000);
         QVERIFY(h.session.next());
         QCOMPARE(h.actives.size(), 3);
+    }
+    void neteaseThenBilibiliPauseAndFlushOnlyReportsNetease()
+    {
+        Harness h;
+        h.answerActive(0);
+        QVERIFY(h.session.replaceQueue({{"1"}, {"2"}}));
+        h.state(PlaybackState::Playing, 30000);
+        QVERIFY(h.session.next());
+        h.state(PlaybackState::Playing, 30000, SourceProvider::Bilibili);
+        h.state(PlaybackState::Paused, 30000, SourceProvider::Bilibili);
+        bool done = false;
+        h.reporter.flush([&] { done = true; }, 50);
+        QTRY_VERIFY(done);
+        QCOMPARE(h.starts().size(), 1);
+        QCOMPARE(h.plays().size(), 1);
+        for (const auto& report : h.reports)
+            QCOMPARE(report.report.song.value, QString("1"));
+        QCOMPARE(h.session.history().size(), 2);
     }
     void flushSettlesThePlayingLoadAndWaits()
     {

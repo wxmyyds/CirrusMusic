@@ -85,6 +85,7 @@ inline bool hasIdentity(const MediaSource& source)
 }
 } // namespace cirrus::domain
 
+Q_DECLARE_METATYPE(cirrus::domain::SourceProvider)
 Q_DECLARE_METATYPE(cirrus::domain::ContentHash)
 Q_DECLARE_METATYPE(cirrus::domain::StreamKey)
 Q_DECLARE_METATYPE(cirrus::domain::BiliStreamMeta)

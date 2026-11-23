@@ -445,7 +445,7 @@ void BackendRuntimeTest::playbackThroughThread()
     QCOMPARE(listening.history().first().accountId, fm ? QString("101") : QString{});
     QVERIFY(listening.next());
     // + preloading the next song, and its lyrics (for the transition into it)
-    QTRY_COMPARE(state->requests.load(), fm ? 15 : 8);
+    QTRY_COMPARE(state->requests.load(), fm ? 13 : 6);
     facade.close();
     QTRY_COMPARE(stopped.size(), 1);
     QCOMPARE(facade.playback().state, domain::PlaybackState::Empty);
@@ -597,7 +597,7 @@ void BackendRuntimeTest::gaplessAdvanceThroughThread()
     QCOMPARE(listening.history().first().end, domain::ListeningEnd::Ended);
     QTRY_COMPARE(listening.lyricsState(), domain::LyricsState::Ready);
     QCOMPARE(listening.lyrics()->song.value, "2");
-    QTRY_COMPARE(state->requests.load(), before + 7); // and song 3 is preloaded in turn
+    QTRY_COMPARE(state->requests.load(), before + 6); // song 3 URL pending; no lyrics before selection
     QVERIFY(listening.pause());                       // commands follow the new load
     QVERIFY(listening.next());
     QTRY_COMPARE(facade.playback().song.value, "3");
