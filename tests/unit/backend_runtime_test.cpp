@@ -1,5 +1,7 @@
 #include "../support/comment_write_support.h"
 #include "../support/fake_http.h"
+#include "../support/fake_playback.h"
+#include "../support/synthetic_bilibili.h"
 #include "../support/fake_secret_store.h"
 #include "../support/synthetic_cover.h"
 #include "../support/synthetic_daily_playlists.h"
@@ -21,6 +23,7 @@
 #include "infrastructure/storage/installation_store.h"
 #include "infrastructure/storage/listening_state_store.h"
 
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMutex>
@@ -271,6 +274,7 @@ class BackendRuntimeTest : public QObject
     void songWikiTextThroughThread();
     void recommendationHistoryThroughThread();
     void togetherHttpThroughThread();
+    void biliLyricsAndCookieThroughThread();
     void playbackThroughThread_data();
     void playbackThroughThread();
     void gaplessAdvanceThroughThread_data();
@@ -288,6 +292,62 @@ class BackendRuntimeTest : public QObject
     void closeBeforeStart();
     void trackedStoreKeepsDeadRecipientsAccounted();
 };
+
+void BackendRuntimeTest::biliLyricsAndCookieThroughThread()
+{
+    QTemporaryDir directory;
+    auto state = std::make_shared<SharedState>();
+    Gate gate;
+    const BackendConfig config{directory.filePath("state.sqlite"), "synthetic"};
+    seed(config.databasePath, *state);
+    state->records.insert("bilibili.cookie", "SESSDATA=synthetic");
+    const auto permission = netease::detail::aes(
+        "{\"code\":200,\"data\":[{\"id\":1,\"code\":404,\"fee\":1,\"url\":\"\"}]}",
+        "e82ckenh8dichen8", EVP_aes_128_ecb(), true);
+    QVERIFY(permission);
+    auto f = factories(state, gate, {Plan{*permission}, Plan{
+        "{\"code\":200,\"songs\":[{\"id\":1,\"name\":\"Song\",\"dt\":200000,\"ar\":[{\"id\":2,\"name\":\"Artist\"}]}]}"}});
+    f.playback = [] { return std::make_unique<FakePlaybackBackend>(); };
+    f.biliAccountHttp = [] {
+        auto manager = std::make_unique<FakeGetManager>();
+        manager->plans = {biliJson("{\"code\":0,\"data\":{\"isLogin\":true,\"uname\":\"Synthetic\"}}")};
+        return manager;
+    };
+    f.biliStreamHttp = [] {
+        auto manager = std::make_unique<FakeGetManager>();
+        manager->plans = {biliJson(kBiliNav), biliJson(kBiliSearch),
+                          biliJson(kBiliView), biliJson(kBiliPlayUrlSized)};
+        return manager;
+    };
+    f.biliLyricsHttp = [] {
+        auto manager = std::make_unique<FakeGetManager>();
+        const QJsonObject subtitle{{"subtitle", QJsonObject{{"subtitles", QJsonArray{
+            QJsonObject{{"lan", "zh-CN"}, {"subtitle_url", "//aisubtitle.hdslb.com/a.json"}}}}}}};
+        manager->plans = {biliJson(QJsonDocument(QJsonObject{{"code", 0}, {"data", subtitle}}).toJson()),
+                          biliJson(QJsonDocument(QJsonObject{{"body", QJsonArray{
+                              QJsonObject{{"from", 0}, {"to", 2}, {"content", "Subtitle"}}}}}).toJson())};
+        return manager;
+    };
+    BackendRuntime runtime(config, std::move(f));
+    auto& facade = runtime.facade();
+    QSignalSpy stopped(&facade, &BackendFacade::stopped);
+    facade.start();
+    QTRY_COMPARE(facade.state(), BackendState::Ready);
+    QTRY_VERIFY(facade.snapshot().token.isValid());
+    QTRY_COMPARE(runtime.biliAccount().status, domain::BiliAccountStatus::LoggedIn);
+    facade.setAllowBiliSource(true);
+    QVERIFY(runtime.listening().replaceQueue({{"1"}}));
+    QTRY_COMPARE(facade.playback().provider, domain::SourceProvider::Bilibili);
+    QTRY_COMPARE(runtime.listening().lyricsState(), domain::LyricsState::Ready);
+    QCOMPARE(runtime.listening().lyrics()->original.standard.lines.first().text, QString("Subtitle"));
+    QCOMPARE(state->requests.load(), 2); // permission + original metadata, never NetEase lyrics
+    runtime.clearBiliCookie();
+    QTRY_COMPARE(runtime.biliAccount().status, domain::BiliAccountStatus::LoggedOut);
+    facade.close();
+    QTRY_COMPARE(stopped.size(), 1);
+    QVERIFY(!state->records.contains("bilibili.cookie"));
+    QCOMPARE(state->wrongThread.load(), 0);
+}
 
 void BackendRuntimeTest::playbackThroughThread_data()
 {

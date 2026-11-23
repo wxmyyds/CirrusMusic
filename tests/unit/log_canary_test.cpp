@@ -5,6 +5,9 @@
 #include "infrastructure/netease/api/session_api_client.h"
 #include "logging/log.h"
 #include "logging/logger.h"
+#include "infrastructure/bilibili/bili_account.h"
+#include "../support/fake_secret_store.h"
+#include "../support/synthetic_bilibili.h"
 
 #include <QCryptographicHash>
 #include <QRegularExpression>
@@ -88,6 +91,20 @@ class LogCanaryTest : public QObject
         QVERIFY(text.contains(u"cirrus.net request.failed"));
         QVERIFY(text.contains(u"qt=ProtocolFailure"));
         QVERIFY(text.contains(u"cirrus.api api.failed"));
+    }
+
+    void bilibiliCookieNeverEntersLogs()
+    {
+        test::FakeSecretStore store;
+        auto manager = std::make_unique<test::FakeGetManager>();
+        manager->plans = {test::biliJson(
+            "{\"code\":0,\"data\":{\"isLogin\":true,\"uname\":\"CANARY-NAME\"}}")};
+        bilibili::Account account(store, std::move(manager));
+        QSignalSpy states(&account, &bilibili::Account::changed);
+        account.save("SESSDATA=CANARY-COOKIE");
+        QTRY_COMPARE(states.size(), 2);
+        const auto text = logged();
+        QVERIFY2(!text.contains(u"CANARY"), qPrintable(text));
     }
 
     void audioDownloads()

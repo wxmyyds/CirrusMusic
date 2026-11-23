@@ -625,9 +625,14 @@ class BackendWorker final : public QObject
             return;
         }
         m_streamResolver = std::make_unique<netease::StreamResolver>(*m_client);
+        auto biliApi = m_factories.biliStreamHttp
+                           ? std::make_unique<bilibili::BiliApi>(m_factories.biliStreamHttp())
+                           : std::make_unique<bilibili::BiliApi>();
         m_biliResolver = std::make_unique<bilibili::StreamResolver>(
-            *m_musicGateway, std::make_unique<bilibili::BiliApi>());
-        m_biliLyrics = std::make_unique<bilibili::Lyrics>();
+            *m_musicGateway, std::move(biliApi));
+        m_biliLyrics = m_factories.biliLyricsHttp
+                           ? std::make_unique<bilibili::Lyrics>(m_factories.biliLyricsHttp())
+                           : std::make_unique<bilibili::Lyrics>();
         connect(m_biliLyrics.get(), &bilibili::Lyrics::completed, this,
                 [this](quint64 id, MusicResult result) {
                     if (!m_biliLyricRequests.contains(id))
@@ -636,7 +641,9 @@ class BackendWorker final : public QObject
                     emit musicDelivered({command.id, command.generation, command.context,
                                          std::move(result)});
                 });
-        m_biliAccount = std::make_unique<bilibili::Account>(*m_store);
+        m_biliAccount = m_factories.biliAccountHttp
+                           ? std::make_unique<bilibili::Account>(*m_store, m_factories.biliAccountHttp())
+                           : std::make_unique<bilibili::Account>(*m_store);
         connect(m_biliAccount.get(), &bilibili::Account::changed, this,
                 &BackendWorker::biliAccountDelivered);
         connect(m_biliAccount.get(), &bilibili::Account::cookieChanged, this, [this] {

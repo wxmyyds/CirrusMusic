@@ -8,6 +8,8 @@
 #include <functional>
 #include <memory>
 
+class QNetworkAccessManager;
+
 namespace cirrus::netease
 {
 class HttpTransport;
@@ -54,6 +56,9 @@ struct BackendFactories {
     std::function<std::unique_ptr<netease::HttpTransport>()> apiTransport;
     std::function<std::unique_ptr<netease::HttpTransport>()> keyTransport;
     std::function<std::unique_ptr<application::IPlaybackBackend>()> playback;
+    std::function<std::unique_ptr<QNetworkAccessManager>()> biliStreamHttp;
+    std::function<std::unique_ptr<QNetworkAccessManager>()> biliLyricsHttp;
+    std::function<std::unique_ptr<QNetworkAccessManager>()> biliAccountHttp;
     std::function<std::unique_ptr<netease::CoverUpload>()> coverUpload; // same-thread NOS test seam
     std::function<std::unique_ptr<netease::CommentV3Issuer>()>
         commentV3Issuer; // same-thread, no real issuer in offline tests
