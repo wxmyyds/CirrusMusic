@@ -391,7 +391,7 @@ target_link_libraries(tst_bili_matcher PRIVATE cirrus_bilibili Qt6::Test)
 add_test(NAME bili_matcher COMMAND tst_bili_matcher)
 set_tests_properties(bili_matcher PROPERTIES TIMEOUT 20)
 
-qt_add_executable(tst_bili_quality unit/bili_quality_test.cpp)
+qt_add_executable(tst_bili_quality unit/bili_quality_test.cpp support/bili_playurl_fixtures.h)
 target_link_libraries(tst_bili_quality PRIVATE cirrus_bilibili Qt6::Test)
 add_test(NAME bili_quality COMMAND tst_bili_quality)
 set_tests_properties(bili_quality PROPERTIES TIMEOUT 20)

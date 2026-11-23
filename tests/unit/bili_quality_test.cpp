@@ -1,3 +1,4 @@
+#include "../support/bili_playurl_fixtures.h"
 #include "infrastructure/bilibili/bili_playurl.h"
 #include "infrastructure/bilibili/bili_quality.h"
 #include <QJsonArray>
@@ -8,9 +9,9 @@ using namespace cirrus::bilibili;
 
 namespace
 {
-QJsonObject parse(const char* json)
+QJsonObject parse(const QByteArray& json)
 {
-    return QJsonDocument::fromJson(QByteArray(json)).object();
+    return QJsonDocument::fromJson(json).object();
 }
 } // namespace
 
@@ -86,27 +87,7 @@ class BiliPlayUrlTest : public QObject
   private slots:
     void mapsDashDolbyAndFlac()
     {
-        const auto data = parse(R"({
-            "timelength": 200000,
-            "dash": {
-                "duration": 200,
-                "video": [{"id": 80, "baseUrl": "https://v.bilivideo.com/v"}],
-                "audio": [
-                    {"id": 30280, "baseUrl": "https://a.bilivideo.com/a1",
-                     "backupUrl": ["https://b.bilivideo.com/a1"],
-                     "bandwidth": 192000, "mimeType": "audio/mp4", "codecs": "mp4a.40.2",
-                     "size": 4800000, "md5": "0123456789abcdef0123456789abcdef"}
-                ],
-                "dolby": {"type": 1, "audio": [
-                    {"id": 30250, "baseUrl": "https://a.bilivideo.com/d",
-                     "bandwidth": 448000, "mimeType": "audio/eac3", "codecs": "ec-3"}
-                ]},
-                "flac": {"display": true, "audio":
-                    {"id": 30251, "baseUrl": "https://a.bilivideo.com/f",
-                     "bandwidth": 1000000, "mimeType": "audio/flac", "codecs": "fLaC"}
-                }
-            }
-        })");
+        const auto data = parse(cirrus::test::kDashDolbyFlac);
         const auto mapping = mapPlayUrl(data);
         QVERIFY(mapping.result.streams.size() >= 3);
         QVERIFY(mapping.result.videoAvailable);
@@ -131,12 +112,7 @@ class BiliPlayUrlTest : public QObject
 
     void nearestUrlFirst()
     {
-        const auto data = parse(R"({
-            "dash": {"video": [{"id": 80, "baseUrl": "https://v.bilivideo.com/v"}],
-                     "audio": [{"id": 30280, "baseUrl": "https://cn.bilivideo.com/a",
-                                "backupUrl": ["https://upos-sz.bilivideo.com/a"],
-                                "bandwidth": 192000, "mimeType": "audio/mp4"}]}
-        })");
+        const auto data = parse(cirrus::test::kPrioritizedDash);
         const auto mapping = mapPlayUrl(data);
         QCOMPARE(mapping.result.streams.size(), 1);
         QCOMPARE(mapping.result.streams.first().url,
@@ -145,11 +121,7 @@ class BiliPlayUrlTest : public QObject
 
     void progressiveFallbackSingleEntry()
     {
-        const auto data = parse(R"({
-            "timelength": 100000,
-            "durl": [{"order": 1, "length": 100000, "size": 1250000,
-                      "url": "https://a.bilivideo.com/p.mp4"}]
-        })");
+        const auto data = parse(cirrus::test::kProgressive);
         const auto mapping = mapPlayUrl(data);
         QCOMPARE(mapping.result.streams.size(), 1);
         QCOMPARE(mapping.result.streams.first().mimeType, QStringLiteral("video/mp4"));
@@ -159,9 +131,7 @@ class BiliPlayUrlTest : public QObject
 
     void emptyAudioWithVideoStaysEmpty()
     {
-        const auto data = parse(R"({
-            "dash": {"video": [{"id": 80, "baseUrl": "https://v.bilivideo.com/v"}], "audio": []}
-        })");
+        const auto data = parse(cirrus::test::kEmptyAudio);
         const auto mapping = mapPlayUrl(data);
         QVERIFY(mapping.result.streams.isEmpty());
         QVERIFY(mapping.result.videoAvailable);
