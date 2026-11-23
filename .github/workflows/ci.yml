@@ -1,8 +1,8 @@
 # Builds and tests every push to master and every pull request (packaging/README.md).
 # Linux always; Windows (build) and macOS (build and tests) only when asked (Run workflow),
 # as they take longest. "Build packages" (Run workflow) also makes the deb, AppImage,
-# Windows installer and zip and the macOS dmg as run artifacts, without a release: for
-# trying the packages.
+# pacman package, Windows installer and zip and the macOS dmg as run artifacts, without
+# a release. "Pacman only" adds the native Arch package without Windows/macOS jobs.
 name: CI
 
 on:
@@ -20,12 +20,22 @@ on:
         type: boolean
         default: false
       package:
-        description: Build packages (Linux, Windows, macOS) as artifacts, no release
+        description: Build packages (Linux, Arch, Windows, macOS) as artifacts, no release
+        type: boolean
+        default: false
+      pacman:
+        description: Pacman only (also runs the normal Linux build and tests)
         type: boolean
         default: false
   workflow_call:
     inputs:
       windows:
+        type: boolean
+        default: false
+      package:
+        type: boolean
+        default: false
+      pacman:
         type: boolean
         default: false
 
@@ -152,3 +162,9 @@ jobs:
     needs: linux
     if: inputs.package
     uses: ./.github/workflows/linux-packages.yml
+
+  pacman:
+    name: Pacman package
+    needs: linux
+    if: inputs.pacman || inputs.package
+    uses: ./.github/workflows/pacman.yml

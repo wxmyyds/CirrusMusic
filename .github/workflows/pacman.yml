@@ -1,0 +1,51 @@
+# Native Arch package of the checked-out commit, not the AUR release-tag source.
+# Also runnable on its own through Run workflow (packaging/README.md).
+name: Pacman package
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pacman:
+    name: Arch Linux package
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # Git must be available before checkout so it creates a real repository for
+      # git archive. Upgrade the whole rolling-release system, not selected libraries.
+      - name: Native Arch dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            base-devel gcc-libs glibc git util-linux cmake ninja pkgconf \
+            qt6-base qt6-declarative qt6-multimedia qt6-multimedia-ffmpeg \
+            qt6-wayland qt6-imageformats qt6-shadertools qt6-tools \
+            qtkeychain-qt6 ffmpeg openssl zlib zstd hicolor-icon-theme \
+            ca-certificates libsecret
+
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Only dependency installation and user setup run as root. The builder owns
+      # the checkout and never needs sudo or makepkg --syncdeps.
+      - name: Create unprivileged builder
+        run: |
+          useradd --create-home builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+
+      - name: Build and check pacman package
+        run: runuser -u builder -- bash packaging/arch/build-package.sh dist/pacman
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pacman
+          path: dist/pacman/*.pkg.tar.zst
+          if-no-files-found: error
