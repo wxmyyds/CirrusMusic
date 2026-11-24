@@ -48,7 +48,7 @@ class App : public QObject
     Q_MOC_INCLUDE("update_check.h")
     Q_MOC_INCLUDE("session.h")
     Q_MOC_INCLUDE("together.h")
-    Q_MOC_INCLUDE("share.h")
+    Q_MOC_INCLUDE("sharing.h")
     QML_ELEMENT
     QML_SINGLETON
     Q_PROPERTY(cirrus::ui::AppSettings* settings READ settings CONSTANT)

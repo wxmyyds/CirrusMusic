@@ -1,10 +1,10 @@
 # Maintainer: guang233
 # Builds Cirrus from a release tag against Arch's own Qt and libraries
-# (packaging/README.md). Not on the AUR yet; `makepkg -si` in this directory installs it.
+# (packaging/README.md). Not on the AUR yet; build validation uses GitHub Actions only.
 # Cirrus uses Qt's private Wayland client API, so it needs a rebuild whenever qt6-base
 # or qt6-wayland moves to a new minor version.
 pkgname=cirrus
-pkgver=0.3.0
+pkgver=0.4.0
 pkgrel=1
 pkgdesc='Third-party NetEase Cloud Music client'
 arch=('x86_64')
@@ -18,7 +18,7 @@ optdepends=('gnome-keyring: keep the sign-in in a keyring'
 # Qt's two-pass rcc for large resources (the bundled font) finds no data in an LTO object.
 options=('!lto')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('81d3efd1d799577f35db4c3a2b44f34e48297b06780de1c864770243dc38168a')
+sha256sums=('47d91247f40f6c9839e4bf100d33eef30e4f47c273c702691a32faf3ef764f7a')
 
 build() {
   cmake -S "CirrusMusic-$pkgver" -B build -G Ninja \

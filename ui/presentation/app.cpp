@@ -12,7 +12,7 @@
 #include "player.h"
 #include "qr_provider.h"
 #include "session.h"
-#include "share.h"
+#include "sharing.h"
 #include "stats_model.h"
 #include "together.h"
 #include "update_check.h"
