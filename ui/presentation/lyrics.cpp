@@ -234,6 +234,18 @@ QString CurrentLyrics::plainText(bool romanization, bool translation) const
     return out.join(QLatin1Char('\n'));
 }
 
+QString CurrentLyrics::playbackText() const
+{
+    if (m_status != lyrics::Ready || m_key != m_player->current().key ||
+        m_generation != m_player->generation() || m_provider != m_player->provider())
+        return {};
+    const QString text = plainText(false, false);
+    // Bound the D-Bus payload; do not truncate lyrics or publish invalid text.
+    if (text.size() > 512 * 1024 || !text.isValidUtf16() || text.contains(QChar::Null))
+        return {};
+    return text;
+}
+
 void CurrentLyrics::setOffset(qint64 offsetMs)
 {
     if (m_key.isEmpty() || offsetMs == this->offsetMs())

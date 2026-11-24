@@ -10,6 +10,7 @@ namespace cirrus::ui
 
 class Desktop;
 class Player;
+class CurrentLyrics;
 
 // MPRIS 2.2 on the session bus (Linux: media keys, the desktop's media controls),
 // driven by App.player like the window is, so it behaves as the window does
@@ -19,7 +20,8 @@ class Mpris : public QObject
 {
     Q_OBJECT
   public:
-    Mpris(Player* player, Desktop* desktop, QObject* parent = nullptr);
+    Mpris(Player* player, Desktop* desktop, CurrentLyrics* lyrics = nullptr,
+          QObject* parent = nullptr);
     ~Mpris() override;
 
     // Whether the bus name was taken.
@@ -27,6 +29,7 @@ class Mpris : public QObject
 
     Player* player() const { return m_player; }
     Desktop* desktop() const { return m_desktop; }
+    [[nodiscard]] QString lyricText() const;
     // The player interface's properties now (Position included).
     [[nodiscard]] QVariantMap playerProperties() const;
     [[nodiscard]] QString trackId() const;
@@ -37,6 +40,7 @@ class Mpris : public QObject
 
     Player* m_player;
     Desktop* m_desktop;
+    CurrentLyrics* m_lyrics;
     bool m_registered = false;
     QVariantMap m_sent; // the player properties last announced
     // For telling a seek from the clock running: the last position base.

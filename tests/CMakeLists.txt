@@ -97,6 +97,19 @@ add_test(NAME backend_runtime COMMAND tst_backend_runtime)
 # past 30 s on the macOS runner (three cores, four tests at a time).
 set_tests_properties(backend_runtime PROPERTIES TIMEOUT 90)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_package(Qt6 REQUIRED COMPONENTS DBus)
+    qt_add_executable(tst_mpris_lyrics unit/mpris_lyrics_test.cpp
+        ../ui/app/mpris.cpp ../ui/app/mpris.h
+        ../ui/app/desktop.cpp ../ui/app/desktop.h
+        ../ui/app/single_instance.cpp ../ui/app/single_instance.h
+        ../ui/app/gpu_preference.cpp ../ui/app/gpu_preference.h)
+    target_include_directories(tst_mpris_lyrics PRIVATE ../ui/app)
+    target_link_libraries(tst_mpris_lyrics PRIVATE cirrus_presentation Qt6::DBus Qt6::Test)
+    add_test(NAME mpris_lyrics COMMAND tst_mpris_lyrics)
+    set_tests_properties(mpris_lyrics PROPERTIES TIMEOUT 15)
+endif()
+
 qt_add_executable(tst_music unit/music_test.cpp)
 target_link_libraries(tst_music PRIVATE cirrus_netease_music Qt6::Test)
 add_test(NAME music COMMAND tst_music)

@@ -95,6 +95,13 @@ cmake --build --preset linux-release --target appCirrusMusic
 | 日志 | `~/.local/state/Cirrus/logs/` |
 | 登录状态 | 系统钥匙串，名为 `com.guang233.Cirrus` |
 
+## 桌面歌词接口（Linux）
+
+Cirrus 通过标准 MPRIS `Metadata["xesam:asText"]` 提供当前播放歌词的纯文本，
+内容来自应用正在显示的原文轨道（包括 Bilibili 字幕）。加载中、无歌词、失败或切歌时
+移除该字段，歌词到达后发送 `PropertiesChanged`。不导出 LRC 时间轴、字幕 URL 或账号凭据，
+也不为此写入歌词文件。读取该标准字段的桌面应用可直接使用，不需要识别 Cirrus 私有协议。
+
 ## 反馈问题
 
 欢迎在 [Issues](https://github.com/Guang233/CirrusMusic/issues) 报告问题。遇到播放失败、加载不出来之类的情况，请在 **设置 › 诊断** 里生成一个诊断包附上：里面有日志和系统信息，不含账号凭据。

@@ -137,6 +137,8 @@ class CurrentLyrics : public QObject
     // The lines as plain text, one per line, each followed by its romanization and
     // translation when asked (for copying).
     Q_INVOKABLE QString plainText(bool romanization, bool translation) const;
+    // Standard MPRIS text for this exact playback instance; never stale or timed LRC.
+    [[nodiscard]] QString playbackText() const;
     Q_INVOKABLE void retry();
 
     // Builds the shown lines from the provider's tracks (public for checking).
