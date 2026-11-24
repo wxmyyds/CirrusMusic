@@ -105,7 +105,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         ../ui/app/single_instance.cpp ../ui/app/single_instance.h
         ../ui/app/gpu_preference.cpp ../ui/app/gpu_preference.h)
     target_include_directories(tst_mpris_lyrics PRIVATE ../ui/app)
-    target_link_libraries(tst_mpris_lyrics PRIVATE cirrus_presentation Qt6::DBus Qt6::Test)
+    target_link_libraries(tst_mpris_lyrics PRIVATE cirrus_presentation cirrus_logging Qt6::DBus Qt6::Test)
     add_test(NAME mpris_lyrics COMMAND tst_mpris_lyrics)
     set_tests_properties(mpris_lyrics PROPERTIES TIMEOUT 15)
 endif()
