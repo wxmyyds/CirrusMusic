@@ -109,7 +109,8 @@ class AppSettings : public QObject
     CIRRUS_SETTING(int, playOrder, setPlayOrder, "playback/order", 0)
     CIRRUS_SETTING(int, playRepeat, setPlayRepeat, "playback/repeat", 0)
 
-    // Lyrics.
+    // Lyrics. External detailed lyrics are opt-in; ordinary MPRIS stays available.
+    CIRRUS_SETTING(bool, externalLyrics, setExternalLyrics, "lyrics/externalExport", false)
     CIRRUS_SETTING(bool, showTranslation, setShowTranslation, "lyrics/showTranslation", true)
     CIRRUS_SETTING(bool, showRomanization, setShowRomanization, "lyrics/showRomanization", true)
 

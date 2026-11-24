@@ -234,10 +234,15 @@ QString CurrentLyrics::plainText(bool romanization, bool translation) const
     return out.join(QLatin1Char('\n'));
 }
 
+bool CurrentLyrics::matchesPlayback() const
+{
+    return m_key == m_player->current().key && m_generation == m_player->generation() &&
+           m_provider == m_player->provider();
+}
+
 QString CurrentLyrics::playbackText() const
 {
-    if (m_status != lyrics::Ready || m_key != m_player->current().key ||
-        m_generation != m_player->generation() || m_provider != m_player->provider())
+    if (m_status != lyrics::Ready || !matchesPlayback())
         return {};
     const QString text = plainText(false, false);
     // Bound the D-Bus payload; do not truncate lyrics or publish invalid text.
@@ -282,10 +287,10 @@ void CurrentLyrics::load()
     m_provider = m_player->provider();
     log::info(lcUi, "lyrics.load", {{"song", m_key}, {"token", m_generation},
                                    {"provider", m_provider}, {"voice", m_player->current().voice}});
-    emit offsetChanged();
     m_lines->reset({});
     m_hasTranslation = m_hasRomanization = m_japanese = m_hasRuby = false;
     m_trackOffsetMs = 0;
+    m_previewStartMs = m_player->previewStartMs();
     m_timing = lyrics::Lines;
     if (!m_key.isEmpty() && m_player->current().voice) {
         setStatus(lyrics::NoLyrics); // a podcast voice has none
@@ -299,6 +304,9 @@ void CurrentLyrics::load()
             apply(outcome);
         });
     }
+    // Notify only after retiring the old document; a subscriber must never see
+    // the previous video's lines under the new playback identity.
+    emit offsetChanged();
     updateCurrent();
 }
 

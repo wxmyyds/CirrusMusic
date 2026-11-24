@@ -139,6 +139,8 @@ class CurrentLyrics : public QObject
     Q_INVOKABLE QString plainText(bool romanization, bool translation) const;
     // Standard MPRIS text for this exact playback instance; never stale or timed LRC.
     [[nodiscard]] QString playbackText() const;
+    // Whether the loaded document belongs to this exact playback instance.
+    [[nodiscard]] bool matchesPlayback() const;
     Q_INVOKABLE void retry();
 
     // Builds the shown lines from the provider's tracks (public for checking).

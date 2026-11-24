@@ -97,10 +97,14 @@ cmake --build --preset linux-release --target appCirrusMusic
 
 ## 桌面歌词接口（Linux）
 
-Cirrus 通过标准 MPRIS `Metadata["xesam:asText"]` 提供当前播放歌词的纯文本，
-内容来自应用正在显示的原文轨道（包括 Bilibili 字幕）。加载中、无歌词、失败或切歌时
-移除该字段，歌词到达后发送 `PropertiesChanged`。不导出 LRC 时间轴、字幕 URL 或账号凭据，
-也不为此写入歌词文件。读取该标准字段的桌面应用可直接使用，不需要识别 Cirrus 私有协议。
+设置 › 歌词新增 **向外部提供歌词 (私货)**，默认关闭。关闭时保留原有标准 MPRIS
+歌曲信息、播放位置和控制，不提供 `xesam:asText` 或详细歌词；其他歌词软件可自行搜索。
+开启后，标准 `Metadata["xesam:asText"]` 提供当前原文纯文本，自定义版本化 D-Bus 接口
+`org.cirrus.Lyrics1` 提供状态、播放身份、逐行／逐字时间、翻译、罗马音、偏移和当前游标。
+没有逐字数据的字幕不伪造逐字时间。加载中、无歌词、失败、切歌或关闭开关时清除旧歌词。
+无需磁盘中转，不导出字幕/音频 URL 或账号凭据；开启后同一用户会话中的应用可以读取。
+D-Bus 是通用通信机制，本接口不是已有 Linux 歌词标准，消费详细时序需要应用适配。
+完整字段、类型、事件和兼容性约定见 [Lyrics D-Bus v1](LYRICS_DBUS.md)。
 
 ## 反馈问题
 

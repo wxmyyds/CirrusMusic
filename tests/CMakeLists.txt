@@ -101,6 +101,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     find_package(Qt6 REQUIRED COMPONENTS DBus)
     qt_add_executable(tst_mpris_lyrics unit/mpris_lyrics_test.cpp
         ../ui/app/mpris.cpp ../ui/app/mpris.h
+        ../ui/app/lyrics_dbus.cpp ../ui/app/lyrics_dbus.h
         ../ui/app/desktop.cpp ../ui/app/desktop.h
         ../ui/app/single_instance.cpp ../ui/app/single_instance.h
         ../ui/app/gpu_preference.cpp ../ui/app/gpu_preference.h)
