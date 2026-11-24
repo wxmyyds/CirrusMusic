@@ -112,6 +112,7 @@ class EntitySearchTest : public QObject
         QVERIFY(v.podcast);
         QCOMPARE(v.podcast->id.value, "4");
         QCOMPARE(v.providerDuration, std::optional<qint64>(2000));
+        QCOMPARE(v.track->value, "99"); // mainSong.id: the audio (a voice is a program)
         const auto unknown = map(
             4,
             json(

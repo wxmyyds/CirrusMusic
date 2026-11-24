@@ -145,6 +145,9 @@ quint64 MusicGateway::request(domain::SessionToken context, MusicQuery query)
     } else if (const auto* lyrics = std::get_if<LyricQuery>(&query)) {
         operation = ApiOperation::SongLyrics;
         parameters.insert(QStringLiteral("id"), lyrics->song.value);
+    } else if (std::holds_alternative<PlaybackLyricQuery>(query)) {
+        QTimer::singleShot(0, this, [this, id] { finish(id, MusicFailure{MusicError::InvalidRequest}); });
+        return id;
     } else if (std::holds_alternative<domain::DailyRecommendationsQuery>(query)) {
         operation = ApiOperation::DailyRecommendations;
     } else if (std::holds_alternative<domain::PersonalFmQuery>(query)) {

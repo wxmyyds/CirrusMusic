@@ -17,6 +17,7 @@ Rectangle {
 
     property bool strip: false
 
+    property AppShell shell
     readonly property bool fm: App.player.mode === Playback.PersonalFm
     readonly property bool loading: fm && (App.player.status === Playback.Loading
                                            || App.player.fmWaiting)
@@ -32,6 +33,8 @@ Rectangle {
     function toggle() {
         if (fm)
             App.player.playPause();
+        else if (shell)
+            shell.startFm(); // asks first while listening together
         else
             App.player.startFm();
     }

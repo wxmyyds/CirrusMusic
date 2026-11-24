@@ -15,6 +15,9 @@ SongCollectionPage {
     originId: pageModel.albumKey
 
     property alias albumKey: pageModel.albumKey
+    shareKind: Share.Album
+    shareKey: pageModel.albumKey
+    shareAuthor: pageModel.artistText
 
     model: pageModel
     songs: pageModel.songs

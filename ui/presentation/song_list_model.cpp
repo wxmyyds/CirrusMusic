@@ -309,6 +309,8 @@ QVariant SongListModel::data(const QModelIndex& index, int role) const
         return index.row() + 1;
     case SerialRole:
         return song.serial;
+    case VoiceRole:
+        return song.voice;
     case LikedRole: {
         const App* app = App::instance();
         return app && app->library()->isLiked(song.key);
@@ -339,6 +341,7 @@ QHash<int, QByteArray> SongListModel::roleNames() const
         {MissingRole, "missing"},
         {PositionRole, "position"},
         {SerialRole, "serial"},
+        {VoiceRole, "voice"},
     };
 }
 

@@ -52,6 +52,8 @@ QtObject {
     readonly property string download_done: "\uf091"
     readonly property string cloud: "\uf15c"
     readonly property string folder: "\ue2c7"
+    readonly property string group: "\uea21"
+    readonly property string group_add: "\ue7f0"
     readonly property string add: "\ue145"
     readonly property string remove: "\ue15b"
     readonly property string more_vert: "\ue5d4"
@@ -98,6 +100,7 @@ QtObject {
     readonly property string language: "\uea07"
     readonly property string keyboard: "\ue312"
     readonly property string accessibility: "\ue84e"
+    readonly property string sync_problem: "\ue629"
     readonly property string error: "\uf8b6"
     readonly property string warning: "\uf083"
     readonly property string info: "\ue88e"
@@ -183,6 +186,8 @@ QtObject {
         "download_done",
         "cloud",
         "folder",
+        "group",
+        "group_add",
         "add",
         "remove",
         "more_vert",
@@ -229,6 +234,7 @@ QtObject {
         "language",
         "keyboard",
         "accessibility",
+        "sync_problem",
         "error",
         "warning",
         "info",

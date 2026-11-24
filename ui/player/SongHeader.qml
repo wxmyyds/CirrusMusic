@@ -24,8 +24,11 @@ Item {
     signal songRequested
     signal artistRequested(string key)
     signal albumRequested(string key)
+    signal podcastRequested(string key) // a voice's podcast
     signal addToPlaylistRequested(string key, string title)
     signal copyRequested
+    // Listen together's dialog (pages/together.md §1).
+    signal togetherRequested
 
     readonly property var song: App.player.current
     readonly property bool menuOpen: menu.opened
@@ -37,6 +40,7 @@ Item {
     Column {
         id: texts
         readonly property real room: root.width - more.width - 8
+                                     - (together.visible ? together.width + 4 : 0)
         anchors.left: parent.left
         anchors.verticalCenter: parent.verticalCenter
         width: root.moreAfterText ? Math.min(room, Math.max(titleText.implicitWidth, artist.implicitWidth))
@@ -106,6 +110,22 @@ Item {
         }
     }
 
+    // Listen together, beside "more": filled while in a room, a warning while it reconnects.
+    PlayerButton {
+        id: together
+        x: root.moreAfterText ? more.x + more.width + 4 : more.x - width - 4
+        anchors.verticalCenter: parent.verticalCenter
+        visible: root.song.key !== "" && App.together.available
+        color: root.colors.content
+        glyph: App.together.active && !App.together.connected ? Symbols.sync_problem
+                                                              : Symbols.group
+        iconFill: App.together.active ? 1 : 0
+        text: !App.together.active ? qsTr("一起听")
+              : App.together.partnerName !== "" ? qsTr("一起听 · 你和 %1").arg(App.together.partnerName)
+              : qsTr("一起听 · 等好友加入")
+        onClicked: root.togetherRequested()
+    }
+
     PlayerButton {
         id: more
         x: root.moreAfterText ? texts.width + 8 : root.width - width
@@ -146,10 +166,11 @@ Item {
             onObjectRemoved: (index, object) => menu.removeItem(object as MenuItem)
         }
         MenuItem {
-            text: qsTr("查看专辑")
-            glyph: Symbols.album
+            text: root.song.voice ? qsTr("查看播客") : qsTr("查看专辑")
+            glyph: root.song.voice ? Symbols.podcasts : Symbols.album
             enabled: root.song.albumKey !== ""
-            onTriggered: root.albumRequested(root.song.albumKey)
+            onTriggered: root.song.voice ? root.podcastRequested(root.song.albumKey)
+                                         : root.albumRequested(root.song.albumKey)
         }
         MenuItem {
             text: qsTr("加入歌单")
@@ -158,9 +179,21 @@ Item {
             onTriggered: root.addToPlaylistRequested(root.song.key, root.song.title)
         }
         MenuItem {
+            text: qsTr("复制链接")
+            glyph: Symbols.link
+            enabled: root.song.key !== ""
+            onTriggered: App.share.copy(root.song.voice ? Share.Voice : Share.Song, root.song.key,
+                                        root.song.title, root.song.artistText)
+        }
+        MenuItem {
             text: qsTr("复制歌曲信息")
             glyph: Symbols.content_copy
             onTriggered: root.copyRequested()
+        }
+        MenuItem {
+            text: qsTr("一起听…")
+            glyph: Symbols.group
+            onTriggered: root.togetherRequested()
         }
     }
 

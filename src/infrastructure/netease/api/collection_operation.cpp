@@ -1,4 +1,5 @@
-// Fixed api-enhanced collection/playlist write wrappers (MIT); see NOTICE.
+// Fixed api-enhanced collection/playlist write wrappers (MIT); see NOTICE. Playlist
+// subscription follows the official Android app 9.6.22 (docs/api/playlist-subscription.md).
 #include "collection_operation.h"
 #include "domain/music/collection_types.h"
 #include "domain/music/playlist_tag_edit_types.h"
@@ -18,6 +19,8 @@ bool isCollectionOperation(ApiOperation op)
     case ApiOperation::ArtistUnsubscribe:
     case ApiOperation::PodcastSubscribe:
     case ApiOperation::PodcastUnsubscribe:
+    case ApiOperation::PlaylistSubscribe:
+    case ApiOperation::PlaylistUnsubscribe:
     case ApiOperation::PlaylistCreate:
     case ApiOperation::PlaylistRename:
     case ApiOperation::PlaylistDescription:
@@ -62,6 +65,14 @@ std::optional<ApiOperationContract> collectionOperationContract(ApiOperation op)
         break;
     case ApiOperation::PodcastUnsubscribe:
         path = QStringLiteral("/api/djradio/unsub");
+        break;
+    case ApiOperation::PlaylistSubscribe:
+        path = QStringLiteral("/api/playlist/subscribe");
+        protocol = Protocol::Eapi;
+        break;
+    case ApiOperation::PlaylistUnsubscribe:
+        path = QStringLiteral("/api/playlist/unsubscribe");
+        protocol = Protocol::Eapi;
         break;
     case ApiOperation::PlaylistCreate:
         path = QStringLiteral("/api/playlist/create");
@@ -239,6 +250,10 @@ std::optional<QJsonObject> collectionOperationPayload(ApiOperation op, const QJs
     }
     if (p.size() != 1)
         return std::nullopt;
+    if (op == ApiOperation::PlaylistSubscribe)
+        // The app sends its Yidun token, "" when the SDK has none (by0.b.G0()); Cirrus has
+        // no SDK and sends what the app does then (the maintainer's choice, 2026-11-22).
+        return QJsonObject{{QStringLiteral("id"), id}, {QStringLiteral("checkToken"), QString()}};
     if (op == ApiOperation::ArtistSubscribe || op == ApiOperation::ArtistUnsubscribe)
         // Pinned numeric JSON text, NOT a JSON double or fabricated string-array variant.
         return QJsonObject{{QStringLiteral("artistId"), id},

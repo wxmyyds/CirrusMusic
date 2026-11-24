@@ -25,6 +25,10 @@ class Player : public QObject
     QML_ELEMENT
     QML_UNCREATABLE("Use App.player")
     Q_PROPERTY(cirrus::ui::SongItem current READ current NOTIFY currentChanged)
+    Q_PROPERTY(int biliStatus READ biliStatus NOTIFY biliAccountChanged)
+    Q_PROPERTY(QString biliAccountName READ biliAccountName NOTIFY biliAccountChanged)
+    Q_PROPERTY(quint64 generation READ generation NOTIFY changed)
+    Q_PROPERTY(int provider READ provider NOTIFY changed)
     Q_PROPERTY(int status READ status NOTIFY changed) // Playback.Status
     // Translated reason when Failed, else empty.
     Q_PROPERTY(QString failureMessage READ failureMessage NOTIFY changed)
@@ -43,7 +47,7 @@ class Player : public QObject
     Q_PROPERTY(bool canPrevious READ canPrevious NOTIFY changed)
     Q_PROPERTY(int mode READ mode NOTIFY changed) // Playback.Mode
     Q_PROPERTY(bool fmWaiting READ fmWaiting NOTIFY changed)
-    // Whether podcast voices can be played (playVoices()); not yet with the backend.
+    // Whether podcast voices can be played (playVoices()).
     Q_PROPERTY(bool canPlayVoices READ canPlayVoices CONSTANT)
     // The queue in play order; rows get details as views ask (ensureQueueLoaded).
     // A song can be in it twice: the current row is `queueIndex`, not the current role.
@@ -60,6 +64,12 @@ class Player : public QObject
 
     [[nodiscard]] SongItem current() const { return m_current; }
     [[nodiscard]] int status() const { return m_snapshot.status; }
+    [[nodiscard]] int provider() const { return m_snapshot.provider; }
+    [[nodiscard]] quint64 generation() const { return m_snapshot.generation; }
+    [[nodiscard]] int biliStatus() const;
+    [[nodiscard]] QString biliAccountName() const;
+    Q_INVOKABLE void saveBiliCookie(const QString& cookie);
+    Q_INVOKABLE void clearBiliCookie();
     [[nodiscard]] QString failureMessage() const;
     [[nodiscard]] qint64 positionMs() const { return m_snapshot.positionMs; }
     [[nodiscard]] qint64 positionAt() const { return m_snapshot.positionAt; }
@@ -112,6 +122,7 @@ class Player : public QObject
 
   signals:
     void currentChanged();
+    void biliAccountChanged();
     void changed();
     void upcomingChanged();
     // A short message for a snackbar (only a preview clip plays).

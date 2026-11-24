@@ -38,7 +38,7 @@ std::optional<domain::PlayOrigin> storedOrigin(const QVariant& kind, const QVari
                                                const QVariant& name)
 {
     const auto value = storedInteger(kind);
-    if (!value || *value < 0 || *value > static_cast<int>(domain::PlayOriginKind::Other))
+    if (!value || *value < 0 || *value > static_cast<int>(domain::PlayOriginKind::Podcast))
         return std::nullopt;
     domain::PlayOrigin origin{static_cast<domain::PlayOriginKind>(*value), id.toString(),
                               name.toString()};
@@ -79,10 +79,10 @@ StorageResult<ListeningStateResult> executeQueue(QSqlDatabase& db, const Listeni
                                     static_cast<domain::QueueOrder>(*order),
                                     static_cast<domain::QueueRepeat>(*repeat)};
         QSqlQuery entries(db);
-        entries.prepare(
-            QStringLiteral("SELECT ordinal, entry_id, song_id, origin_kind, origin_id, origin_name "
-                           "FROM playback_queue_entry WHERE account_id = ? ORDER BY ordinal "
-                           "LIMIT 10001"));
+        entries.prepare(QStringLiteral(
+            "SELECT ordinal, entry_id, song_id, origin_kind, origin_id, origin_name, "
+            "program_id FROM playback_queue_entry WHERE account_id = ? ORDER BY "
+            "ordinal LIMIT 10001"));
         entries.addBindValue(job.accountId);
         if (!entries.exec())
             return fail(StorageError::Query);
@@ -93,7 +93,10 @@ StorageResult<ListeningStateResult> executeQueue(QSqlDatabase& db, const Listeni
             if (!id || !ordinal || !origin || *ordinal != queue.entries.size() ||
                 queue.entries.size() == domain::MaximumSavedQueueEntries)
                 return fail(StorageError::Corrupt);
-            queue.entries.append({*id, {entries.value(2).toString()}, std::move(*origin)});
+            queue.entries.append({*id,
+                                  {entries.value(2).toString()},
+                                  std::move(*origin),
+                                  {entries.value(6).toString()}});
         }
         if (!domain::validSavedQueue(queue))
             return fail(StorageError::Corrupt);
@@ -129,8 +132,8 @@ StorageResult<ListeningStateResult> executeQueue(QSqlDatabase& db, const Listeni
         return rollback();
     QSqlQuery insert(db);
     insert.prepare(QStringLiteral("INSERT INTO playback_queue_entry(account_id, ordinal, entry_id, "
-                                  "song_id, origin_kind, origin_id, origin_name) VALUES (?, ?, ?, "
-                                  "?, ?, ?, ?)"));
+                                  "song_id, origin_kind, origin_id, origin_name, program_id) "
+                                  "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"));
     for (qsizetype index = 0; index < job.queue.entries.size(); ++index) {
         const auto& entry = job.queue.entries[index];
         insert.bindValue(0, job.accountId);
@@ -140,6 +143,8 @@ StorageResult<ListeningStateResult> executeQueue(QSqlDatabase& db, const Listeni
         insert.bindValue(4, static_cast<int>(entry.origin.kind));
         insert.bindValue(5, entry.origin.id.isEmpty() ? QStringLiteral("") : entry.origin.id);
         insert.bindValue(6, entry.origin.name.isEmpty() ? QStringLiteral("") : entry.origin.name);
+        insert.bindValue(7,
+                         entry.program.value.isEmpty() ? QStringLiteral("") : entry.program.value);
         if (!insert.exec())
             return rollback();
     }
@@ -903,6 +908,12 @@ QList<Migration> ListeningStateStore::migrations()
         {5,
          {QStringLiteral("ALTER TABLE playback_queue ADD COLUMN mode INTEGER NOT NULL DEFAULT 0 "
                          "CHECK(mode IN (0,1))")}});
+    // v6: a queue entry may be a podcast program played through its track
+    // (docs/api/podcast-playback.md).
+    migrations.append(
+        {6,
+         {QStringLiteral("ALTER TABLE playback_queue_entry ADD COLUMN program_id TEXT "
+                         "NOT NULL DEFAULT ''")}});
     return migrations;
 }
 ListeningStateStore::ListeningStateStore(DatabaseWorker& database, QObject* parent)

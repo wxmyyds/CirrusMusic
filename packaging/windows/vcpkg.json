@@ -1,7 +1,7 @@
 {
   "$comment": "Libraries the Windows packages bundle besides Qt (packaging/README.md). FFmpeg without the gpl/nonfree features stays LGPL; its DLLs (avcodec-63.dll …) differ from Qt Multimedia's FFmpeg 7.1 (avcodec-61.dll).",
   "name": "cirrus",
-  "version-semver": "0.3.0",
+  "version-semver": "0.4.0",
   "builtin-baseline": "8469b01206bff843500592f18dcab88b13331da6",
   "dependencies": [
     { "name": "ffmpeg", "default-features": false, "features": ["avcodec", "avformat", "swresample"] },

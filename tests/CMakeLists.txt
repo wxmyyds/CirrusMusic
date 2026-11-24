@@ -91,11 +91,25 @@ add_test(NAME backend_facade COMMAND tst_backend_facade)
 set_tests_properties(backend_facade PROPERTIES TIMEOUT 15)
 
 qt_add_executable(tst_backend_runtime unit/backend_runtime_test.cpp)
-target_link_libraries(tst_backend_runtime PRIVATE cirrus_backend cirrus_bootstrap Qt6::Test Qt6::Gui OpenSSL::Crypto)
+target_link_libraries(tst_backend_runtime PRIVATE cirrus_backend cirrus_bootstrap cirrus_presentation_backend Qt6::Test Qt6::Gui OpenSSL::Crypto)
 add_test(NAME backend_runtime COMMAND tst_backend_runtime)
 # Some 40 cases, one waiting out the facade's 5 s close delay: 22 s in a Linux debug build,
 # past 30 s on the macOS runner (three cores, four tests at a time).
 set_tests_properties(backend_runtime PROPERTIES TIMEOUT 90)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_package(Qt6 REQUIRED COMPONENTS DBus)
+    qt_add_executable(tst_mpris_lyrics unit/mpris_lyrics_test.cpp
+        ../ui/app/mpris.cpp ../ui/app/mpris.h
+        ../ui/app/lyrics_dbus.cpp ../ui/app/lyrics_dbus.h
+        ../ui/app/desktop.cpp ../ui/app/desktop.h
+        ../ui/app/single_instance.cpp ../ui/app/single_instance.h
+        ../ui/app/gpu_preference.cpp ../ui/app/gpu_preference.h)
+    target_include_directories(tst_mpris_lyrics PRIVATE ../ui/app)
+    target_link_libraries(tst_mpris_lyrics PRIVATE cirrus_presentation cirrus_logging Qt6::DBus Qt6::Test)
+    add_test(NAME mpris_lyrics COMMAND tst_mpris_lyrics)
+    set_tests_properties(mpris_lyrics PROPERTIES TIMEOUT 15)
+endif()
 
 qt_add_executable(tst_music unit/music_test.cpp)
 target_link_libraries(tst_music PRIVATE cirrus_netease_music Qt6::Test)
@@ -238,6 +252,11 @@ target_link_libraries(tst_listening_reporter PRIVATE cirrus_application Qt6::Tes
 add_test(NAME listening_reporter COMMAND tst_listening_reporter)
 set_tests_properties(listening_reporter PROPERTIES TIMEOUT 15)
 
+qt_add_executable(tst_together_session unit/together_session_test.cpp)
+target_link_libraries(tst_together_session PRIVATE cirrus_application Qt6::Test)
+add_test(NAME together_session COMMAND tst_together_session)
+set_tests_properties(together_session PROPERTIES TIMEOUT 30)
+
 qt_add_executable(tst_client_log unit/client_log_test.cpp)
 target_link_libraries(tst_client_log PRIVATE cirrus_netease_protocol Qt6::Test)
 add_test(NAME client_log COMMAND tst_client_log)
@@ -350,7 +369,7 @@ add_test(NAME logging COMMAND tst_logging)
 set_tests_properties(logging PROPERTIES TIMEOUT 30)
 
 qt_add_executable(tst_log_canary unit/log_canary_test.cpp support/fake_http.h support/fake_range_http.h)
-target_link_libraries(tst_log_canary PRIVATE cirrus_netease_api cirrus_media cirrus_application Qt6::Test)
+target_link_libraries(tst_log_canary PRIVATE cirrus_netease_api cirrus_media cirrus_application cirrus_bilibili cirrus_secrets Qt6::Test)
 add_test(NAME log_canary COMMAND tst_log_canary)
 set_tests_properties(log_canary PROPERTIES TIMEOUT 30)
 
@@ -379,6 +398,16 @@ qt_add_executable(tst_update_release unit/update_release_test.cpp
 target_include_directories(tst_update_release PRIVATE ${PROJECT_SOURCE_DIR}/ui/presentation)
 target_link_libraries(tst_update_release PRIVATE Qt6::Test Qt6::Core)
 add_test(NAME update_release COMMAND tst_update_release)
+
+qt_add_executable(tst_bili_lyrics unit/bili_lyrics_test.cpp support/synthetic_bilibili.h support/fake_http.h)
+target_link_libraries(tst_bili_lyrics PRIVATE cirrus_bilibili Qt6::Test)
+add_test(NAME bili_lyrics COMMAND tst_bili_lyrics)
+set_tests_properties(bili_lyrics PROPERTIES TIMEOUT 20)
+
+qt_add_executable(tst_bili_account unit/bili_account_test.cpp support/synthetic_bilibili.h support/fake_http.h)
+target_link_libraries(tst_bili_account PRIVATE cirrus_bilibili cirrus_secrets Qt6::Test)
+add_test(NAME bili_account COMMAND tst_bili_account)
+set_tests_properties(bili_account PROPERTIES TIMEOUT 20)
 
 # Bilibili's pure pieces: WBI signature, matcher score, stream selection, playurl mapping.
 qt_add_executable(tst_bili_wbi unit/bili_wbi_test.cpp)
@@ -418,3 +447,16 @@ qt_add_executable(tst_bili_resolver unit/bili_resolver_test.cpp support/syntheti
 target_link_libraries(tst_bili_resolver PRIVATE cirrus_bilibili Qt6::Test)
 add_test(NAME bili_resolver COMMAND tst_bili_resolver)
 set_tests_properties(bili_resolver PROPERTIES TIMEOUT 20)
+# Romaji over Japanese lyrics (docs/ui/pages/player.md §6.3), on its own (no QML).
+qt_add_executable(tst_ruby unit/ruby_test.cpp ${PROJECT_SOURCE_DIR}/ui/presentation/ruby.cpp)
+target_include_directories(tst_ruby PRIVATE ${PROJECT_SOURCE_DIR}/ui/presentation)
+target_compile_definitions(tst_ruby PRIVATE
+    CIRRUS_SAMPLES_DIR="${PROJECT_SOURCE_DIR}/ui/samples")
+target_link_libraries(tst_ruby PRIVATE Qt6::Test Qt6::Core Qt6::Qml)
+add_test(NAME ruby COMMAND tst_ruby)
+
+# The share text and links (docs/ui/pages/share.md), on its own.
+qt_add_executable(tst_share unit/share_test.cpp ${PROJECT_SOURCE_DIR}/ui/presentation/share_text.cpp)
+target_include_directories(tst_share PRIVATE ${PROJECT_SOURCE_DIR}/ui/presentation)
+target_link_libraries(tst_share PRIVATE Qt6::Test Qt6::Core)
+add_test(NAME share COMMAND tst_share)

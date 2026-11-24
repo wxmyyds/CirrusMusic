@@ -68,6 +68,7 @@ target_sources(cirrus_domain INTERFACE
     domain/music/playlist_tag_edit_types.h
     domain/music/playlist_cover_types.h
     domain/music/introduction_types.h
+    domain/account/bili_account_types.h
     domain/playback/playback_types.h
     domain/playback/listening_types.h
     domain/playback/listening_state_types.h
@@ -114,6 +115,8 @@ add_library(cirrus_application STATIC
     application/playback/listening_session.h
     application/playback/listening_reporter.cpp
     application/playback/listening_reporter.h
+    application/playback/together_session.cpp
+    application/playback/together_session.h
     application/playback/playback_observation_publisher.cpp
     application/playback/playback_observation_publisher.h
     application/playback/system_media_commands.cpp
@@ -481,6 +484,8 @@ target_link_libraries(cirrus_media PUBLIC cirrus_application Qt6::Network Qt6::M
     PRIVATE PkgConfig::CIRRUS_FFMPEG cirrus_storage)
 
 add_library(cirrus_bilibili STATIC
+    infrastructure/bilibili/bili_account.h
+    infrastructure/bilibili/bili_account.cpp
     infrastructure/bilibili/bili_models.h
     infrastructure/bilibili/bili_http_client.h
     infrastructure/bilibili/bili_http_client.cpp
@@ -492,6 +497,8 @@ add_library(cirrus_bilibili STATIC
     infrastructure/bilibili/bili_matcher.cpp
     infrastructure/bilibili/bili_playurl.h
     infrastructure/bilibili/bili_playurl.cpp
+    infrastructure/bilibili/bili_lyrics.h
+    infrastructure/bilibili/bili_lyrics.cpp
     infrastructure/bilibili/bili_api.h
     infrastructure/bilibili/bili_api.cpp
     infrastructure/bilibili/bili_stream_resolver.h
@@ -499,7 +506,7 @@ add_library(cirrus_bilibili STATIC
 )
 target_compile_features(cirrus_bilibili PUBLIC cxx_std_20)
 target_include_directories(cirrus_bilibili PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(cirrus_bilibili PUBLIC cirrus_application cirrus_domain cirrus_logging Qt6::Network PRIVATE OpenSSL::Crypto)
+target_link_libraries(cirrus_bilibili PUBLIC cirrus_application cirrus_domain cirrus_logging Qt6::Network PRIVATE cirrus_secrets OpenSSL::Crypto)
 
 # Composition stays out of application/domain and is not linked into the template UI.
 add_library(cirrus_backend STATIC

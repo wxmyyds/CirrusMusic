@@ -52,6 +52,7 @@ struct Owner {
         l.original.standard.availability = LyricAvailability::Present;
         l.original.standard.timing = LyricTiming::Lines;
         l.original.standard.lines = {{0, 10000, "synthetic 雲", {}}};
+        QVERIFY(!reads.isEmpty());
         const auto c = reads.last();
         facade.deliverMusic({c.id, c.generation, c.context, l});
     }
@@ -63,6 +64,7 @@ struct Owner {
                 c = *it;
                 break;
             }
+        facade.deliverPlaybackSource({c.token, c.query.song, SourceProvider::Netease, {}});
         PlaybackSnapshot p;
         p.token = c.token;
         p.song = c.query.song;

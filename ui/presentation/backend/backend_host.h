@@ -10,7 +10,8 @@
 namespace cirrus::application
 {
 class ListeningReporter;
-}
+class TogetherSession;
+} // namespace cirrus::application
 namespace cirrus::runtime
 {
 class BackendRuntime;
@@ -46,6 +47,8 @@ class BackendHost : public QObject
     [[nodiscard]] runtime::BackendRuntime& runtime() const { return *m_runtime; }
     // Reports what was listened to (integration.md §6.1); settled before closing.
     [[nodiscard]] application::ListeningReporter& reporter() const { return *m_reporter; }
+    // Listen together (docs/api/together-polling.md); closing keeps its room (resume()).
+    [[nodiscard]] application::TogetherSession& together() const { return *m_together; }
 
     void start();
     // Closes the backend (it never signs out); `done` runs once it has stopped, or
@@ -58,6 +61,7 @@ class BackendHost : public QObject
 
     std::unique_ptr<runtime::BackendRuntime> m_runtime;
     std::unique_ptr<application::ListeningReporter> m_reporter;
+    std::unique_ptr<application::TogetherSession> m_together;
     std::function<void()> m_done;
     bool m_shuttingDown = false;
 };

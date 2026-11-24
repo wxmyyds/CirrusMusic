@@ -37,7 +37,8 @@ class SongItem
     SongItem() = default;
     explicit SongItem(const SongInfo& song)
         : key(song.key), title(song.title), secondaryTitle(song.secondaryTitle),
-          artistText(Formatter::artists(song.artists)), artistKeys(keysOf(song.artists)),
+          artistText(song.voice ? song.albumTitle : Formatter::artists(song.artists)),
+          artistKeys(keysOf(song.artists)),
           artists(listOf(song.artists)), albumKey(song.albumKey), albumTitle(song.albumTitle),
           coverKey(song.coverKey), durationMs(song.durationMs), unavailable(song.unavailable),
           reason(song.reason), voice(song.voice)

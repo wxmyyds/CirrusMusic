@@ -153,7 +153,8 @@ ListView {
                     enabled: row.loaded
                     glyph: Symbols.more_vert
                     text: qsTr("更多")
-                    onClicked: songMenu.openFor(row, row.key, row.albumKey, row.artists, more, 0, more.height)
+                    onClicked: songMenu.openFor(row, row.key, row.title, row.artistText,
+                                                row.albumKey, row.artists, more, 0, more.height)
                 }
             }
         }
@@ -161,7 +162,8 @@ ListView {
         TapHandler {
             acceptedButtons: Qt.RightButton
             enabled: row.loaded
-            onTapped: eventPoint => songMenu.openFor(row, row.key, row.albumKey, row.artists, row,
+            onTapped: eventPoint => songMenu.openFor(row, row.key, row.title, row.artistText,
+                                                     row.albumKey, row.artists, row,
                                                      eventPoint.position.x, eventPoint.position.y)
         }
 
@@ -238,13 +240,17 @@ ListView {
         // The row the menu is open for.
         property Item row: null
         property string songKey
+        property string songTitle
+        property string songArtistText
         property string albumKey
         property var artists: []
 
-        function openFor(target: Item, song: string, album: string, songArtists: var,
-                         anchor: Item, x: real, y: real): void {
+        function openFor(target: Item, song: string, title: string, artistText: string,
+                         album: string, songArtists: var, anchor: Item, x: real, y: real): void {
             row = target;
             songKey = song;
+            songTitle = title;
+            songArtistText = artistText;
             albumKey = album;
             artists = songArtists;
             popup(anchor, x, y);
@@ -276,6 +282,12 @@ ListView {
             }
             onObjectAdded: (index, object) => songMenu.insertItem(index + 2, object as MenuItem)
             onObjectRemoved: (index, object) => songMenu.removeItem(object as MenuItem)
+        }
+        MenuItem {
+            glyph: Symbols.link
+            text: qsTr("复制链接")
+            onTriggered: App.share.copy(Share.Song, songMenu.songKey, songMenu.songTitle,
+                                        songMenu.songArtistText)
         }
     }
 }

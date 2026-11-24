@@ -8,6 +8,7 @@
 #include "backend_playback.h"
 #include "backend_session.h"
 #include "backend_stats.h"
+#include "backend_together.h"
 #include "fake_sources.h"
 
 #include "application/playback/listening_reporter.h"
@@ -64,6 +65,8 @@ Sources makeBackendSources(BackendHost& host)
     sources.library = std::make_unique<BackendLibrary>(host.runtime());
     // Local listening statistics (pages/stats.md).
     sources.stats = std::make_unique<BackendStats>(host.runtime());
+    // Listen together (pages/together.md).
+    sources.together = std::make_unique<BackendTogether>(host);
     return sources;
 }
 

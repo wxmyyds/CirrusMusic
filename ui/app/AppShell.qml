@@ -86,6 +86,27 @@ Item {
     signal coveredNotice(string text)
     // The playlist the current page shows, for the rail's playlist rows.
     readonly property string openPlaylistKey: (stack.currentItem as PlaylistPage)?.playlistKey ?? ""
+    // The page's own item for 复制链接 (pages/share.md §3): {kind, key, title, author}, or
+    // null on pages without one.
+    readonly property var pageShare: {
+        const collection = stack.currentItem as SongCollectionPage;
+        if (collection && collection.shareKind >= 0 && collection.shareKey !== "")
+            return {
+                kind: collection.shareKind,
+                key: collection.shareKey,
+                title: collection.title,
+                author: collection.shareAuthor
+            };
+        const songPage = stack.currentItem as SongPage;
+        if (songPage && songPage.song.key !== "")
+            return {
+                kind: Share.Song,
+                key: songPage.song.key,
+                title: songPage.song.title,
+                author: songPage.song.artistText
+            };
+        return null;
+    }
     readonly property var destinations: [{
             glyph: Symbols.home,
             text: qsTr("首页"),
@@ -337,6 +358,21 @@ Item {
             shell: shell,
             date: date ?? ""
         });
+    }
+
+    // Listen together (pages/together.md): sign-in first.
+    function openTogether() {
+        if (App.session.signedIn)
+            togetherDialog.open();
+        else
+            loginDialog.open();
+    }
+    // Personal FM leaves a listen-together room (LT5): asked first.
+    function startFm() {
+        if (App.together.state === TogetherState.Idle)
+            App.player.startFm();
+        else
+            fmTogetherDialog.open();
     }
 
     // QR sign-in in a dialog, over the current page.
@@ -756,6 +792,20 @@ Item {
         library: myLibrary
     }
 
+    function copyPageLink(): void {
+        const item = pageShare;
+        if (item)
+            App.share.copy(item.kind, item.key, item.title, item.author);
+    }
+
+    // 已复制链接.
+    Connections {
+        target: App.share
+        function onNotice(message: string) {
+            shell.notify(message);
+        }
+    }
+
     // What App.player has to say (a song only plays as a preview).
     Connections {
         target: App.player
@@ -777,5 +827,29 @@ Item {
 
     LoginDialog {
         id: loginDialog
+    }
+
+    // What App.together has to say (who joined or left, the room ended…).
+    Connections {
+        target: App.together
+        function onNotice(message: string) {
+            shell.notify(message);
+        }
+    }
+
+    TogetherDialog {
+        id: togetherDialog
+    }
+
+    Dialog {
+        id: fmTogetherDialog
+        title: qsTr("开始私人 FM？")
+        supportingText: qsTr("开始私人 FM 会退出一起听。")
+        acceptText: qsTr("开始")
+        rejectText: qsTr("取消")
+        onAccepted: {
+            App.together.leave();
+            App.player.startFm();
+        }
     }
 }

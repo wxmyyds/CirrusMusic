@@ -16,6 +16,11 @@ ListeningSession::ListeningSession(BackendFacade& backend, QObject* parent)
 {
     Q_ASSERT(backend.thread() == thread());
     connect(&backend, &BackendFacade::playbackChanged, this, &ListeningSession::receive);
+    connect(&backend, &BackendFacade::playbackSourceSelected, this, &ListeningSession::sourceSelected);
+    connect(&backend, &BackendFacade::acknowledged, this, [this] {
+        if (const auto revision = std::exchange(m_pendingFailureStop, std::nullopt))
+            QTimer::singleShot(0, this, [this, revision] { stopForFailures(*revision); });
+    });
     connect(&backend, &BackendFacade::stateChanged, this, [this](BackendState state) {
         if (state == BackendState::Stopping || state == BackendState::Stopped ||
             state == BackendState::Failed)
@@ -99,6 +104,7 @@ void ListeningSession::cancelLyrics()
     m_lyrics.reset();
     m_timeline.clear();
     m_lyricsState = LyricsState::None;
+    m_lyricsRequested = false;
     if (id)
         m_backend.cancelMusic(id);
 }
@@ -121,6 +127,11 @@ void ListeningSession::reset()
     m_auto = false;
     m_autoVisited.clear();
     m_terminalHandled = false;
+    m_failureStreak = 0;
+    m_failureStopNotified = false;
+    m_pendingFailureStop.reset();
+    m_heard = false;
+    m_lastObservedPlayedMs = 0;
     m_preload.reset();
     m_preloadChecked = false;
     cancelLyrics();
@@ -160,7 +171,8 @@ bool ListeningSession::begin(PlaybackQueue candidate, TransportIntent intent, Au
     const auto sourceSession = m_backend.snapshot();
     const auto revision = ++m_revision;
     m_starting = true;
-    const auto id = m_backend.playSong(entry->song, quality, intent);
+    const auto id = m_backend.playSong(entry->song, quality, intent,
+                                      entry->program.value.isEmpty() && m_permitBiliSource);
     m_starting = false;
     log::debug(lcPlayback, "queue.begin",
                {{"song", entry->song.value},
@@ -185,7 +197,8 @@ void ListeningSession::commit(PlaybackQueue candidate, TransportIntent intent, A
     const auto oldLyricRequest = std::exchange(m_lyricRequest, 0);
     m_lyrics.reset();
     m_timeline.clear();
-    m_lyricsState = LyricsState::None;
+    m_lyricsState = LyricsState::Loading;
+    m_lyricsRequested = false;
     const bool leaveFm = !fm && m_mode == ListeningMode::PersonalFm;
     m_restoredFm = false;
     if (!fm)
@@ -194,10 +207,6 @@ void ListeningSession::commit(PlaybackQueue candidate, TransportIntent intent, A
         m_fmWaiting = false;
         m_fmBlocked = false;
         m_fmPending.reset();
-        if (automatic)
-            ++m_fmAttempts;
-        else
-            m_fmAttempts = 0;
     }
     m_queue = std::move(candidate);
     m_playback = m_backend.playback();
@@ -207,11 +216,13 @@ void ListeningSession::commit(PlaybackQueue candidate, TransportIntent intent, A
     m_positionObservedAt.reset();
     m_history.begin(m_token, m_backend.snapshot().accountId, entry->song,
                     fm ? ListeningMode::PersonalFm : ListeningMode::Queue, fm ? QUuid{} : entry->id,
-                    fm ? PlayOrigin{} : entry->origin);
+                    fm ? PlayOrigin{} : entry->origin, fm ? ProgramId{} : entry->program);
     m_quality = quality;
     m_intent = intent;
     m_auto = automatic;
     m_terminalHandled = false;
+    m_heard = false;
+    m_lastObservedPlayedMs = 0;
     if (!automatic || fm)
         m_autoVisited.clear();
     else
@@ -223,14 +234,12 @@ void ListeningSession::commit(PlaybackQueue candidate, TransportIntent intent, A
         m_backend.cancelMusic(oldLyricRequest);
     if (revision != m_revision)
         return;
-    const auto lyricRequest = m_backend.lyrics(entry->song);
-    if (revision != m_revision) {
-        if (lyricRequest)
-            m_backend.cancelMusic(lyricRequest);
+    if (entry->program.value.isEmpty())
+        requestLyrics();
+    else
+        m_lyricsState = LyricsState::None;
+    if (revision != m_revision)
         return;
-    }
-    m_lyricRequest = lyricRequest;
-    m_lyricsState = m_lyricRequest ? LyricsState::Loading : LyricsState::Failed;
     if (!notifyHistory())
         return;
     if (revision != m_revision)
@@ -250,14 +259,15 @@ void ListeningSession::commit(PlaybackQueue candidate, TransportIntent intent, A
     return;
 }
 bool ListeningSession::replaceQueue(const QList<SongId>& songs, qsizetype startIndex,
-                                    AudioQuality quality, const QList<PlayOrigin>& origins)
+                                    AudioQuality quality, const QList<PlayOrigin>& origins,
+                                    const QList<ProgramId>& programs)
 {
     log::info(lcPlayback, "queue.replace",
               {{"count", songs.size()}, {"index", startIndex}, {"quality", quality}});
     if (startIndex < 0 || startIndex >= songs.size())
         return false;
     auto candidate = m_queue;
-    if (!candidate.replace(songs, origins) ||
+    if (!candidate.replace(songs, origins, programs) ||
         !candidate.select(candidate.snapshot().entries[startIndex].id))
         return false;
     return begin(std::move(candidate), TransportIntent::Play, quality, false);
@@ -287,7 +297,8 @@ bool ListeningSession::restoreQueue(const QueueSnapshot& saved, SessionSnapshot 
     emit queueChanged(m_queue.snapshot());
     return guard && m_revision == revision && m_backend.snapshot() == expected;
 }
-bool ListeningSession::append(const QList<SongId>& songs, bool playNext, const PlayOrigin& origin)
+bool ListeningSession::append(const QList<SongId>& songs, bool playNext, const PlayOrigin& origin,
+                              const QList<ProgramId>& programs)
 {
     Q_ASSERT(QThread::currentThread() == thread());
     if (m_mode == ListeningMode::PersonalFm || m_backend.state() != BackendState::Ready ||
@@ -295,7 +306,7 @@ bool ListeningSession::append(const QList<SongId>& songs, bool playNext, const P
         return false;
     if (m_queueContext.isValid() && !queueContextMatches())
         return false;
-    if (!m_queue.append(songs, playNext, origin))
+    if (!m_queue.append(songs, playNext, origin, programs))
         return false;
     m_queueContext = m_backend.snapshot().token;
     m_sourceSession = m_backend.snapshot();
@@ -414,7 +425,9 @@ bool ListeningSession::clear()
         emit queueCleared(source);
     return true;
 }
-bool ListeningSession::stop()
+bool ListeningSession::stop() { return stopPlayback(false); }
+
+bool ListeningSession::stopPlayback(bool keepFmQueue)
 {
     if (!current())
         return false;
@@ -426,10 +439,18 @@ bool ListeningSession::stop()
     if (!acceptLoadCommand(id, revision))
         return false;
     m_history.finish(ListeningEnd::Stopped);
-    if (m_mode == ListeningMode::PersonalFm) {
+    if (m_mode == ListeningMode::PersonalFm && !keepFmQueue) {
         reset();
         return true;
     }
+    if (m_mode == ListeningMode::PersonalFm) {
+        m_fmWaiting = true;
+        m_fmBlocked = true;
+        m_fmPending.reset();
+    }
+    m_preload.reset();
+    if (const auto request = std::exchange(m_preloadLyricRequest, 0))
+        m_backend.cancelMusic(request);
     cancelLyrics();
     if (revision != m_revision)
         return true;
@@ -441,6 +462,10 @@ bool ListeningSession::stop()
     m_autoVisited.clear();
     if (!notifyHistory())
         return true;
+    if (revision != m_revision)
+        return true;
+    if (m_mode == ListeningMode::PersonalFm)
+        emit fmChanged();
     if (revision != m_revision)
         return true;
     emit playbackChanged(m_playback);
@@ -556,8 +581,11 @@ bool ListeningSession::notifyHistory(bool notifyView)
     const auto epoch = m_historyClearEpoch;
     const auto updates = m_history.takeUpdates();
     const bool overflow = m_history.takeUpdateOverflow();
-    for (const auto& row : updates) {
-        emit listeningRecordChanged(row);
+    for (const auto& update : updates) {
+        emit listeningRecordChanged(update.record);
+        if (!guard || m_historyClearEpoch != epoch)
+            return bool(guard);
+        emit reportingRecordChanged(update.record, update.provider);
         if (!guard || m_historyClearEpoch != epoch)
             return bool(guard);
     }
@@ -592,6 +620,53 @@ void ListeningSession::clearHistory()
     if (guard)
         notifyHistory(changed);
 }
+void ListeningSession::setBiliSourcePermitted(bool permit)
+{
+    if (permit == m_permitBiliSource)
+        return;
+    m_permitBiliSource = permit;
+    m_preload.reset();
+    if (const auto id = std::exchange(m_preloadLyricRequest, 0))
+        m_backend.cancelMusic(id);
+    if (current())
+        static_cast<void>(m_backend.preloadSong({}, m_quality, false));
+    refreshPreload();
+}
+
+void ListeningSession::requestLyrics()
+{
+    const auto entry = m_queue.current();
+    if (!entry || !entry->program.value.isEmpty() || !current() || m_terminalHandled ||
+        m_playback.state == PlaybackState::Failed ||
+        m_playback.state == PlaybackState::Empty || m_lyricsRequested ||
+        !m_backend.playbackSource(m_token.generation))
+        return;
+    m_lyricsRequested = true;
+    const auto revision = m_revision;
+    const auto id = m_backend.playbackLyrics(m_token.generation);
+    if (revision != m_revision) {
+        if (id)
+            m_backend.cancelMusic(id);
+        return;
+    }
+    m_lyricRequest = id;
+    m_lyricsState = id ? LyricsState::Loading : LyricsState::Failed;
+    emit lyricsChanged(m_lyricsState);
+}
+
+void ListeningSession::sourceSelected(PlaybackSourceSelection selection)
+{
+    if (selection.token == m_token) {
+        requestLyrics();
+        return;
+    }
+    const auto entry = m_preload ? m_preload->queue.current() : std::nullopt;
+    if (m_preload && (m_preload->fromFm || (entry && entry->program.value.isEmpty())) &&
+        selection.token.generation == m_preload->generation &&
+        selection.token.session == m_token.session && !m_preloadLyricRequest)
+        m_preloadLyricRequest = m_backend.playbackLyrics(m_preload->generation);
+}
+
 void ListeningSession::refreshCursors()
 {
     LyricCursors cursor;
@@ -625,13 +700,37 @@ void ListeningSession::receive(PlaybackSnapshot snapshot)
         reset();
         return;
     } // external facade intent/session change disowns this queue
-    if (snapshot.token != m_token)
+    if (snapshot.token != m_token || snapshot.song != m_playback.song)
         return;
     const auto revision = m_revision;
+    if (snapshot.observed && snapshot.observed->playedMs >= m_lastObservedPlayedMs &&
+        snapshot.observed->playedMs <= ObservedPlayback::MaximumMs &&
+        (!snapshot.observed->capped ||
+         snapshot.observed->playedMs == ObservedPlayback::MaximumMs)) {
+        m_lastObservedPlayedMs = snapshot.observed->playedMs;
+        if (!m_heard && m_lastObservedPlayedMs >= 1000) {
+            m_heard = true;
+            m_failureStreak = 0;
+            m_failureStopNotified = false;
+            m_pendingFailureStop.reset();
+            m_autoVisited.clear();
+        }
+    }
     if (snapshot.positionRevision != m_playback.positionRevision) {
         m_positionObservedAt = std::chrono::duration_cast<std::chrono::milliseconds>(
                                    std::chrono::steady_clock::now().time_since_epoch())
                                    .count(); // owner arrival, not decoder/acoustic time
+    }
+    const bool end = snapshot.state == PlaybackState::Ended;
+    const bool terminal = !m_terminalHandled && (end || snapshot.state == PlaybackState::Failed);
+    if (terminal) {
+        m_terminalHandled = true;
+        if (!end) {
+            m_failureStreak = qMin(m_failureStreak + 1, 10);
+            m_autoVisited.insert(m_queue.snapshot().active);
+        }
+        if (m_lyricsState == LyricsState::Loading && !m_lyricsRequested)
+            m_lyricsState = LyricsState::Failed;
     }
     m_playback = snapshot;
     m_playback.intent = m_intent;
@@ -644,6 +743,10 @@ void ListeningSession::receive(PlaybackSnapshot snapshot)
     emit playbackChanged(m_playback);
     if (revision != m_revision)
         return;
+    if (terminal && m_lyricsState == LyricsState::Failed)
+        emit lyricsChanged(m_lyricsState);
+    if (revision != m_revision)
+        return;
     refreshCursors();
     if (revision != m_revision)
         return;
@@ -651,21 +754,15 @@ void ListeningSession::receive(PlaybackSnapshot snapshot)
         m_preloadChecked = true; // once playing, so it doesn't compete with this one's start
         refreshPreload();
     }
-    if (revision != m_revision || m_terminalHandled)
+    if (revision != m_revision || !terminal)
         return;
-    const bool end = snapshot.state == PlaybackState::Ended;
-    if (!end && snapshot.state != PlaybackState::Failed)
-        return;
-    if (!end && !m_auto) {
-        m_terminalHandled = true;
+    if (!end && m_failureStreak >= 10) {
+        QTimer::singleShot(0, this, [this, revision] { stopForFailures(revision); });
         return;
     }
-    m_terminalHandled = true;
     QTimer::singleShot(0, this, [this, revision, end] {
         if (revision == m_revision && current()) {
             if (m_mode == ListeningMode::PersonalFm) {
-                if (end)
-                    m_fmAttempts = 0;
                 // After going back, on through the songs so far first.
                 if (const QUuid after = fmNeighbour(1); after.isNull() || !playFm(after, true))
                     enterFmWait(true, false);
@@ -674,6 +771,23 @@ void ListeningSession::receive(PlaybackSnapshot snapshot)
         }
     });
 }
+void ListeningSession::stopForFailures(quint64 revision)
+{
+    if (revision != m_revision || !current() || m_failureStreak < 10 ||
+        m_playback.state != PlaybackState::Failed)
+        return;
+    if (!stopPlayback(true)) {
+        if (revision == m_revision)
+            m_pendingFailureStop = revision;
+        return;
+    }
+    if (m_revision == revision + 1 && m_intent == TransportIntent::Stop &&
+        m_playback.state == PlaybackState::Empty && !m_failureStopNotified) {
+        m_failureStopNotified = true;
+        emit failureStreakExceeded();
+    }
+}
+
 void ListeningSession::refreshPreload()
 {
     if (m_preloadChecked && current() && m_mode == ListeningMode::PersonalFm) {
@@ -694,6 +808,8 @@ void ListeningSession::refreshPreload()
     if (!entry) {
         if (m_preload) {
             m_preload.reset();
+            if (const auto id = std::exchange(m_preloadLyricRequest, 0))
+                m_backend.cancelMusic(id);
             static_cast<void>(m_backend.preloadSong({}, m_quality));
         }
         return;
@@ -707,7 +823,10 @@ void ListeningSession::requestPreload(SongId song, QUuid entry, PlaybackQueue qu
         m_preload->queue = std::move(queue); // same song; the rest of the queue changed
         return;
     }
-    const auto id = m_backend.preloadSong(song, m_quality);
+    const auto nextEntry = queue.current();
+    const auto id = m_backend.preloadSong(
+        song, m_quality,
+        m_permitBiliSource && (fromFm || (nextEntry && nextEntry->program.value.isEmpty())));
     if (!id) {
         m_preload.reset();
         return;
@@ -716,7 +835,8 @@ void ListeningSession::requestPreload(SongId song, QUuid entry, PlaybackQueue qu
     // Its lyrics too: where it's sung, for the transition into it.
     if (const auto old = std::exchange(m_preloadLyricRequest, 0))
         m_backend.cancelMusic(old);
-    m_preloadLyricRequest = m_backend.lyrics(song);
+    if (const auto selection = m_backend.playbackSource(id))
+        sourceSelected(*selection);
 }
 void ListeningSession::adoptAdvance()
 {
@@ -741,13 +861,12 @@ void ListeningSession::adoptAdvance()
 }
 void ListeningSession::advance(bool naturalEnd)
 {
-    // After an end (natural) or a failure (skips at most 5 entries in a row).
     log::debug(lcPlayback, "queue.advance",
                {{"natural", naturalEnd}, {"skipped", m_autoVisited.size()}});
     if (naturalEnd)
         m_autoVisited.clear();
     const auto count = m_queue.snapshot().entries.size();
-    if (m_autoVisited.size() >= qMin<qsizetype>(count, 5)) {
+    if (m_autoVisited.size() >= count) {
         emit advanceStopped(true);
         return;
     }

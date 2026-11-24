@@ -53,9 +53,19 @@ struct Harness {
                 ++n;
         return n;
     }
+    void selectSource(SourceProvider provider = SourceProvider::Netease)
+    {
+        const auto c = latestPlay();
+        facade.deliverPlaybackSource({c.token, c.query.song, provider,
+            provider == SourceProvider::Bilibili
+                ? std::optional<BiliStreamMeta>(BiliStreamMeta{"BV1testpage", "456", "30280", {}})
+                : std::nullopt});
+    }
     void publish(PlaybackState state, qint64 position = 0, std::optional<PreviewRange> preview = {})
     {
         const auto c = latestPlay();
+        if (state != PlaybackState::Failed && state != PlaybackState::Resolving)
+            selectSource();
         PlaybackSnapshot s;
         s.token = c.token;
         s.song = c.query.song;
@@ -97,6 +107,23 @@ class ListeningTest : public QObject
 {
     Q_OBJECT
   private slots:
+    void lyricsWaitForSelectedProvider()
+    {
+        Harness h;
+        QVERIFY(h.player.replaceQueue({{"1"}}));
+        QVERIFY(h.music.isEmpty());
+        QCOMPARE(h.player.lyricsState(), LyricsState::Loading);
+        h.selectSource(SourceProvider::Bilibili);
+        QCOMPARE(h.music.size(), 1);
+        const auto query = std::get<PlaybackLyricQuery>(h.music.first().query);
+        QCOMPARE(query.source.provider, SourceProvider::Bilibili);
+        QCOMPARE(query.source.bili->cid, QString("456"));
+        h.facade.deliverMusic({h.music.first().id, h.music.first().generation,
+                              h.music.first().context, MusicFailure{MusicError::Network}});
+        QCOMPARE(h.player.lyricsState(), LyricsState::Failed);
+        h.selectSource(SourceProvider::Bilibili);
+        QCOMPARE(h.music.size(), 1);
+    }
     void stagedQueueIsBoundToSessionBeforeFirstPlay()
     {
         Harness h;
@@ -179,6 +206,36 @@ class ListeningTest : public QObject
         QTRY_COMPARE(stopped.size(), 1);
         QCOMPARE(h.plays(), 2);
         QVERIFY(stopped.first()[0].toBool());
+    }
+    void aProgramPlaysItsTrackWithoutLyrics()
+    {
+        Harness h;
+        h.facade.setAllowBiliSource(true);
+        QSignalSpy records(&h.player, &ListeningSession::listeningRecordChanged);
+        const PlayOrigin podcast{PlayOriginKind::Podcast, "4", "synthetic podcast"};
+        QVERIFY(h.player.replaceQueue({{"99"}, {"1"}}, 0, AudioQuality::Standard,
+                                      {podcast, podcast}, {{"5"}, {}}));
+        QCOMPARE(h.latestPlay().query.song.value, "99"); // the track, as a song
+        QVERIFY(!h.latestPlay().query.allowBiliSource);
+        QVERIFY(h.music.isEmpty());                      // no lyrics asked for
+        QCOMPARE(h.player.lyricsState(), LyricsState::None);
+        QCOMPARE(h.player.queue().entries.first().program.value, "5");
+        QVERIFY(h.player.queue().entries.last().program.value.isEmpty());
+        h.publish(PlaybackState::Playing, 1000);
+        auto played = h.player.playback();
+        played.state = PlaybackState::Playing;
+        played.observed = ObservedPlayback{4000, false};
+        h.facade.deliverPlayback({h.latestPlay().generation, played});
+        QTRY_VERIFY(!records.isEmpty());
+        const auto row = qvariant_cast<StoredListeningRecord>(records.last().first());
+        QCOMPARE(row.program.value, "5");
+        QCOMPARE(row.song.value, "99");
+        QCOMPARE(row.origin, podcast);
+        QVERIFY(h.player.next());
+        QCOMPARE(h.player.lyricsState(), LyricsState::Loading); // the song after it has lyrics
+        QVERIFY(h.latestPlay().query.allowBiliSource);
+        QVERIFY(!h.player.replaceQueue({{"99"}}, 0, AudioQuality::Standard, {}, {{"5"}, {"6"}}));
+        QVERIFY(!h.player.replaceQueue({{"99"}}, 0, AudioQuality::Standard, {}, {{"x"}}));
     }
     void shuffleIsOneRoundAndHistoryIsStable()
     {
@@ -331,6 +388,7 @@ class ListeningTest : public QObject
     {
         Harness h;
         QVERIFY(h.player.replaceQueue({{"1"}, {"2"}}));
+        h.selectSource();
         auto doc = lyrics();
         doc.original.standard = lines({0, 30000, 31500});
         h.deliverLyrics(h.music.last(), doc);
@@ -360,11 +418,13 @@ class ListeningTest : public QObject
     {
         Harness h;
         QVERIFY(h.player.replaceQueue({{"1"}, {"2"}}));
+        h.selectSource();
         const auto old = h.music.last();
         const auto command = h.latestPlay();
         QVERIFY(h.player.next());
         h.deliverLyrics(old, lyrics("1"));
         QVERIFY(!h.player.lyrics());
+        h.selectSource();
         h.deliverLyrics(h.music.last(), lyrics("2"));
         QCOMPARE(h.player.lyrics()->song.value, "2");
         PlaybackSnapshot oldPlayback;
@@ -420,33 +480,160 @@ class ListeningTest : public QObject
         QVERIFY(h.player.next());
         QCOMPARE(h.player.playback().song.value, "2");
     }
-    void automaticFailuresAreBoundedAndManualFailureStops()
+    void failuresAdvanceAndStopAtTen()
     {
-        Harness manual;
-        QVERIFY(manual.player.replaceQueue({{"1"}, {"2"}}));
-        manual.publish(PlaybackState::Failed);
-        QCoreApplication::processEvents();
-        QCOMPARE(manual.plays(), 1);
         Harness h;
-        QVERIFY(h.player.replaceQueue({{"1"}, {"2"}, {"3"}, {"4"}, {"5"}, {"6"}, {"7"}}));
-        QVERIFY(h.player.setModes(QueueOrder::Sequential, QueueRepeat::All));
-        QSignalSpy stopped(&h.player, &ListeningSession::advanceStopped);
-        h.publish(PlaybackState::Ended);
-        QTRY_COMPARE(h.plays(), 2);
-        QSet<QString> visited;
-        for (int i = 0; i < 5; ++i) {
-            visited.insert(h.latestPlay().query.song.value);
+        QList<SongId> songs;
+        for (int i = 1; i <= 12; ++i)
+            songs.append({QString::number(i)});
+        QVERIFY(h.player.replaceQueue(songs));
+        QSignalSpy stopped(&h.player, &ListeningSession::failureStreakExceeded);
+        for (int i = 1; i <= 10; ++i) {
+            h.publish(PlaybackState::Ready);
             h.publish(PlaybackState::Failed);
-            if (i < 4)
-                QTRY_COMPARE(h.plays(), i + 3);
+            h.publish(PlaybackState::Failed);
+            if (i < 10)
+                QTRY_COMPARE(h.plays(), i + 1);
         }
         QTRY_COMPARE(stopped.size(), 1);
-        QCOMPARE(stopped.last()[0].toBool(), true);
-        QCOMPARE(h.plays(), 6);
-        QCOMPARE(visited.size(), 5);
+        QCOMPARE(h.plays(), 10);
+        QCOMPARE(h.player.playback().state, PlaybackState::Empty);
+        QCOMPARE(h.player.queue().entries.size(), 12);
+        QCoreApplication::processEvents();
+        QCOMPARE(stopped.size(), 1);
+    }
+
+    void resolverFailureSettlesLyricsWithoutQuery()
+    {
+        Harness h;
+        QVERIFY(h.player.replaceQueue({{"1"}}));
+        h.publish(PlaybackState::Failed);
+        QCOMPARE(h.player.lyricsState(), LyricsState::Failed);
+        QVERIFY(h.music.isEmpty());
+        h.selectSource(SourceProvider::Bilibili);
+        QVERIFY(h.music.isEmpty());
+    }
+    void failuresCountBeforeReentrantNext()
+    {
+        Harness h;
+        QList<SongId> songs;
+        for (int i = 1; i <= 12; ++i)
+            songs.append({QString::number(i)});
+        QVERIFY(h.player.replaceQueue(songs));
+        const auto connection = connect(&h.player, &ListeningSession::playbackChanged, this,
+                                         [&](PlaybackSnapshot s) {
+            if (s.state == PlaybackState::Failed)
+                QVERIFY(h.player.next());
+        });
+        for (int i = 0; i < 9; ++i)
+            h.publish(PlaybackState::Failed);
+        QCOMPARE(h.plays(), 10);
+        disconnect(connection);
+        QSignalSpy stopped(&h.player, &ListeningSession::failureStreakExceeded);
+        h.publish(PlaybackState::Failed);
+        QTRY_COMPARE(stopped.size(), 1);
+        QCOMPARE(h.plays(), 10);
+    }
+    void wrongSongObservationCannotResetFailureStreak()
+    {
+        Harness h;
+        QList<SongId> songs;
+        for (int i = 1; i <= 12; ++i)
+            songs.append({QString::number(i)});
+        QVERIFY(h.player.replaceQueue(songs));
+        for (int i = 0; i < 9; ++i) {
+            h.publish(PlaybackState::Failed);
+            QTRY_COMPARE(h.plays(), i + 2);
+        }
+        auto wrong = h.facade.playback();
+        wrong.song = {"99"};
+        wrong.state = PlaybackState::Playing;
+        wrong.observed = ObservedPlayback{1000};
+        h.facade.deliverPlayback({h.latestPlay().generation, wrong});
+        QSignalSpy stopped(&h.player, &ListeningSession::failureStreakExceeded);
+        h.publish(PlaybackState::Failed);
+        QTRY_COMPARE(stopped.size(), 1);
+    }
+    void supersededStopDoesNotNotifyForNewPlayback()
+    {
+        Harness h;
+        QList<SongId> songs;
+        for (int i = 1; i <= 12; ++i)
+            songs.append({QString::number(i)});
+        QVERIFY(h.player.replaceQueue(songs));
+        for (int i = 0; i < 9; ++i) {
+            h.publish(PlaybackState::Failed);
+            QTRY_COMPARE(h.plays(), i + 2);
+        }
+        connect(&h.player, &ListeningSession::playbackChanged, this, [&](PlaybackSnapshot s) {
+            if (s.state == PlaybackState::Empty)
+                QVERIFY(h.player.replaceQueue({{"99"}}));
+        });
+        QSignalSpy stopped(&h.player, &ListeningSession::failureStreakExceeded);
+        h.publish(PlaybackState::Failed);
+        QTRY_COMPARE(h.plays(), 11);
+        QCOMPARE(stopped.size(), 0);
+        QCOMPARE(h.player.playback().song.value, QString("99"));
+    }
+    void rejectedThresholdStopWaitsForMailboxSpace()
+    {
+        Harness h;
+        QList<SongId> songs;
+        for (int i = 1; i <= 12; ++i)
+            songs.append({QString::number(i)});
+        QVERIFY(h.player.replaceQueue(songs));
+        for (int i = 0; i < 9; ++i) {
+            h.publish(PlaybackState::Failed);
+            QTRY_COMPARE(h.plays(), i + 2);
+        }
+        QCoreApplication::processEvents();
+        h.acknowledge = false;
+        QList<quint64> held;
+        for (int i = 0; i < 32; ++i)
+            held.append(h.facade.setPlaybackVolume(0));
+        QVERIFY(held.last());
+        QSignalSpy stopped(&h.player, &ListeningSession::failureStreakExceeded);
         h.publish(PlaybackState::Failed);
         QCoreApplication::processEvents();
-        QCOMPARE(h.plays(), 6);
+        QCOMPARE(stopped.size(), 0);
+        QCOMPARE(h.player.playback().state, PlaybackState::Failed);
+        BackendEvent ack;
+        ack.kind = BackendEvent::Kind::Acknowledged;
+        ack.commandId = held.first();
+        ack.accepted = true;
+        h.facade.deliver(ack);
+        QTRY_COMPARE(stopped.size(), 1);
+        QCOMPARE(h.player.playback().state, PlaybackState::Empty);
+        QCOMPARE(h.player.queue().entries.size(), 12);
+    }
+    void onlyObservedAudioResetsFailures()
+    {
+        Harness h;
+        QList<SongId> songs;
+        for (int i = 1; i <= 24; ++i)
+            songs.append({QString::number(i)});
+        QVERIFY(h.player.replaceQueue(songs));
+        QSignalSpy stopped(&h.player, &ListeningSession::failureStreakExceeded);
+        for (int i = 1; i <= 9; ++i) {
+            h.publish(PlaybackState::Playing, 5000);
+            h.publish(PlaybackState::Failed);
+            QTRY_COMPARE(h.plays(), i + 1);
+        }
+        auto observed = h.facade.playback();
+        observed.state = PlaybackState::Playing;
+        observed.observed = ObservedPlayback{1000};
+        h.facade.deliverPlayback({h.latestPlay().generation, observed});
+        h.publish(PlaybackState::Failed);
+        QTRY_COMPARE(h.plays(), 11);
+        QCOMPARE(stopped.size(), 0);
+        for (int i = 11; i <= 19; ++i) {
+            h.publish(PlaybackState::Ready);
+            h.publish(PlaybackState::Failed);
+            if (i < 19)
+                QTRY_COMPARE(h.plays(), i + 1);
+        }
+        QTRY_COMPARE(stopped.size(), 1);
+        QCOMPARE(h.plays(), 19);
     }
     void stopKeepsQueueAndCloseClearsIt()
     {

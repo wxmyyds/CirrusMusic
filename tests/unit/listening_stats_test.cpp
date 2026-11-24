@@ -200,9 +200,12 @@ void ListeningStatsTest::queueAndRecordsKeepTheirOrigin()
     const PlayOrigin playlist{PlayOriginKind::Playlist, QStringLiteral("777"),
                               QStringLiteral("深夜通勤")};
     domain::QueueSnapshot queue;
-    queue.entries = {
-        {QUuid::createUuid(), {QStringLiteral("1")}, playlist},
-        {QUuid::createUuid(), {QStringLiteral("2")}, {PlayOriginKind::Search, {}, {}}}};
+    queue.entries = {{QUuid::createUuid(), {QStringLiteral("1")}, playlist},
+                     {QUuid::createUuid(), {QStringLiteral("2")}, {PlayOriginKind::Search, {}, {}}},
+                     {QUuid::createUuid(),
+                      {QStringLiteral("99")},
+                      {PlayOriginKind::Podcast, QStringLiteral("4"), QStringLiteral("播客")},
+                      {QStringLiteral("5")}}};
     queue.active = queue.entries.first().id;
     ListeningStateJob saveQueue;
     saveQueue.operation = ListeningStateOperation::SaveQueue;
@@ -212,9 +215,13 @@ void ListeningStatsTest::queueAndRecordsKeepTheirOrigin()
     loadQueue.operation = ListeningStateOperation::LoadQueue;
     const auto restored = fixture.run(loadQueue);
     QVERIFY(restored.queue);
-    QCOMPARE(restored.queue->entries.size(), 2);
+    QCOMPARE(restored.queue->entries.size(), 3);
     QCOMPARE(restored.queue->entries[0].origin, playlist);
+    QVERIFY(restored.queue->entries[0].program.value.isEmpty());
     QCOMPARE(restored.queue->entries[1].origin.kind, PlayOriginKind::Search);
+    QCOMPARE(restored.queue->entries[2].origin.kind, PlayOriginKind::Podcast);
+    QCOMPARE(restored.queue->entries[2].program.value, QStringLiteral("5")); // the program
+    QCOMPARE(restored.queue->entries[2].song.value, QStringLiteral("99"));   // its track
     QCOMPARE(restored.mode, ListeningMode::Queue);
     saveQueue.mode = ListeningMode::PersonalFm; // its songs so far, saved as the queue
     QCOMPARE(fixture.run(saveQueue).error, StorageError::None);

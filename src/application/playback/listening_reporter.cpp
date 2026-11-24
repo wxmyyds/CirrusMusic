@@ -39,7 +39,7 @@ ListeningReporter::ListeningReporter(BackendFacade& facade, ListeningSession& se
     });
     m_flushTimer.setSingleShot(true);
     connect(&m_flushTimer, &QTimer::timeout, this, &ListeningReporter::finishFlush);
-    connect(&session, &ListeningSession::listeningRecordChanged, this,
+    connect(&session, &ListeningSession::reportingRecordChanged, this,
             &ListeningReporter::recordChanged);
     connect(&session, &ListeningSession::playbackChanged, this,
             &ListeningReporter::playbackChanged);
@@ -60,8 +60,15 @@ ListeningReporter::ListeningReporter(BackendFacade& facade, ListeningSession& se
 
 ListeningReporter::~ListeningReporter() = default;
 
-void ListeningReporter::recordChanged(const StoredListeningRecord& row)
+void ListeningReporter::recordChanged(const StoredListeningRecord& row, SourceProvider provider)
 {
+    if (provider == SourceProvider::Bilibili) {
+        remember(m_started, m_startedOrder, row.id);
+        remember(m_reported, m_reportedOrder, row.id);
+        if (m_active && m_active->id == row.id)
+            m_active.reset();
+        return;
+    }
     if (row.end == ListeningEnd::Active) {
         m_active = row;
         if (!m_started.contains(row.id)) { // first heard: the web's startplay
@@ -121,7 +128,14 @@ ListeningReporter::prepare(const StoredListeningRecord& row, ListeningReportActi
     report.durationSeconds = m_durations.value(row.song.value);
     report.startedAtMs = qMax<qint64>(0, row.startedAtMs);
     const char* origin = "none";
-    if (const auto found = m_lookup ? m_lookup(row.queueEntry) : std::nullopt) {
+    if (!row.program.value.isEmpty()) {
+        // A program: from its podcast, as the app reports it (docs/api/podcast-playback.md).
+        report.program = row.program;
+        report.source = ListeningReportSource::DjRadio;
+        const bool podcast = row.origin.kind == PlayOriginKind::Podcast;
+        report.sourceId = podcast ? row.origin.id : QString();
+        origin = podcast ? "known" : "none";
+    } else if (const auto found = m_lookup ? m_lookup(row.queueEntry) : std::nullopt) {
         auto known = report;
         known.source = found->source;
         known.sourceId = found->id;
@@ -167,6 +181,7 @@ void ListeningReporter::send(const Prepared& prepared, const StoredListeningReco
                {{"event", report.eventId},
                 {"action", report.action},
                 {"song", row.song.value},
+                log::fieldIf(!row.program.value.isEmpty(), "program", row.program.value),
                 {"record_end", row.end},
                 {"end", report.end},
                 {"played_ms", row.playedMs},

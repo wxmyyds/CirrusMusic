@@ -70,6 +70,23 @@ Item {
                 x: swap.offset * 48
             }
 
+            Rectangle {
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                anchors.margins: 12
+                width: sourceText.implicitWidth + 20
+                height: sourceText.implicitHeight + 12
+                radius: height / 2
+                color: Qt.alpha("black", 0.65)
+                Text {
+                    id: sourceText
+                    anchors.centerIn: parent
+                    text: App.player.provider === Playback.Bilibili ? "Bilibili" : qsTr("网易云")
+                    color: "white"
+                    font: Theme.type.labelLarge.font
+                }
+            }
+
             Spring {
                 id: rest
                 target: root.playing || root.loading ? 0 : 1

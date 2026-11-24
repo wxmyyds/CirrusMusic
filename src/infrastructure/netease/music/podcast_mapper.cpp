@@ -39,6 +39,7 @@ std::optional<Program> programFrom(const QJsonObject& o)
         if (!p.podcast)
             return std::nullopt;
     }
+    p.track = trackFrom(o);
     return p;
 }
 } // namespace

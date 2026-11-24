@@ -8,6 +8,8 @@
 #include "application/playback/playback_coordinator.h"
 #include "application/playback/provider_router.h"
 #include "infrastructure/bilibili/bili_api.h"
+#include "infrastructure/bilibili/bili_account.h"
+#include "infrastructure/bilibili/bili_lyrics.h"
 #include "infrastructure/bilibili/bili_stream_resolver.h"
 #include "infrastructure/bootstrap/anonymous_bootstrap.h"
 #include "infrastructure/cache/cached_music_query_service.h"
@@ -178,8 +180,76 @@ class BackendWorker final : public QObject
         emit delivered(event);
     }
 
+    bool acceptsPlaybackLyrics(const MusicCommand& command) const
+    {
+        const auto* lyrics = std::get_if<PlaybackLyricQuery>(&command.query);
+        if (!lyrics || !m_ready || m_closing || !m_session->accepts(command.context) ||
+            !m_playback || !m_playback->acceptsLyrics(lyrics->source.token))
+            return false;
+        const auto source = m_sourceSelections.constFind(lyrics->source.token.generation);
+        return source != m_sourceSelections.cend() && source->token == lyrics->source.token &&
+               source->song == lyrics->source.song && source->provider == lyrics->source.provider &&
+               source->bili == lyrics->source.bili;
+    }
+
+    void cancelRetiredPlaybackLyrics()
+    {
+        for (const auto id : m_biliLyricRequests.keys()) {
+            if (acceptsPlaybackLyrics(m_biliLyricRequests.value(id)))
+                continue;
+            const auto command = m_biliLyricRequests.take(id);
+            m_biliLyrics->cancel(id);
+            emit musicDelivered({command.id, command.generation, command.context,
+                                 MusicFailure{MusicError::StaleContext}});
+        }
+        for (const auto id : m_musicRequests.keys()) {
+            const auto command = m_musicRequests.value(id);
+            if (!std::holds_alternative<PlaybackLyricQuery>(command.query) ||
+                acceptsPlaybackLyrics(command))
+                continue;
+            m_musicRequests.remove(id);
+            m_musicService->cancel(id);
+            emit musicDelivered({command.id, command.generation, command.context,
+                                 MusicFailure{MusicError::StaleContext}});
+        }
+    }
+
+    void requestNeteaseLyrics(MusicCommand command)
+    {
+        if (!acceptsPlaybackLyrics(command)) {
+            emit musicDelivered({command.id, command.generation, command.context,
+                                 MusicFailure{MusicError::StaleContext}});
+            return;
+        }
+        const auto& source = std::get<PlaybackLyricQuery>(command.query).source;
+        const auto id = m_musicService->request(command.context, LyricQuery{source.song});
+        if (id)
+            m_musicRequests.insert(id, command);
+        else
+            emit musicDelivered({command.id, command.generation, command.context,
+                                 MusicFailure{MusicError::Busy}});
+    }
+
     void music(MusicCommand command)
     {
+        if (const auto* lyrics = std::get_if<PlaybackLyricQuery>(&command.query)) {
+            if (!acceptsPlaybackLyrics(command)) {
+                emit musicDelivered({command.id, command.generation, command.context,
+                                     MusicFailure{MusicError::StaleContext}});
+                return;
+            }
+            if (lyrics->source.provider == domain::SourceProvider::Bilibili) {
+                const auto id = m_biliLyrics->request(lyrics->source);
+                if (id)
+                    m_biliLyricRequests.insert(id, command);
+                else
+                    emit musicDelivered({command.id, command.generation, command.context,
+                                         MusicFailure{MusicError::Busy}});
+                return;
+            }
+            requestNeteaseLyrics(std::move(command));
+            return;
+        }
         const auto id = m_ready && !m_closing && m_musicService
                             ? m_musicService->request(command.context, command.query)
                             : 0;
@@ -192,6 +262,14 @@ class BackendWorker final : public QObject
 
     void cancelMusic(quint64 requestId)
     {
+        for (auto it = m_biliLyricRequests.cbegin(); it != m_biliLyricRequests.cend(); ++it) {
+            if (it->id == requestId) {
+                const auto id = it.key();
+                m_biliLyricRequests.remove(id);
+                m_biliLyrics->cancel(id);
+                return;
+            }
+        }
         if (!m_musicService)
             return;
         for (auto it = m_musicRequests.cbegin(); it != m_musicRequests.cend(); ++it) {
@@ -200,6 +278,18 @@ class BackendWorker final : public QObject
                 return;
             }
         }
+    }
+
+    void biliCookie(QByteArray cookie, bool clear)
+    {
+        if (!m_ready || m_closing || !m_biliAccount) {
+            emit biliAccountDelivered({domain::BiliAccountStatus::StorageError, {}});
+            return;
+        }
+        if (clear)
+            m_biliAccount->clear();
+        else
+            m_biliAccount->save(std::move(cookie));
     }
 
     void reportListening(ListeningReportCommand command)
@@ -308,6 +398,7 @@ class BackendWorker final : public QObject
                         m_session->accepts(command.token.session);
         if (accepted) {
             if (command.action == PlaybackAction::Play || command.action == PlaybackAction::Stop) {
+                m_sourceSelections.clear();
                 m_playbackToken = command.token;
                 m_playbackParentGeneration = command.generation;
                 m_preloadToken = {};
@@ -325,6 +416,7 @@ class BackendWorker final : public QObject
             else if (command.action == PlaybackAction::Vocals)
                 m_playback->setVocals(command.next, command.vocals);
             else if (command.action == PlaybackAction::Preload) {
+                m_sourceSelections.remove(m_preloadToken.generation);
                 std::optional<domain::StreamQuery> query;
                 if (!command.query.song.value.isEmpty())
                     query = command.query;
@@ -344,6 +436,7 @@ class BackendWorker final : public QObject
             else if (command.action == PlaybackAction::Seek)
                 accepted = m_playback->seek(command.positionMs);
         }
+        cancelRetiredPlaybackLyrics();
         auto event = makeEvent(Kind::Acknowledged);
         event.commandId = command.id;
         event.accepted = accepted;
@@ -381,7 +474,14 @@ class BackendWorker final : public QObject
         m_registrar.reset();
         m_playback.reset();
         m_providerRouter.reset();
+        if (m_biliAccount) {
+            disconnect(m_biliAccount.get(), nullptr, this, nullptr);
+            m_biliAccount->close();
+        }
         m_biliResolver.reset();
+        m_biliLyrics.reset();
+        m_biliLyricRequests.clear();
+        m_sourceSelections.clear();
         m_streamResolver.reset();
         m_player.reset();
         m_audioStore.reset(); // after the engine: its streams are gone
@@ -406,6 +506,8 @@ class BackendWorker final : public QObject
     void drained(bool persistenceFailed);
     void musicDelivered(cirrus::application::MusicDelivery delivery);
     void playbackDelivered(cirrus::application::PlaybackDelivery delivery);
+    void sourceDelivered(cirrus::domain::PlaybackSourceSelection selection);
+    void biliAccountDelivered(cirrus::domain::BiliAccountState state);
     void reportDelivered(cirrus::application::ListeningReportDelivery delivery);
     void collectionDelivered(cirrus::application::CollectionDelivery delivery);
     void commentWriteDelivered(cirrus::application::CommentWriteDelivery delivery);
@@ -568,14 +670,61 @@ class BackendWorker final : public QObject
             return;
         }
         m_streamResolver = std::make_unique<netease::StreamResolver>(*m_client);
+        auto biliApi = m_factories.biliStreamHttp
+                           ? std::make_unique<bilibili::BiliApi>(m_factories.biliStreamHttp())
+                           : std::make_unique<bilibili::BiliApi>();
         m_biliResolver = std::make_unique<bilibili::StreamResolver>(
-            *m_musicGateway, std::make_unique<bilibili::BiliApi>());
+            *m_musicGateway, std::move(biliApi));
+        m_biliLyrics = m_factories.biliLyricsHttp
+                           ? std::make_unique<bilibili::Lyrics>(m_factories.biliLyricsHttp())
+                           : std::make_unique<bilibili::Lyrics>();
+        connect(m_biliLyrics.get(), &bilibili::Lyrics::completed, this,
+                [this](quint64 id, MusicResult result) {
+                    if (!m_biliLyricRequests.contains(id))
+                        return;
+                    const auto command = m_biliLyricRequests.take(id);
+                    if (!acceptsPlaybackLyrics(command)) {
+                        emit musicDelivered({command.id, command.generation, command.context,
+                                             MusicFailure{MusicError::StaleContext}});
+                        return;
+                    }
+                    const auto* lyrics = std::get_if<domain::SongLyrics>(&result);
+                    if (lyrics &&
+                        (lyrics->providerNoLyric == true ||
+                         lyrics->original.standard.availability == domain::LyricAvailability::Empty)) {
+                        log::info(lcPlayback, "lyrics.subtitle_absent",
+                                  {{"song", lyrics->song.value},
+                                   {"token", std::get<PlaybackLyricQuery>(command.query).source.token.generation}});
+                        requestNeteaseLyrics(command);
+                        return;
+                    }
+                    emit musicDelivered({command.id, command.generation, command.context,
+                                         std::move(result)});
+                });
+        m_biliAccount = m_factories.biliAccountHttp
+                           ? std::make_unique<bilibili::Account>(*m_store, m_factories.biliAccountHttp())
+                           : std::make_unique<bilibili::Account>(*m_store);
+        connect(m_biliAccount.get(), &bilibili::Account::changed, this,
+                &BackendWorker::biliAccountDelivered);
+        connect(m_biliAccount.get(), &bilibili::Account::cookieChanged, this, [this] {
+            const auto cookie = m_biliAccount->cookie();
+            m_biliResolver->setCookie(cookie);
+            m_biliLyrics->setCookie(cookie);
+        });
+        m_biliAccount->restore();
         m_providerRouter = std::make_unique<ProviderRouter>(*m_streamResolver, *m_biliResolver);
         m_playback =
             std::make_unique<PlaybackCoordinator>(*m_session, *m_providerRouter, *m_player);
+        connect(m_playback.get(), &PlaybackCoordinator::sourceSelected, this,
+                [this](domain::PlaybackSourceSelection selection) {
+                    m_sourceSelections.insert(selection.token.generation, selection);
+                    emit sourceDelivered(std::move(selection));
+                });
         connect(m_playback.get(), &PlaybackCoordinator::changed, this,
                 [this](domain::PlaybackSnapshot snapshot) {
+                    cancelRetiredPlaybackLyrics();
                     if (m_preloadToken.generation && snapshot.token == m_preloadToken) {
+                        m_sourceSelections.remove(m_playbackToken.generation);
                         m_advancedFrom = std::exchange(m_playbackToken, snapshot.token);
                         m_preloadToken = {};
                     }
@@ -588,6 +737,11 @@ class BackendWorker final : public QObject
                     if (!m_musicRequests.contains(id))
                         return;
                     const auto command = m_musicRequests.take(id);
+                    if (std::holds_alternative<PlaybackLyricQuery>(command.query)) {
+                        if (!acceptsPlaybackLyrics(command))
+                            result = MusicFailure{MusicError::StaleContext};
+                        retention = {};
+                    }
                     emit musicDelivered(
                         {command.id, command.generation, context, std::move(result), retention});
                 });
@@ -678,6 +832,7 @@ class BackendWorker final : public QObject
             m_client.reset();
             m_ring.reset();
             m_session.reset();
+            m_biliAccount.reset();
             m_store.reset();
             m_installation.reset();
             m_stateStore.reset();
@@ -732,6 +887,10 @@ class BackendWorker final : public QObject
     std::unique_ptr<IPlaybackBackend> m_player;
     std::unique_ptr<netease::StreamResolver> m_streamResolver;
     std::unique_ptr<bilibili::StreamResolver> m_biliResolver;
+    std::unique_ptr<bilibili::Lyrics> m_biliLyrics;
+    std::unique_ptr<bilibili::Account> m_biliAccount;
+    QHash<quint64, MusicCommand> m_biliLyricRequests;
+    QHash<quint64, domain::PlaybackSourceSelection> m_sourceSelections;
     std::unique_ptr<ProviderRouter> m_providerRouter;
     std::unique_ptr<PlaybackCoordinator> m_playback;
     domain::LoadToken m_playbackToken;
@@ -848,9 +1007,18 @@ BackendRuntime::BackendRuntime(BackendConfig config, BackendFactories factories,
             &BackendFacade::deliverCollection, Qt::QueuedConnection);
     connect(m_facade, &BackendFacade::playbackRequested, worker, &BackendWorker::playback,
             Qt::QueuedConnection);
+    connect(this, &BackendRuntime::biliCookieRequested, worker, &BackendWorker::biliCookie,
+            Qt::QueuedConnection);
+    connect(worker, &BackendWorker::biliAccountDelivered, this,
+            [this](domain::BiliAccountState state) {
+                m_biliAccount = state;
+                emit biliAccountChanged(std::move(state));
+            }, Qt::QueuedConnection);
     connect(this, &BackendRuntime::audioCacheRequested, worker, &BackendWorker::audioCache,
             Qt::QueuedConnection);
     connect(worker, &BackendWorker::audioCacheDelivered, this, &BackendRuntime::audioCacheDelivered,
+            Qt::QueuedConnection);
+    connect(worker, &BackendWorker::sourceDelivered, m_facade, &BackendFacade::deliverPlaybackSource,
             Qt::QueuedConnection);
     connect(worker, &BackendWorker::playbackDelivered, m_facade, &BackendFacade::deliverPlayback,
             Qt::QueuedConnection);
@@ -868,6 +1036,16 @@ BackendRuntime::BackendRuntime(BackendConfig config, BackendFactories factories,
         Qt::QueuedConnection);
     connect(thread, &QThread::finished, thread, &QObject::deleteLater);
     thread->start(); // idle event loop only; no IO until explicit facade.start()
+}
+
+void BackendRuntime::saveBiliCookie(QByteArray cookie)
+{
+    emit biliCookieRequested(std::move(cookie), false);
+}
+
+void BackendRuntime::clearBiliCookie()
+{
+    emit biliCookieRequested({}, true);
 }
 
 void BackendRuntime::audioCacheUsage(std::function<void(qint64)> reply)

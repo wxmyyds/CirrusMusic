@@ -16,6 +16,7 @@ class BackendFacadeTest : public QObject
     void readyObserverMayClose();
     void musicResultCannotSurviveLogout();
     void playbackHasIntentAndSessionBarriers();
+    void sourceSelectionDefersLyricsAndRejectsStaleLoads();
 };
 
 static void ready(BackendFacade& facade)
@@ -166,6 +167,54 @@ void BackendFacadeTest::playbackHasIntentAndSessionBarriers()
     facade.close();
     facade.deliverPlayback({second.generation, current});
     QCOMPARE(facade.playback().state, PlaybackState::Empty);
+}
+
+void BackendFacadeTest::sourceSelectionDefersLyricsAndRejectsStaleLoads()
+{
+    BackendFacade facade;
+    ready(facade);
+    BackendEvent session;
+    session.kind = BackendEvent::Kind::Session;
+    session.session = {{QUuid::createUuid(), 1}, SessionPhase::Guest, {}};
+    facade.deliver(session);
+    QSignalSpy plays(&facade, &BackendFacade::playbackRequested);
+    QSignalSpy queries(&facade, &BackendFacade::musicRequested);
+    const auto first = facade.playSong({"1"});
+    QVERIFY(first);
+    QVERIFY(!qvariant_cast<PlaybackCommand>(plays.last().first()).query.allowBiliSource);
+    QCOMPARE(facade.playbackLyrics(first), quint64(0));
+    QCOMPARE(queries.size(), 0);
+    facade.setAllowBiliSource(true);
+    const auto second = facade.playSong({"2"});
+    const auto command = qvariant_cast<PlaybackCommand>(plays.last().first());
+    QVERIFY(command.query.allowBiliSource);
+    PlaybackSourceSelection selected{command.token, {"2"}, SourceProvider::Bilibili,
+                                    BiliStreamMeta{"BV1testpage", "456", "30280", {}}};
+    facade.deliverPlaybackSource(selected);
+    QVERIFY(facade.playbackLyrics(second));
+    const auto query = std::get<PlaybackLyricQuery>(
+        qvariant_cast<MusicCommand>(queries.last().first()).query);
+    QCOMPARE(query.source.provider, SourceProvider::Bilibili);
+    QCOMPARE(query.source.bili->cid, QString("456"));
+    const auto preloaded = facade.preloadSong({"3"});
+    QVERIFY(preloaded);
+    QVERIFY(qvariant_cast<PlaybackCommand>(plays.last().first()).query.allowBiliSource);
+    selected.token.generation = first;
+    facade.deliverPlaybackSource(selected);
+    QVERIFY(!facade.playbackSource(first));
+    QVERIFY(facade.stopPlayback());
+    QVERIFY(!facade.playbackSource(second));
+    QCOMPARE(facade.playbackLyrics(second), quint64(0));
+    facade.deliverPlaybackSource(query.source);
+    QVERIFY(!facade.playbackSource(second));
+    QSignalSpy completed(&facade, &BackendFacade::musicCompleted);
+    const auto oldQuery = qvariant_cast<MusicCommand>(queries.first().first());
+    SongLyrics retired;
+    retired.song = {"2"};
+    facade.deliverMusic({oldQuery.id, oldQuery.generation, oldQuery.context, retired});
+    QCOMPARE(completed.size(), 1);
+    QCOMPARE(std::get<MusicFailure>(qvariant_cast<MusicResult>(completed.first().at(2))).error,
+             MusicError::StaleContext);
 }
 
 QTEST_GUILESS_MAIN(BackendFacadeTest)

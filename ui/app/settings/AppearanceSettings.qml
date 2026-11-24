@@ -2,6 +2,8 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import Cirrus.Theme
 import Cirrus.Presentation
+import Cirrus.Controls
+import Cirrus.Components
 
 // Light or dark, the colors, the text font, motion.
 SettingsGroup {
@@ -113,6 +115,32 @@ SettingsGroup {
         supportingText: qsTr("迷你播放条播放时的进度条")
         value: App.settings.miniWave
         onSwitched: value => App.settings.miniWave = value
+    }
+    // Which of the floating bar's buttons show; also on its right-click.
+    SettingRow {
+        id: barButtons
+        function openMenu(): void {
+            const button = barButtons.trailingItem as Item;
+            if (button)
+                barButtonsMenu.popup(button, 0, button.height + 4);
+        }
+        text: qsTr("播放条按钮")
+        supportingText: barButtonsMenu.shownText()
+        onClicked: openMenu()
+        Accessible.description: supportingText
+        trailing: Component {
+            Button {
+                focusPolicy: Qt.NoFocus
+                variant: Md.Outlined
+                size: Md.Small
+                trailingGlyph: Symbols.keyboard_arrow_down
+                text: qsTr("选择")
+                onClicked: barButtons.openMenu()
+            }
+        }
+        MiniPlayerButtonsMenu {
+            id: barButtonsMenu
+        }
     }
     SwitchSetting {
         text: qsTr("减少动态效果")

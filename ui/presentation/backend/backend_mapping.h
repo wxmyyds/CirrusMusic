@@ -142,6 +142,35 @@ inline CollectionItem podcastOf(const domain::Podcast& podcast)
     return item;
 }
 
+// Podcast voices the backend sources have read, by key, with their tracks:
+// playVoices() is given keys only. Caller (UI) thread; bounded.
+class KnownVoices
+{
+  public:
+    static void remember(const SongInfo& voice)
+    {
+        auto& known = voices();
+        if (!voice.voice || voice.key.isEmpty())
+            return;
+        if (known.size() >= 4096 && !known.contains(voice.key))
+            known.clear();
+        known.insert(voice.key, voice);
+    }
+    [[nodiscard]] static std::optional<SongInfo> find(const QString& key)
+    {
+        const auto& known = voices();
+        const auto it = known.constFind(key);
+        return it == known.cend() ? std::nullopt : std::optional(*it);
+    }
+
+  private:
+    static QHash<QString, SongInfo>& voices()
+    {
+        static QHash<QString, SongInfo> known;
+        return known;
+    }
+};
+
 inline SongInfo voiceOf(const domain::Voice& voice)
 {
     SongInfo info;
@@ -157,6 +186,8 @@ inline SongInfo voiceOf(const domain::Voice& voice)
     }
     // The provider's duration is raw metadata; milliseconds in what was seen so far.
     info.durationMs = voice.providerDuration.value_or(-1);
+    info.trackKey = voice.track ? voice.track->value : QString();
+    KnownVoices::remember(info);
     return info;
 }
 

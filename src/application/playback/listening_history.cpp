@@ -7,8 +7,10 @@ namespace cirrus::application
 {
 using namespace domain;
 void ListeningHistory::begin(LoadToken token, QString accountId, SongId song, ListeningMode source,
-                             QUuid queueEntry, PlayOrigin origin)
+                             QUuid queueEntry, PlayOrigin origin, ProgramId program)
 {
+    if (!validQueueProgram(program) || source == ListeningMode::PersonalFm)
+        program = {};
     if (!validPlayOrigin(origin) ||
         (source == ListeningMode::PersonalFm && origin.kind != PlayOriginKind::None))
         origin = {}; // a bad origin never costs the record
@@ -28,6 +30,7 @@ void ListeningHistory::begin(LoadToken token, QString accountId, SongId song, Li
     m_active->source = source;
     m_active->queueEntry = queueEntry;
     m_active->origin = std::move(origin);
+    m_active->program = std::move(program);
     m_active->recordId = QUuid::createUuid();
     m_active->startedAtMs = QDateTime::currentMSecsSinceEpoch();
 }
@@ -36,6 +39,8 @@ bool ListeningHistory::observe(const PlaybackSnapshot& snapshot)
     if (!m_active || snapshot.token != m_active->token || snapshot.song != m_active->song)
         return false;
     bool changed = false;
+    if (m_active->playedMs == 0)
+        m_active->provider = snapshot.provider;
     if (snapshot.observed) {
         const auto value = *snapshot.observed;
         if (value.playedMs >= m_lastTotal && value.playedMs <= ObservedPlayback::MaximumMs &&
@@ -103,17 +108,17 @@ void ListeningHistory::recordUpdate(const ListeningRecord& record)
 {
     auto row = storedListeningRecord(record);
     for (auto& pending : m_updates)
-        if (pending.id == row.id) {
-            pending = std::move(row);
+        if (pending.record.id == row.id) {
+            pending = {std::move(row), record.provider};
             return;
         }
     if (m_updates.size() >= 64) {
         m_updateOverflow = true; // explicit storage gap, never silently truncate durable history
         return;
     }
-    m_updates.append(std::move(row));
+    m_updates.append({std::move(row), record.provider});
 }
-QList<StoredListeningRecord> ListeningHistory::takeUpdates()
+QList<ListeningHistory::Update> ListeningHistory::takeUpdates()
 {
     return std::exchange(m_updates, {});
 }

@@ -95,6 +95,17 @@ cmake --build --preset linux-release --target appCirrusMusic
 | 日志 | `~/.local/state/Cirrus/logs/` |
 | 登录状态 | 系统钥匙串，名为 `com.guang233.Cirrus` |
 
+## 桌面歌词接口（Linux）
+
+设置 › 歌词新增 **向外部提供歌词 (私货)**，默认关闭。关闭时保留原有标准 MPRIS
+歌曲信息、播放位置和控制，不提供 `xesam:asText` 或详细歌词；其他歌词软件可自行搜索。
+开启后，标准 `Metadata["xesam:asText"]` 提供当前原文纯文本，自定义版本化 D-Bus 接口
+`org.cirrus.Lyrics1` 提供状态、播放身份、逐行／逐字时间、翻译、罗马音、偏移和当前游标。
+没有逐字数据的字幕不伪造逐字时间。加载中、无歌词、失败、切歌或关闭开关时清除旧歌词。
+无需磁盘中转，不导出字幕/音频 URL 或账号凭据；开启后同一用户会话中的应用可以读取。
+D-Bus 是通用通信机制，本接口不是已有 Linux 歌词标准，消费详细时序需要应用适配。
+完整字段、类型、事件和兼容性约定见 [Lyrics D-Bus v1](LYRICS_DBUS.md)。
+
 ## 反馈问题
 
 欢迎在 [Issues](https://github.com/Guang233/CirrusMusic/issues) 报告问题。遇到播放失败、加载不出来之类的情况，请在 **设置 › 诊断** 里生成一个诊断包附上：里面有日志和系统信息，不含账号凭据。

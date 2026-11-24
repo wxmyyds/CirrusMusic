@@ -80,6 +80,13 @@ struct LoadToken {
     quint64 generation = 0;
     friend bool operator==(const LoadToken&, const LoadToken&) = default;
 };
+struct PlaybackSourceSelection {
+    LoadToken token;
+    SongId song;
+    SourceProvider provider = SourceProvider::Netease;
+    std::optional<BiliStreamMeta> bili;
+};
+
 // How one track goes into the next (docs/tasks/automix.md §3): the engine plans each
 // transition (Smart), crossfades for a fixed time (Crossfade), or joins them sample by
 // sample (Gapless).
@@ -124,6 +131,7 @@ struct PlaybackSnapshot {
     std::optional<ObservedPlayback> observed;
 };
 } // namespace cirrus::domain
+Q_DECLARE_METATYPE(cirrus::domain::PlaybackSourceSelection)
 Q_DECLARE_METATYPE(cirrus::domain::PlaybackSnapshot)
 Q_DECLARE_METATYPE(cirrus::domain::LoadToken)
 Q_DECLARE_METATYPE(cirrus::domain::PlaybackFailure)

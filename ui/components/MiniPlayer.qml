@@ -37,15 +37,28 @@ Item {
     // the time over the handle while dragging; 0 narrow: no seek bar, no "previous", a
     // progress ring around the play button.
     // The thresholds leave the title at least `titleRoom` beside a seek bar of a usable
-    // length.
-    readonly property int tier: barWidth >= 880 ? 2 : barWidth >= 620 ? 1 : 0
+    // length; each button the user turned off (MiniPlayerButtonsMenu) lowers them by its
+    // width, so a smaller bar gets the full layout.
+    readonly property var hiddenButtons: App.settings.miniPlayerHidden
+    readonly property bool likeOn: !hiddenButtons.includes("like")
+    readonly property bool modeOn: !hiddenButtons.includes("mode")
+    readonly property bool volumeOn: !hiddenButtons.includes("volume")
+    readonly property bool queueOn: !hiddenButtons.includes("queue")
+    readonly property bool commentsOn: !hiddenButtons.includes("comments")
+    readonly property real buttonRoom: 40
+    readonly property real savedMedium: ((likeOn ? 0 : 1) + (commentsOn ? 0 : 1)) * buttonRoom
+    readonly property real savedWide: savedMedium
+                                      + ((modeOn ? 0 : 1) + (volumeOn ? 0 : 1) + (queueOn ? 0 : 1))
+                                      * buttonRoom
+    readonly property int tier: barWidth >= 880 - savedWide ? 2
+                              : barWidth >= 620 - savedMedium ? 1 : 0
     readonly property real titleRoom: 160
     readonly property bool wide: tier > 0
     // Layout decisions read these, not `visible`: the page captures this layout while
     // the shell is hidden behind it, when every `visible` here reads false.
     readonly property bool isSong: App.player.current.key !== "" && !App.player.current.voice
-    readonly property bool hasComments: isSong
-    readonly property bool showLike: tier > 0 && isSong
+    readonly property bool hasComments: isSong && commentsOn
+    readonly property bool showLike: tier > 0 && isSong && likeOn
     readonly property bool showExtras: tier === 2
     readonly property color content: ColorScope.scheme.onPrimaryContainer
     // For the player page's shared elements: the card it grows from, and the cover,
@@ -152,9 +165,19 @@ Item {
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
+                // Right: which buttons show.
+                acceptedButtons: Qt.LeftButton | Qt.RightButton
                 onPositionChanged: update()
                 onContainsMouseChanged: update()
-                onClicked: root.openRequested()
+                onClicked: mouse => {
+                    if (mouse.button === Qt.RightButton)
+                        buttonsMenu.popup(cardArea, mouse.x, mouse.y);
+                    else
+                        root.openRequested();
+                }
+            }
+            MiniPlayerButtonsMenu {
+                id: buttonsMenu
             }
             HoverHandler {
                 blocking: true
@@ -177,6 +200,11 @@ Item {
                 radius: 24
                 coverKey: App.player.current.coverKey
                 opacity: root.flying ? 0 : 1
+            }
+            TogetherBadge {
+                x: cover.x + cover.width - width + 4
+                y: cover.y + cover.height - height + 4
+                opacity: cover.opacity
             }
 
             // Implicit heights, not a Column: the player page measures this while the
@@ -420,7 +448,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
 
                 IconButton {
-                    visible: root.showExtras
+                    visible: root.showExtras && root.modeOn
                     tint: root.content
                     glyph: [Symbols.repeat, Symbols.repeat_one, Symbols.shuffle,
                         Symbols.playlist_play][root.mode]
@@ -429,11 +457,11 @@ Item {
                     onClicked: root.setMode((root.mode + 1) % 4)
                 }
                 MiniVolume {
-                    visible: root.showExtras
+                    visible: root.showExtras && root.volumeOn
                     tint: root.content
                 }
                 IconButton {
-                    visible: root.showExtras
+                    visible: root.showExtras && root.queueOn
                     tint: root.content
                     glyph: Symbols.queue_music
                     text: qsTr("播放队列")

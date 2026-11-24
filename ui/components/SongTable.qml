@@ -32,6 +32,9 @@ Item {
     // titles, here or pinned.
     property bool showColumnTitles: true
     property real pinnedTop: 0
+    // Where the pinned titles' backing starts, from the table's left edge: past a pane
+    // the table reaches under (SongCollectionPage), so it does not cover the pane's edge.
+    property real pinnedLeft: 0
     property real maxContentWidth: 1200
     property bool showAlbumAction: true
     property bool showLiked: true
@@ -874,8 +877,8 @@ Item {
         // Covers the rows scrolling under it, for the pointer too; not the scroll bar.
         Rectangle {
             z: -1
-            x: -table.rowX
-            width: table.width - table.scrollBarWidth
+            x: table.pinnedLeft - table.rowX
+            width: table.width - table.scrollBarWidth - table.pinnedLeft
             height: parent.height
             color: ColorScope.scheme.surface
             MouseArea {
@@ -983,6 +986,21 @@ Item {
                                         table.songs.data(index, SongListModel.TitleRole) ?? "",
                                         table.songs.data(index, SongListModel.ArtistTextRole) ?? "",
                                         table.songs.data(index, SongListModel.CoverKeyRole) ?? "");
+            }
+        }
+        MenuItem {
+            visible: songMenu.songCount === 1
+            height: visible ? implicitHeight : 0
+            glyph: Symbols.link
+            text: qsTr("复制链接")
+            onTriggered: {
+                // A voice's author is its podcast.
+                const index = table.songs.index(songMenu.row, 0);
+                App.share.copy(table.voices ? Share.Voice : Share.Song, songMenu.key,
+                               table.songs.data(index, SongListModel.TitleRole) ?? "",
+                               table.songs.data(index, table.voices ? SongListModel.AlbumTitleRole
+                                                                    : SongListModel.ArtistTextRole)
+                               ?? "");
             }
         }
         MenuItem {

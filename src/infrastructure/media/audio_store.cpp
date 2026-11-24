@@ -26,7 +26,6 @@ namespace
 constexpr int kMaximumRetries = 3;
 constexpr int kMaximumRedirects = 3;
 constexpr qint64 kReadBlock = 64 * 1024;
-constexpr qint64 kAheadBytes = 1024 * 1024; // a read this far past the download waits for it
 constexpr qint64 kMetaEvery = 4 * 1024 * 1024;
 constexpr int kMetaVersion = 1;
 constexpr qint64 kAnalysisMaximumBytes = 1024 * 1024; // a few KB each: larger is damaged
@@ -186,10 +185,8 @@ qint64 AudioStream::read(qint64 position, char* out, qint64 maximum)
         while (!s.available(position)) {
             if (m_canceled || s.failure)
                 return -1;
-            if (m_interruptPending) {
-                m_interruptPending = false;
-                return -1;
-            }
+            // Where we are goes to the downloader first, also when this read ends
+            // interrupted: a seek's read past the download must move it (2026-11-22).
             if (moved && !asked) {
                 asked = true; // tell the downloader once where we are
                 lock.unlock();
@@ -203,6 +200,10 @@ qint64 AudioStream::read(qint64 position, char* out, qint64 maximum)
                         Qt::QueuedConnection);
                 lock.lock();
                 continue;
+            }
+            if (m_interruptPending) {
+                m_interruptPending = false;
+                return -1;
             }
             s.changed.wait_for(lock, std::chrono::milliseconds(100));
         }
@@ -462,7 +463,7 @@ void AudioStore::want(quint64 id)
             there = wanted < 0 || d->state->available(wanted);
         }
         const bool coming = wanted >= d->requestStart && wanted < d->requestEnd &&
-                            wanted < d->position + kAheadBytes;
+                            wanted < d->position + m_options.aheadBytes;
         if (there || coming)
             return;
         abortReply(*d); // a seek elsewhere: start over there; what came stays

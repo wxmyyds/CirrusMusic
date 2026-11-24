@@ -33,7 +33,9 @@ struct Program {
     std::optional<QString> description;
     std::optional<Podcast> podcast;
     std::optional<qint64> providerDuration, serialNumber;
-    // No mainSong.id, URL, SongId, rights or playback/reporting adapter.
+    // mainSong.id: the song the official app plays for the program (its audio), absent
+    // when the service sent none (docs/api/podcast-playback.md).
+    std::optional<SongId> track;
 };
 struct PodcastDetails {
     PodcastDetailQuery query;

@@ -18,6 +18,7 @@ namespace cirrus::ui
 {
 
 class FakeControls;
+class TogetherSource;
 
 // Read-only catalog: home, search, playlist/album/artist details, daily songs.
 class CatalogSource
@@ -159,7 +160,7 @@ class LibrarySource
     virtual Request updatePlaylist(const QString& playlistKey, const QString& title,
                                    const QString& description, Reply<bool> reply) = 0;
     virtual Request deletePlaylist(const QString& playlistKey, Reply<bool> reply) = 0;
-    // Whether setPlaylistSubscribed() is offered (the backend holds it back for now).
+    // Whether setPlaylistSubscribed() is offered.
     [[nodiscard]] virtual bool canSavePlaylists() const = 0;
 };
 
@@ -273,6 +274,7 @@ class PlaybackSource
     [[nodiscard]] virtual const PlaybackSnapshot& snapshot() const = 0;
     // Called after the snapshot changed, never synchronously from a command.
     virtual void setChangedHandler(std::function<void()> changed) = 0;
+    virtual void setNoticeHandler(std::function<void(const QString&)> notice) { Q_UNUSED(notice); }
 
     // Replaces the queue with `keys` and plays the one at `index`; `origin` is where
     // they come from (the listening reports).
@@ -301,6 +303,11 @@ class PlaybackSource
     virtual void setVolume(double volume) = 0;
     // Volume normalization (a setting; the fake plays nothing to normalize).
     virtual void setNormalization(bool on) { Q_UNUSED(on); }
+    virtual void setBiliSourceEnabled(bool on) { Q_UNUSED(on); }
+    [[nodiscard]] virtual BiliAccountState biliAccount() const { return {}; }
+    virtual void setBiliAccountHandler(std::function<void()> changed) { Q_UNUSED(changed); }
+    virtual void saveBiliCookie(const QString& cookie) { Q_UNUSED(cookie); }
+    virtual void clearBiliCookie() {}
     // How one track goes into the next (AppSettings::trackTransition) and the crossfade's
     // length; a setting the fake has no use for either.
     virtual void setTransition(int mode, int crossfadeSeconds)
@@ -333,6 +340,7 @@ struct Sources {
     std::unique_ptr<CacheSource> cache;
     std::unique_ptr<LyricsSource> lyrics;
     std::unique_ptr<StatsSource> stats;
+    std::unique_ptr<TogetherSource> together; // none in the gallery
 };
 
 } // namespace cirrus::ui

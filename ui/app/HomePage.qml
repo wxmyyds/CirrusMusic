@@ -225,6 +225,7 @@ Item {
                     }
                     FmCard {
                         id: fm
+                        shell: page.shell
                         visible: page.signedIn
                         strip: !page.wide
                         x: page.bento ? today.width + page.gap : 0

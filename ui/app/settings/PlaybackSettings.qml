@@ -1,12 +1,20 @@
 import QtQuick
 import Cirrus.Theme
 import Cirrus.Presentation
+import Cirrus.Controls
 
 // Playback. The output device comes with the backend (docs/ui/pages/settings.md §1).
 SettingsGroup {
     title: qsTr("播放")
     glyph: Symbols.graphic_eq
     hue: "pink"
+
+    SwitchSetting {
+        text: qsTr("允许 Bilibili 音源")
+        supportingText: qsTr("仅网易云明确受限或仅提供试听时使用；失败不切换音源\n字幕缺失时使用网易云歌词")
+        value: App.settings.biliFallback
+        onSwitched: value => App.settings.biliFallback = value
+    }
 
     MenuSetting {
         text: qsTr("音质")

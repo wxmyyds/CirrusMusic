@@ -13,6 +13,7 @@ struct ListeningRecord {
     ListeningMode source = ListeningMode::Queue;
     QUuid queueEntry;  // no playlist/album origin is fabricated
     PlayOrigin origin; // the queue entry's, as the caller gave it; None for FM
+    ProgramId program; // the queue entry's: a podcast program played through `song`
     std::optional<PreviewRange> preview;
     QString actualQuality;
     qint64 playedMs = 0; // observed elapsed progress, NOT final position or unique coverage
@@ -21,5 +22,6 @@ struct ListeningRecord {
     QUuid recordId;         // independent local row identity, not the private load token
     qint64 startedAtMs = 0; // UTC calendar metadata; NEVER a duration source
     std::optional<qint64> endedAtMs;
+    SourceProvider provider = SourceProvider::Netease;
 };
 } // namespace cirrus::domain

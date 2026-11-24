@@ -1,4 +1,5 @@
 #pragma once
+#include "domain/music/podcast_types.h"
 #include "domain/playback/playback_types.h"
 #include "logging/log.h"
 
@@ -16,10 +17,11 @@ enum class PlayOriginKind {
     Search,     // search results; no id, never the keywords
     Recent,     // recently played; no id
     Ranking,    // a user's play ranking; id: that user
-    Other
+    Other,
+    Podcast // id: the podcast its programs (episodes) are from
 };
 CIRRUS_LOG_ENUM(PlayOriginKind, None, Playlist, Album, Artist, DailySongs, Search, Recent, Ranking,
-                Other)
+                Other, Podcast)
 struct PlayOrigin {
     PlayOriginKind kind = PlayOriginKind::None;
     QString id;   // provider id for Playlist/Album/Artist/Ranking, else empty
@@ -30,8 +32,9 @@ inline bool validPlayOrigin(const PlayOrigin& origin)
 {
     const bool needsId =
         origin.kind == PlayOriginKind::Playlist || origin.kind == PlayOriginKind::Album ||
-        origin.kind == PlayOriginKind::Artist || origin.kind == PlayOriginKind::Ranking;
-    return origin.kind >= PlayOriginKind::None && origin.kind <= PlayOriginKind::Other &&
+        origin.kind == PlayOriginKind::Artist || origin.kind == PlayOriginKind::Ranking ||
+        origin.kind == PlayOriginKind::Podcast;
+    return origin.kind >= PlayOriginKind::None && origin.kind <= PlayOriginKind::Podcast &&
            (needsId ? validMusicId(origin.id) : origin.id.isEmpty()) &&
            (origin.kind != PlayOriginKind::None || origin.name.isEmpty()) &&
            origin.name.size() <= 256 && origin.name.isValidUtf16() &&
@@ -39,9 +42,16 @@ inline bool validPlayOrigin(const PlayOrigin& origin)
 }
 struct QueueEntry {
     QUuid id;
-    SongId song;
+    SongId song; // what plays: for a program, its track (mainSong), played as a song
     PlayOrigin origin{};
+    // A podcast program (episode) instead of a song, empty for songs: shown, recorded and
+    // reported as the program (docs/api/podcast-playback.md).
+    ProgramId program{};
 };
+inline bool validQueueProgram(const ProgramId& program)
+{
+    return program.value.isEmpty() || validMusicId(program.value);
+}
 enum class ListeningMode { Queue, PersonalFm };
 enum class QueueOrder { Sequential, Shuffle };
 enum class QueueRepeat { Off, All, One };

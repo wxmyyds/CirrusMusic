@@ -1,5 +1,8 @@
 #include "../support/comment_write_support.h"
 #include "../support/fake_http.h"
+#include "../support/fake_playback.h"
+#include "../support/presentation_playback_snapshot.h"
+#include "../support/synthetic_bilibili.h"
 #include "../support/fake_secret_store.h"
 #include "../support/synthetic_cover.h"
 #include "../support/synthetic_daily_playlists.h"
@@ -11,6 +14,9 @@
 #include "application/music/personal_fm_source.h"
 #include "application/playback/listening_session.h"
 #include "application/ports/playback.h"
+#include "backend_playback.h"
+#include "lyrics.h"
+#include "player.h"
 #include "infrastructure/bootstrap/xeapi_key_vault.h"
 #include "infrastructure/netease/music/comment_v3_issuer.h"
 #include "infrastructure/netease/music/cover_upload.h"
@@ -21,6 +27,7 @@
 #include "infrastructure/storage/installation_store.h"
 #include "infrastructure/storage/listening_state_store.h"
 
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMutex>
@@ -271,6 +278,8 @@ class BackendRuntimeTest : public QObject
     void songWikiTextThroughThread();
     void recommendationHistoryThroughThread();
     void togetherHttpThroughThread();
+    void biliLyricsAndCookieThroughThread_data();
+    void biliLyricsAndCookieThroughThread();
     void playbackThroughThread_data();
     void playbackThroughThread();
     void gaplessAdvanceThroughThread_data();
@@ -288,6 +297,150 @@ class BackendRuntimeTest : public QObject
     void closeBeforeStart();
     void trackedStoreKeepsDeadRecipientsAccounted();
 };
+
+void BackendRuntimeTest::biliLyricsAndCookieThroughThread_data()
+{
+    QTest::addColumn<int>("subtitleCase");
+    QTest::newRow("subtitle-present") << 0;
+    QTest::newRow("subtitle-missing-netease") << 1;
+    QTest::newRow("subtitle-empty-netease") << 2;
+    QTest::newRow("subtitle-risk-no-netease") << 3;
+    QTest::newRow("subtitle-malformed-no-netease") << 4;
+    QTest::newRow("subtitle-network-no-netease") << 5;
+    QTest::newRow("subtitle-whitespace-netease") << 6;
+    QTest::newRow("netease-lyric-error-is-final") << 7;
+    QTest::newRow("stop-before-fallback-result") << 8;
+}
+
+void BackendRuntimeTest::biliLyricsAndCookieThroughThread()
+{
+    QFETCH(int, subtitleCase);
+    QTemporaryDir directory;
+    auto state = std::make_shared<SharedState>();
+    Gate gate;
+    const BackendConfig config{directory.filePath("state.sqlite"), "synthetic"};
+    seed(config.databasePath, *state);
+    state->records.insert("bilibili.cookie", "SESSDATA=synthetic");
+    const auto permission = netease::detail::aes(
+        "{\"code\":200,\"data\":[{\"id\":1,\"code\":404,\"fee\":1,\"url\":\"\"}]}",
+        "e82ckenh8dichen8", EVP_aes_128_ecb(), true);
+    QVERIFY(permission);
+    QList<Plan> plans{Plan{*permission}, Plan{
+        "{\"code\":200,\"songs\":[{\"id\":1,\"name\":\"Song\",\"dt\":200000,\"ar\":[{\"id\":2,\"name\":\"Artist\"}]}]}"}};
+    const bool useNetease = subtitleCase == 1 || subtitleCase == 2 || subtitleCase >= 6;
+    if (useNetease) {
+        auto lyric = Plan{QJsonDocument(QJsonObject{
+            {"code", 200}, {"lrc", QJsonObject{{"lyric", "[00:00.00]Netease\n[00:02.00]"}}}}).toJson()};
+        if (subtitleCase == 7)
+            lyric.error = QNetworkReply::ConnectionRefusedError;
+        if (subtitleCase == 8)
+            lyric.delayMs = 250;
+        plans.append(lyric);
+    }
+    auto f = factories(state, gate, std::move(plans));
+    f.playback = [] { return std::make_unique<FakePlaybackBackend>(); };
+    f.biliAccountHttp = [] {
+        auto manager = std::make_unique<FakeGetManager>();
+        manager->plans = {biliJson("{\"code\":0,\"data\":{\"isLogin\":true,\"uname\":\"Synthetic\"}}")};
+        return manager;
+    };
+    f.biliStreamHttp = [] {
+        auto manager = std::make_unique<FakeGetManager>();
+        manager->plans = {biliJson(kBiliNav), biliJson(kBiliSearch),
+                          biliJson(kBiliView), biliJson(kBiliPlayUrlSized)};
+        return manager;
+    };
+    f.biliLyricsHttp = [subtitleCase] {
+        auto manager = std::make_unique<FakeGetManager>();
+        const QJsonObject subtitle{{"subtitle", QJsonObject{{"subtitles", QJsonArray{
+            QJsonObject{{"lan", "zh-CN"}, {"subtitle_url", "//aisubtitle.hdslb.com/a.json"}}}}}}};
+        auto body = biliJson(QJsonDocument(QJsonObject{{"body", QJsonArray{
+            QJsonObject{{"from", 0}, {"to", 2}, {"content", "Subtitle"}}}}}).toJson());
+        body.delayMs = 250;
+        auto discovery = biliJson(QJsonDocument(QJsonObject{{"code", 0}, {"data", subtitle}}).toJson());
+        if (subtitleCase == 1 || subtitleCase >= 7)
+            discovery = biliJson("{\"code\":0,\"data\":{}}");
+        if (subtitleCase == 2)
+            body.body = "{\"body\":[]}";
+        if (subtitleCase == 3)
+            discovery.status = 412;
+        if (subtitleCase == 4)
+            body.body = "{\"body\":[{\"from\":-1,\"to\":2,\"content\":\"bad\"}]}";
+        if (subtitleCase == 5)
+            discovery.error = QNetworkReply::ConnectionRefusedError;
+        if (subtitleCase == 6)
+            body.body = "{\"body\":[{\"from\":0,\"to\":2,\"content\":\"   \"}]}";
+        manager->plans = subtitleCase == 1 || subtitleCase >= 7 ? QList<Plan>{discovery}
+                                           : QList<Plan>{discovery, body};
+        return manager;
+    };
+    BackendRuntime runtime(config, std::move(f));
+    auto& facade = runtime.facade();
+    QSignalSpy stopped(&facade, &BackendFacade::stopped);
+    facade.start();
+    QTRY_COMPARE(facade.state(), BackendState::Ready);
+    QTRY_VERIFY(facade.snapshot().token.isValid());
+    QTRY_COMPARE(runtime.biliAccount().status, domain::BiliAccountStatus::LoggedIn);
+    UiPlaybackSnapshot playback;
+    ui::BackendLyrics lyricsSource(runtime);
+    ui::Player player(&playback, nullptr);
+    ui::CurrentLyrics shown(&lyricsSource, &player);
+    connect(&runtime.listening(), &ListeningSession::playbackChanged, &player,
+            [&](domain::PlaybackSnapshot snapshot) {
+                ui::PlaybackSnapshot state;
+                state.current.key = snapshot.song.value;
+                state.generation = snapshot.token.generation;
+                state.provider = snapshot.provider == domain::SourceProvider::Bilibili
+                                     ? ui::playback::Bilibili : ui::playback::Netease;
+                state.status = snapshot.state == domain::PlaybackState::Resolving
+                                   ? ui::playback::Loading : ui::playback::Playing;
+                playback.publish(std::move(state));
+            });
+    facade.setAllowBiliSource(true);
+    QVERIFY(runtime.listening().replaceQueue({{"1"}}));
+    QCOMPARE(shown.status(), ui::lyrics::Loading);
+    QTRY_COMPARE(facade.playback().provider, domain::SourceProvider::Bilibili);
+    if (subtitleCase == 8) {
+        QTRY_COMPARE(state->requests.load(), 3);
+        QVERIFY(runtime.listening().stop());
+        QTest::qWait(350);
+        QVERIFY(!runtime.listening().lyrics());
+        QCOMPARE(shown.lines()->rowCount(), 0);
+        QVERIFY(shown.status() != ui::lyrics::Ready);
+        facade.close();
+        QTRY_COMPARE(stopped.size(), 1);
+        return;
+    }
+    if ((subtitleCase >= 3 && !useNetease) || subtitleCase == 7) {
+        QTRY_COMPARE(runtime.listening().lyricsState(), domain::LyricsState::Failed);
+        QTRY_COMPARE(shown.status(), ui::lyrics::Failed);
+        QCOMPARE(state->requests.load(), useNetease ? 3 : 2);
+        facade.close();
+        QTRY_COMPARE(stopped.size(), 1);
+        return;
+    }
+    const QString expected = subtitleCase == 0 ? "Subtitle" : "Netease";
+    QTRY_COMPARE(runtime.listening().lyricsState(), domain::LyricsState::Ready);
+    QTRY_COMPARE(shown.status(), ui::lyrics::Ready);
+    QCOMPARE(shown.lines()->rowCount(), 1);
+    QCOMPARE(shown.lines()->lines().first().text, expected);
+    QCOMPARE(shown.lines()->lines().first().startMs, 0);
+    if (subtitleCase == 0)
+        QCOMPARE(shown.lines()->lines().first().endMs, 2000);
+    QCOMPARE(shown.timing(), ui::lyrics::Lines);
+    ui::CurrentLyrics openedLater(&lyricsSource, &player);
+    QTRY_COMPARE(openedLater.status(), ui::lyrics::Ready);
+    QCOMPARE(openedLater.lines()->rowCount(), 1);
+    QCOMPARE(runtime.listening().lyrics()->original.standard.lines.first().text, expected);
+    QCOMPARE(state->requests.load(), subtitleCase == 0 ? 2 : 3);
+    QCOMPARE(facade.playback().provider, domain::SourceProvider::Bilibili);
+    runtime.clearBiliCookie();
+    QTRY_COMPARE(runtime.biliAccount().status, domain::BiliAccountStatus::LoggedOut);
+    facade.close();
+    QTRY_COMPARE(stopped.size(), 1);
+    QVERIFY(!state->records.contains("bilibili.cookie"));
+    QCOMPARE(state->wrongThread.load(), 0);
+}
 
 void BackendRuntimeTest::playbackThroughThread_data()
 {
@@ -445,7 +598,7 @@ void BackendRuntimeTest::playbackThroughThread()
     QCOMPARE(listening.history().first().accountId, fm ? QString("101") : QString{});
     QVERIFY(listening.next());
     // + preloading the next song, and its lyrics (for the transition into it)
-    QTRY_COMPARE(state->requests.load(), fm ? 15 : 8);
+    QTRY_COMPARE(state->requests.load(), fm ? 13 : 6);
     facade.close();
     QTRY_COMPARE(stopped.size(), 1);
     QCOMPARE(facade.playback().state, domain::PlaybackState::Empty);
@@ -597,7 +750,7 @@ void BackendRuntimeTest::gaplessAdvanceThroughThread()
     QCOMPARE(listening.history().first().end, domain::ListeningEnd::Ended);
     QTRY_COMPARE(listening.lyricsState(), domain::LyricsState::Ready);
     QCOMPARE(listening.lyrics()->song.value, "2");
-    QTRY_COMPARE(state->requests.load(), before + 7); // and song 3 is preloaded in turn
+    QTRY_COMPARE(state->requests.load(), before + 6); // song 3 URL pending; no lyrics before selection
     QVERIFY(listening.pause());                       // commands follow the new load
     QVERIFY(listening.next());
     QTRY_COMPARE(facade.playback().song.value, "3");
@@ -859,7 +1012,7 @@ void BackendRuntimeTest::closeDuringRead()
     QSignalSpy stopped(&f, &BackendFacade::stopped), started(&f, &BackendFacade::started);
     QSignalSpy delayed(&f, &BackendFacade::closeDelayed);
     f.start();
-    QTRY_COMPARE(state->reads.load(), 1);
+    QTRY_COMPARE(state->reads.load(), 2); // Bilibili Cookie + bootstrap key
     f.close();
     QTRY_COMPARE_WITH_TIMEOUT(delayed.size(), 1, 6500);
     QCOMPARE(stopped.size(), 0);
@@ -1041,7 +1194,7 @@ void BackendRuntimeTest::destructionStillDrains()
     Gate gate;
     auto runtime = std::make_unique<BackendRuntime>(config, factories(state, gate));
     runtime->facade().start();
-    QTRY_COMPARE(state->reads.load(), 1);
+    QTRY_COMPARE(state->reads.load(), 2); // Bilibili Cookie + bootstrap key
     runtime.reset(); // must not destroy a running QThread or block caller
     QTest::qWait(30);
     QVERIFY(state->destroyed.load() < state->created.load());
@@ -3018,7 +3171,7 @@ void BackendRuntimeTest::togetherHttpThroughThread()
     auto plans = loginPlans();
     for (int i = 0; i < kTogetherKinds; ++i)
         plans.append(Plan{togetherHttpFixture(TogetherKind(i))});
-    plans.append(Plan{R"({"code":200,"data":{"playlist":{}}})"});
+    plans.append(Plan{R"({"code":200,"data":{"playlist":[]}})"});
     plans.append(Plan{"", 200, -1});
     BackendRuntime runtime(config, factories(state, gate, plans));
     auto& f = runtime.facade();

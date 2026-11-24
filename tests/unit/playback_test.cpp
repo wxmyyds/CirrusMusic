@@ -17,6 +17,48 @@ class PlaybackTest : public QObject
 {
     Q_OBJECT
   private slots:
+    void selectionObserverCanRetireLoadAndPreload()
+    {
+        application::SessionCoordinator session;
+        test::FakeStreamResolver resolver;
+        test::FakePlaybackBackend backend;
+        application::PlaybackCoordinator player(session, resolver, backend);
+        const auto context = session.snapshot().token;
+        const LoadToken first{context, 1};
+        const auto connection = connect(&player, &application::PlaybackCoordinator::sourceSelected,
+                                        &player, [&] { player.stop({context, 2}); });
+        QVERIFY(player.start(first, {{"1"}}));
+        resolver.finish(0, source("1"));
+        QVERIFY(backend.loads.isEmpty());
+        disconnect(connection);
+        const LoadToken third{context, 3}, fourth{context, 4};
+        QVERIFY(player.start(third, {{"1"}}));
+        resolver.finish(1, source("1"));
+        QVERIFY(player.preload(third, fourth, StreamQuery{{"2"}}));
+        connect(&player, &application::PlaybackCoordinator::sourceSelected, &player,
+                [&] { QVERIFY(player.preload(third, {}, std::nullopt)); });
+        resolver.finish(2, source("2"));
+        QVERIFY(!backend.preloads.contains(fourth));
+        QCOMPARE(player.snapshot().token, third);
+    }
+    void lyricEligibilityEndsWhenCurrentOrPreloadRetires()
+    {
+        application::SessionCoordinator session;
+        test::FakeStreamResolver resolver;
+        test::FakePlaybackBackend backend;
+        application::PlaybackCoordinator player(session, resolver, backend);
+        const LoadToken first{session.snapshot().token, 1}, next{first.session, 2};
+        QVERIFY(player.start(first, {{"1"}}));
+        resolver.finish(0, source("1"));
+        QVERIFY(player.acceptsLyrics(first));
+        QVERIFY(player.preload(first, next, StreamQuery{{"2"}}));
+        QVERIFY(!player.acceptsLyrics(next));
+        resolver.finish(1, source("2"));
+        QVERIFY(player.acceptsLyrics(next));
+        emit backend.event({first, Kind::Failure, {}, 0, {PlaybackError::Decode}});
+        QVERIFY(!player.acceptsLyrics(first));
+        QVERIFY(!player.acceptsLyrics(next));
+    }
     void initialPauseIsAtomic()
     {
         application::SessionCoordinator session;

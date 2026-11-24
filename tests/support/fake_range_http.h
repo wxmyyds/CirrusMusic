@@ -21,6 +21,8 @@ struct RangeServer {
     bool honorRange = true;
     qsizetype blockBytes = 64 * 1024;
     int intervalMs = 0;
+    qint64 slowAfter = -1; // from this byte of the body on, a block every slowIntervalMs
+    int slowIntervalMs = 0;
     QList<int> statuses;         // forced status for the next requests (consumed in order)
     QList<QByteArray> locations; // Location of the next forced 3xx statuses (in order)
     QByteArray contentRange;     // non-empty: sent instead of the right one
@@ -73,6 +75,9 @@ class RangeReply : public QNetworkReply
         m_headers = headers;
         m_block = server.blockBytes;
         m_interval = server.intervalMs;
+        m_start = start;
+        m_slowAfter = server.slowAfter;
+        m_slowInterval = server.slowIntervalMs;
         QTimer::singleShot(0, this, [this] { begin(); });
     }
     void abort() override
@@ -125,7 +130,8 @@ class RangeReply : public QNetworkReply
             emit readyRead();
             if (isFinished())
                 return;
-            QTimer::singleShot(m_interval, this, [this] { step(); });
+            const bool slow = m_slowAfter >= 0 && m_start + m_sent >= m_slowAfter;
+            QTimer::singleShot(slow ? m_slowInterval : m_interval, this, [this] { step(); });
             return;
         }
         setFinished(true);
@@ -138,6 +144,8 @@ class RangeReply : public QNetworkReply
     qint64 m_offset = 0, m_sent = 0;
     qsizetype m_block = 0;
     int m_interval = 0;
+    qint64 m_start = 0, m_slowAfter = -1;
+    int m_slowInterval = 0;
 };
 
 class RangeManager : public QNetworkAccessManager

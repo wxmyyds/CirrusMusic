@@ -7,6 +7,8 @@
 #include <QStringList>
 #include <QtQml/qqmlregistration.h>
 
+#include "share_text.h"
+
 // Declares one setting of AppSettings: a property `name` (READ name, WRITE setter,
 // NOTIFY nameChanged) stored under `key`, `fallback` until the user changes it. The
 // setter stores and notifies only on a change. Used once per setting in AppSettings;
@@ -90,6 +92,7 @@ class AppSettings : public QObject
     // Requested stream quality, the backend's AudioQuality: Standard (0), Exhigh (1,
     // default), Lossless, HiRes. The service answers with the best it has up to that.
     CIRRUS_SETTING(int, audioQuality, setAudioQuality, "playback/audioQuality", 1)
+    CIRRUS_SETTING(bool, biliFallback, setBiliFallback, "playback/biliFallback", false)
     // The last queue always comes back at startup (docs/ui/integration.md §6 D7); this
     // also plays it on.
     CIRRUS_SETTING(bool, resumeOnStart, setResumeOnStart, "playback/resumeOnStart", false)
@@ -106,12 +109,17 @@ class AppSettings : public QObject
     CIRRUS_SETTING(int, playOrder, setPlayOrder, "playback/order", 0)
     CIRRUS_SETTING(int, playRepeat, setPlayRepeat, "playback/repeat", 0)
 
-    // Lyrics.
+    // Lyrics. External detailed lyrics are opt-in; ordinary MPRIS stays available.
+    CIRRUS_SETTING(bool, externalLyrics, setExternalLyrics, "lyrics/externalExport", false)
     CIRRUS_SETTING(bool, showTranslation, setShowTranslation, "lyrics/showTranslation", true)
     CIRRUS_SETTING(bool, showRomanization, setShowRomanization, "lyrics/showRomanization", true)
 
     // The mini player's progress bar waves while playing (docs/ui/README.md §6.2).
     CIRRUS_SETTING(bool, miniWave, setMiniWave, "miniPlayer/wave", true)
+    // The floating bar's buttons the user turned off (MiniPlayerButtonsMenu ids: like,
+    // mode, volume, queue, comments); new buttons show until turned off.
+    CIRRUS_SETTING(QStringList, miniPlayerHidden, setMiniPlayerHidden, "miniPlayer/hidden",
+                   QStringList())
     // The mini player docked as a pane on the right of the window instead of floating
     // over the bottom of the content (docs/ui/redesign-md3e.md §11).
     CIRRUS_SETTING(bool, miniDocked, setMiniDocked, "miniPlayer/docked", false)
@@ -167,6 +175,10 @@ class AppSettings : public QObject
 
     // Recent searches, newest first (docs/ui/pages/search.md §2); only on this machine.
     CIRRUS_SETTING(QStringList, searchHistory, setSearchHistory, "search/history", QStringList())
+    // What 复制链接 copies (docs/ui/pages/share.md §2): {链接} {名称} {作者} {类型}, […] left
+    // out when a placeholder in it is empty.
+    CIRRUS_SETTING(QString, shareTemplate, setShareTemplate, "share/template",
+                   sharing::defaultTemplate())
     // The song cache's limit in bytes, every account together (Settings › Storage);
     // 0.5–50 GiB, default 2 GiB (docs/tasks/audio-engine.md §7 Q2).
     CIRRUS_SETTING(qint64, audioCacheLimit, setAudioCacheLimit, "storage/audioCacheLimit",

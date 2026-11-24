@@ -23,6 +23,8 @@ enum Repeat { RepeatOff, RepeatAll, RepeatOne };
 Q_ENUM_NS(Repeat)
 enum Mode { Queue, PersonalFm };
 Q_ENUM_NS(Mode)
+enum Provider { Netease, Bilibili };
+Q_ENUM_NS(Provider)
 // Where songs were played from, for the listening reports (integration.md §6.1) and the
 // local statistics (pages/stats.md): the page's playlist, album, artist, chart, the daily
 // recommendations, a search (the id is the keywords), a song's own page, the recently
@@ -55,6 +57,11 @@ namespace cirrus::ui
 
 // playback::Origin, its id (a playlist's key, the search's keywords…) and its name (the
 // playlist's title…, shown in the statistics; may be empty).
+struct BiliAccountState {
+    int status = 0;
+    QString name;
+};
+
 struct PlayOrigin {
     int kind = playback::NoOrigin;
     QString id;
@@ -67,6 +74,8 @@ struct PlayOrigin {
 // `rate` ms per ms (1 while playing, 0 otherwise).
 struct PlaybackSnapshot {
     playback::Status status = playback::Empty;
+    playback::Provider provider = playback::Netease;
+    quint64 generation = 0;
     SongInfo current; // empty key when Empty
     // Why the current song stopped (Failed); `unavailable` songs fail as Rejected.
     std::optional<Failure> failure;
@@ -91,6 +100,9 @@ struct PlaybackSnapshot {
     // songs so far and the next one), and the current song's place in it (-1: Empty).
     QStringList queue;
     int queueIndex = -1;
+    // The details of the queue's podcast voices, as far as the source has them (their keys
+    // are no songs': never ask for them as songs); a voice without them has only its key.
+    QList<SongInfo> voices;
 };
 
 } // namespace cirrus::ui

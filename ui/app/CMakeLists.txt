@@ -65,6 +65,8 @@ qt_add_qml_module(appCirrusMusic
         settings/AppearanceSettings.qml
         settings/WindowSettings.qml
         settings/StorageSettings.qml
+        settings/ShareSettings.qml
+        settings/ShareTemplateDialog.qml
         settings/DiagnosticsSettings.qml
         settings/ExportLogsDialog.qml
         settings/ShortcutSettings.qml
@@ -84,6 +86,7 @@ qt_add_qml_module(appCirrusMusic
         TopBar.qml
         PanelCorner.qml
         CloseDialog.qml
+        TogetherDialog.qml
         DateTile.qml
     SOURCES
         desktop.h
@@ -165,7 +168,7 @@ endif()
 target_sources(appCirrusMusic PRIVATE media_state.h)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     find_package(Qt6 REQUIRED COMPONENTS DBus)
-    target_sources(appCirrusMusic PRIVATE mpris.h mpris.cpp)
+    target_sources(appCirrusMusic PRIVATE mpris.h mpris.cpp lyrics_dbus.h lyrics_dbus.cpp)
     target_compile_definitions(appCirrusMusic PRIVATE CIRRUS_UI_MPRIS)
     target_link_libraries(appCirrusMusic PRIVATE Qt6::DBus)
 elseif(WIN32)

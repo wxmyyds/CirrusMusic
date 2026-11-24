@@ -2,6 +2,7 @@
 // No unblock branch. See third_party/api-enhanced/NOTICE.md.
 #include "stream_resolver.h"
 #include "infrastructure/media/media_source_policy.h"
+#include "logging/log.h"
 #include <QJsonArray>
 #include <QThread>
 #include <QVariant>
@@ -38,24 +39,28 @@ std::optional<qint64> secondsMs(const QJsonValue& value)
 } // namespace
 StreamResult mapStreamResponse(const StreamQuery& query, const QJsonObject& object, qint64 elapsed)
 {
-    const PlaybackFailure invalid{PlaybackError::InvalidResponse};
+    // Which field was not as expected (never its value).
+    const auto invalidAt = [&query](const char* field) {
+        log::warn(lcPlayback, "stream.invalid", {{"song", query.song.value}, {"field", field}});
+        return PlaybackFailure{PlaybackError::InvalidResponse};
+    };
     const auto rootCode = integer(object.value(QStringLiteral("code")), 99999);
     if (!rootCode)
-        return invalid;
+        return invalidAt("code");
     if (*rootCode != 200)
         return PlaybackFailure{*rootCode == 429 ? PlaybackError::RateLimited
                                                 : PlaybackError::Unavailable,
                                int(*rootCode)};
     const auto array = object.value(QStringLiteral("data")).toArray();
     if (array.size() != 1 || !array.first().isObject())
-        return invalid;
+        return invalidAt("data");
     const auto row = array.first().toObject();
     if (!validMusicId(query.song.value) ||
         idText(row.value(QStringLiteral("id"))) != query.song.value)
-        return invalid;
+        return invalidAt("id");
     const auto code = integer(row.value(QStringLiteral("code")), 99999);
     if (!code)
-        return invalid;
+        return invalidAt("row_code");
     if (*code != 200)
         return PlaybackFailure{*code == 404 ? PlaybackError::NeedPermission
                                             : PlaybackError::Unavailable,
@@ -81,7 +86,7 @@ StreamResult mapStreamResponse(const StreamQuery& query, const QJsonObject& obje
                                             : PlaybackError::Unavailable,
                                int(*code)};
     if (!urlField.isString())
-        return invalid;
+        return invalidAt("url_type");
     const auto url = media::approvedMediaUrl(domain::SourceProvider::Netease,
                                              QUrl(urlField.toString(), QUrl::StrictMode), true);
     if (!url)
@@ -89,15 +94,16 @@ StreamResult mapStreamResponse(const StreamQuery& query, const QJsonObject& obje
     const auto ttl = integer(row.value(QStringLiteral("expi")), 86400);
     const auto size = integer(row.value(QStringLiteral("size")), 1024LL * 1024 * 1024);
     if (!ttl || !size || *size == 0 || elapsed < 0)
-        return invalid;
+        return invalidAt("expi_size");
     if (*ttl * 1000 <= elapsed)
         return PlaybackFailure{PlaybackError::Expired};
     const auto quality = row.value(QStringLiteral("level")).toString();
-    if (quality.isEmpty() || quality.size() > 32)
-        return invalid;
+    // A podcast program's audio has no level (podcast-playback.md): none, not a failure.
+    if (quality.size() > 32)
+        return invalidAt("level");
     for (const auto c : quality)
         if (c < u'a' || c > u'z')
-            return invalid;
+            return invalidAt("level");
     const auto format = row.value(QStringLiteral("type")).toString().toLower();
     if (format != QStringLiteral("mp3") && format != QStringLiteral("flac"))
         return PlaybackFailure{PlaybackError::UnsupportedFormat};
@@ -122,11 +128,11 @@ StreamResult mapStreamResponse(const StreamQuery& query, const QJsonObject& obje
     const auto preview = row.value(QStringLiteral("freeTrialInfo"));
     if (!preview.isUndefined() && !preview.isNull()) {
         if (!preview.isObject())
-            return invalid;
+            return invalidAt("freeTrialInfo");
         const auto start = secondsMs(preview.toObject().value(QStringLiteral("start")));
         const auto end = secondsMs(preview.toObject().value(QStringLiteral("end")));
         if (!start || !end || *end <= *start)
-            return invalid;
+            return invalidAt("freeTrialInfo_range");
         source.preview = PreviewRange{*start, *end};
     }
     // fee/payed/advertised privileges: fee and the cannotListenReason already decided

@@ -77,6 +77,8 @@ SongInfo programOf(const domain::Program& program)
     }
     info.durationMs = program.providerDuration.value_or(-1);
     info.serial = program.serialNumber ? int(*program.serialNumber) : -1;
+    info.trackKey = program.track ? program.track->value : QString();
+    KnownVoices::remember(info);
     return info;
 }
 

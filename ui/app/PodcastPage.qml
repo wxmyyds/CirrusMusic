@@ -13,6 +13,8 @@ SongCollectionPage {
     id: page
 
     property alias podcastKey: pageModel.podcastKey
+    shareKind: Share.Podcast
+    shareKey: pageModel.podcastKey
 
     model: pageModel
     songs: pageModel.voices.songs

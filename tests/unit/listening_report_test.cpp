@@ -204,6 +204,33 @@ class ListeningReportTest : public QObject
         QCOMPARE(plv.value("time"), QJsonValue(0));
         QVERIFY(!plv.contains("end"));
         QCOMPARE(plv.value("audioLevel").toString(), "exhigh");
+        // A podcast program (podcast-playback.md): the app's program record, `type` dj.
+        auto program = with("program", "5");
+        program.insert("source", "djradio");
+        program.insert("sourceId", "4");
+        program.insert("id", "99"); // its track
+        const auto dj = recordOf(ApiOperation::ListeningPlay, program).value("data").toObject();
+        QCOMPARE(dj.value("type").toString(), "dj");
+        QCOMPARE(dj.value("id"), QJsonValue(5));
+        QCOMPARE(dj.value("musicId"), QJsonValue(99));
+        QCOMPARE(dj.value("source").toString(), "djradio");
+        QCOMPARE(dj.value("sourceId"), QJsonValue(4));
+        QCOMPARE(dj.value("time"), QJsonValue(35));
+        QCOMPARE(dj.value("end").toString(), "playend");
+        QCOMPARE(dj.value("_eventcode").toString(), "_pld");
+        QVERIFY(!dj.contains("songName") && !dj.contains("programName"));
+        program.insert("sourceId", ""); // its podcast unknown
+        QCOMPARE(recordOf(ApiOperation::ListeningPlay, program).value("data")["sourceId"],
+                 QJsonValue(0));
+        QVERIFY(!operationPayload(ApiOperation::ListeningPlay, with("program", "5"))); // not dj
+        program.insert("program", "x");
+        QVERIFY(!operationPayload(ApiOperation::ListeningPlay, program));
+        r = report();
+        r.program = {"5"};
+        QVERIFY(!r.isValid()); // a program comes from djradio
+        r.source = ListeningReportSource::DjRadio;
+        r.sourceId = {};
+        QVERIFY(r.isValid());
         const auto client = recordOf(ApiOperation::ListeningActive, {});
         QCOMPARE(client.value("stream").toString(), "bi");
         QCOMPARE(client.value("action").toString(), "activeclient");

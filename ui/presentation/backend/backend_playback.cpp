@@ -2,6 +2,7 @@
 #include "logging/log.h"
 
 #include "app_settings.h"
+#include "backend_mapping.h"
 #include "music_requests.h"
 
 #include "application/backend/backend_facade.h"
@@ -37,6 +38,22 @@ QString positionKey(const QString& account)
 {
     return QStringLiteral("playback/position/") +
            (account.isEmpty() ? QStringLiteral("guest") : account);
+}
+
+// The details of the podcast voices in the account's queue (BackendPlayback::loadVoices).
+QString voicesKey(const QString& account)
+{
+    return QStringLiteral("playback/voices/") +
+           (account.isEmpty() ? QStringLiteral("guest") : account);
+}
+
+// A voice shown with only its key (its details unknown).
+SongInfo bareVoice(const QString& key)
+{
+    SongInfo info;
+    info.key = key;
+    info.voice = true;
+    return info;
 }
 
 // Where the account's queue entries came from (BackendPlayback::originOf).
@@ -86,6 +103,17 @@ domain::PlayOrigin storedOrigin(const PlayOrigin& origin)
     default:
         return {};
     }
+}
+
+// Where a voice is from, as the backend keeps it (the reports name the podcast): its
+// podcast, or none when unknown.
+domain::PlayOrigin podcastOrigin(const SongInfo& voice)
+{
+    if (!domain::validMusicId(voice.albumKey))
+        return {};
+    auto origin = storedOrigin(PlayOrigin{playback::FromAlbum, voice.albumKey, voice.albumTitle});
+    origin.kind = domain::PlayOriginKind::Podcast; // the name made safe as an album's
+    return origin;
 }
 
 domain::AudioQuality quality()
@@ -162,7 +190,8 @@ bool sameState(const PlaybackSnapshot& a, const PlaybackSnapshot& b)
     const auto failureKind = [](const PlaybackSnapshot& s) {
         return s.failure ? int(s.failure->kind) : -1;
     };
-    return a.status == b.status && a.current.key == b.current.key &&
+    return a.status == b.status && a.provider == b.provider && a.generation == b.generation &&
+           a.current.key == b.current.key &&
            failureKind(a) == failureKind(b) && a.rate == b.rate && a.durationMs == b.durationMs &&
            a.seekable == b.seekable && a.previewStartMs == b.previewStartMs &&
            a.volume == b.volume && a.order == b.order && a.repeat == b.repeat &&
@@ -224,13 +253,21 @@ template <class T> Request replyLater(QObject* context, Reply<T> reply, Outcome<
 
 BackendPlayback::BackendPlayback(runtime::BackendRuntime& runtime, CatalogSource& catalog,
                                  QObject* parent)
-    : QObject(parent), m_session(&runtime.listening()), m_facade(&runtime.facade()),
+    : QObject(parent), m_runtime(runtime), m_session(&runtime.listening()), m_facade(&runtime.facade()),
       m_catalog(catalog)
 {
+    connect(&runtime, &runtime::BackendRuntime::biliAccountChanged, this, [this] {
+        if (m_biliChanged)
+            m_biliChanged();
+    });
     const auto changed = [this] { update(); };
     connect(m_session, &ListeningSession::queueChanged, this, changed);
     connect(m_session, &ListeningSession::playbackChanged, this, changed);
     connect(m_session, &ListeningSession::fmChanged, this, changed);
+    connect(m_session, &ListeningSession::failureStreakExceeded, this, [this] {
+        if (m_notice)
+            m_notice(tr("多首歌曲无法播放，已停止"));
+    });
     // A session change retires the queue and playback.
     connect(&runtime.facade(), &application::BackendFacade::sessionChanged, this,
             [this](const domain::SessionSnapshot&) {
@@ -296,14 +333,29 @@ void BackendPlayback::update()
                     ? playback::PersonalFm
                     : playback::Queue;
     next.fmWaiting = session.waitingForFm();
+    loadVoices();
+    QString currentKey = play.song.value;
+    m_queueVoices.clear();
     if (next.mode == playback::Queue) {
         const auto queue = session.queue();
-        QHash<QUuid, QString> songs;
+        // A voice's key is its own, not its track's.
+        QHash<QUuid, const domain::QueueEntry*> byId;
         for (const auto& entry : queue.entries)
-            songs.insert(entry.id, entry.song.value);
+            byId.insert(entry.id, &entry);
         m_entries = session.playOrder();
-        for (const QUuid& id : std::as_const(m_entries))
-            next.queue.append(songs.value(id));
+        for (const QUuid& id : std::as_const(m_entries)) {
+            const auto* entry = byId.value(id);
+            const bool voice = entry && !entry->program.value.isEmpty();
+            next.queue.append(!entry  ? QString()
+                              : voice ? entry->program.value
+                                      : entry->song.value);
+            m_queueVoices.append(voice);
+            if (voice)
+                next.voices.append(
+                    m_voices.value(entry->program.value, bareVoice(entry->program.value)));
+            if (voice && id == queue.active && entry->song == play.song)
+                currentKey = entry->program.value;
+        }
         next.queueIndex = int(m_entries.indexOf(queue.active));
         next.order =
             queue.order == domain::QueueOrder::Shuffle ? playback::Shuffle : playback::Sequential;
@@ -318,6 +370,7 @@ void BackendPlayback::update()
         for (const auto& entry : songs.entries) {
             m_entries.append(entry.id);
             next.queue.append(entry.song.value);
+            m_queueVoices.append(false);
         }
         next.queueIndex = int(m_entries.indexOf(songs.active));
         // The queue's modes stay for when it comes back.
@@ -325,12 +378,20 @@ void BackendPlayback::update()
         next.repeat = m_state.repeat;
     }
 
+    next.generation = play.token.generation;
+    next.provider = play.provider == domain::SourceProvider::Bilibili ? playback::Bilibili
+                                                                     : playback::Netease;
     next.status = statusOf(play);
     if (next.status == playback::Empty && next.fmWaiting)
-        next.status = playback::Loading;
+        next.status = session.fmBlocked() ? playback::Ended : playback::Loading;
     if (next.status == playback::Failed && play.failure)
         next.failure = Failure{kindOf(play.failure->error), std::nullopt};
-    next.current = songInfo(play.song.value);
+    next.current = currentKey != play.song.value ? m_voices.value(currentKey, bareVoice(currentKey))
+                                                 : songInfo(currentKey);
+    if (next.fmWaiting && session.fmBlocked() && next.queueIndex >= 0) {
+        next.current = songInfo(next.queue.at(next.queueIndex));
+        next.provider = m_state.provider;
+    }
     next.durationMs = play.durationMs.value_or(-1);
     next.seekable = play.seekable;
     next.previewStartMs = play.preview ? play.preview->startMs : -1;
@@ -375,7 +436,7 @@ void BackendPlayback::update()
     }
 
     if (live) {
-        seekWhereKept(play);
+        seekWhereKept(currentKey, play);
         savePosition(next, now, false);
     } else if (canResume() && !m_resume.isActive())
         m_resume.start();
@@ -411,14 +472,17 @@ void BackendPlayback::keep(qint64 now)
         return;
     Kept kept;
     kept.current = m_state.current;
+    kept.provider = m_state.provider;
     kept.durationMs = m_state.durationMs;
     kept.previewStartMs = m_state.previewStartMs;
     if (!m_removing) {
         kept.keys = m_state.queue;
         kept.index = m_state.queueIndex;
-        for (qsizetype i = 0; i < kept.keys.size(); ++i)
+        for (qsizetype i = 0; i < kept.keys.size(); ++i) {
             kept.origins.append(i < m_entries.size() ? m_origins.value(m_entries.at(i))
                                                      : PlayOrigin{});
+            kept.voices.append(m_queueVoices.value(i));
+        }
         const bool returning = !m_seekKey.isEmpty() && m_seekKey == kept.current.key;
         kept.songPositionMs =
             returning ? m_seekSongMs // stopped again before getting back there
@@ -472,7 +536,10 @@ void BackendPlayback::showRestored(PlaybackSnapshot& next, qint64 now)
 {
     // The queue came back at startup (the backend never plays it by itself): the song it
     // was on, paused where it was, as long as it was then (a preview's).
-    next.current = songInfo(next.queue.at(next.queueIndex));
+    next.current = m_queueVoices.value(next.queueIndex)
+                       ? m_voices.value(next.queue.at(next.queueIndex),
+                                        bareVoice(next.queue.at(next.queueIndex)))
+                       : songInfo(next.queue.at(next.queueIndex));
     next.status = playback::Paused;
     next.failure.reset();
     const auto last = saved(next.current.key);
@@ -521,10 +588,14 @@ void BackendPlayback::showKept(PlaybackSnapshot& next, qint64 now)
 {
     Kept& kept = *m_kept;
     if (kept.current.title.isEmpty()) // its details may have come since
-        kept.current = songInfo(kept.current.key);
+        kept.current = kept.current.voice
+                           ? m_voices.value(kept.current.key, bareVoice(kept.current.key))
+                           : songInfo(kept.current.key);
     next.status = kept.songPositionMs > 0 || kept.resume ? playback::Paused : playback::Ended;
     next.failure.reset();
     next.current = kept.current;
+    next.provider = kept.provider;
+    next.generation = 0;
     next.durationMs = kept.durationMs;
     next.previewStartMs = kept.previewStartMs;
     next.seekable = kept.durationMs > 0;
@@ -537,6 +608,11 @@ void BackendPlayback::showKept(PlaybackSnapshot& next, qint64 now)
     if (next.mode == playback::Queue) {
         next.queue = kept.keys;
         next.queueIndex = kept.index;
+        m_queueVoices = kept.voices;
+        next.voices.clear();
+        for (qsizetype i = 0; i < kept.keys.size(); ++i)
+            if (kept.voices.value(i))
+                next.voices.append(m_voices.value(kept.keys.at(i), bareVoice(kept.keys.at(i))));
     }
 }
 
@@ -559,7 +635,7 @@ void BackendPlayback::replay(int index)
         return;
     const Kept& kept = *m_kept;
     if (kept.keys.isEmpty()) {
-        startQueue({kept.current.key}, 0, {});
+        startQueue({kept.current.key}, 0, {}, {kept.current.voice});
         return;
     }
     index = std::clamp(index, 0, int(kept.keys.size()) - 1);
@@ -568,15 +644,15 @@ void BackendPlayback::replay(int index)
         m_seekKey = kept.keys.at(index);
         m_seekSongMs = kept.songPositionMs;
     }
-    startQueue(kept.keys, index, kept.origins);
+    startQueue(kept.keys, index, kept.origins, kept.voices);
 }
 
-void BackendPlayback::seekWhereKept(const domain::PlaybackSnapshot& play)
+void BackendPlayback::seekWhereKept(const QString& key, const domain::PlaybackSnapshot& play)
 {
     if (m_seekKey.isEmpty())
         return;
-    if (play.song.value != m_seekKey) {
-        if (!play.song.value.isEmpty())
+    if (key != m_seekKey) {
+        if (!key.isEmpty())
             m_seekKey.clear(); // another song now
         return;
     }
@@ -642,21 +718,46 @@ void BackendPlayback::playSongs(const QStringList& keys, int index, const PlayOr
     startQueue(keys, index, QList<PlayOrigin>(keys.size(), origin));
 }
 
+void BackendPlayback::playVoices(const QStringList& keys, int index)
+{
+    startQueue(keys, index, {}, QList<bool>(keys.size(), true));
+}
+
 void BackendPlayback::startQueue(const QStringList& keys, int index,
-                                 const QList<PlayOrigin>& origins)
+                                 const QList<PlayOrigin>& origins, const QList<bool>& voices)
 {
     if (!m_session || index < 0 || index >= keys.size())
         return;
+    loadVoices();
     QList<domain::SongId> ids;
     QList<PlayOrigin> idOrigins;
+    QList<domain::ProgramId> programs; // per id: the voice it is the track of, or none
+    QList<domain::PlayOrigin> voiceOrigins;
+    QHash<QString, SongInfo> voiceDetails;
     qsizetype start = -1;
     for (qsizetype i = 0; i < keys.size(); ++i) {
-        if (!domain::validMusicId(keys.at(i)))
+        const QString& key = keys.at(i);
+        domain::SongId id{key};
+        domain::ProgramId program;
+        domain::PlayOrigin voiceOrigin;
+        if (voices.value(i)) {
+            // A voice plays its track (podcast-playback.md); one without is left out.
+            auto info = m_voices.contains(key) ? std::optional(m_voices.value(key))
+                                               : mapping::KnownVoices::find(key);
+            if (!info || !domain::validMusicId(key) || !domain::validMusicId(info->trackKey))
+                continue;
+            id = domain::SongId{info->trackKey};
+            program = {key};
+            voiceOrigin = podcastOrigin(*info);
+            voiceDetails.insert(key, *info);
+        } else if (!domain::validMusicId(key))
             continue;
         if (i == index)
             start = ids.size();
-        ids.append(domain::SongId{keys.at(i)});
+        ids.append(id);
         idOrigins.append(origins.value(i));
+        programs.append(program);
+        voiceOrigins.append(voiceOrigin);
     }
     // What the user asked to play (docs/tasks/logging.md §8); the session logs the rest.
     const PlayOrigin origin = origins.value(index);
@@ -676,16 +777,24 @@ void BackendPlayback::startQueue(const QStringList& keys, int index,
         const qsizetype from = std::clamp<qsizetype>(start - most / 2, 0, ids.size() - most);
         ids = ids.mid(from, most);
         idOrigins = idOrigins.mid(from, most);
+        programs = programs.mid(from, most);
+        voiceOrigins = voiceOrigins.mid(from, most);
         start -= from;
     }
     loadOrigins(); // this account's, before replacing them
     QList<domain::PlayOrigin> stored;
-    for (const auto& origin : std::as_const(idOrigins))
-        stored.append(storedOrigin(origin));
-    if (!m_session->replaceQueue(ids, start, quality(), stored) || !m_session) {
+    for (qsizetype i = 0; i < idOrigins.size(); ++i)
+        stored.append(programs.at(i).value.isEmpty() ? storedOrigin(idOrigins.at(i))
+                                                     : voiceOrigins.at(i));
+    const bool anyVoice = !voiceDetails.isEmpty();
+    if (!m_session->replaceQueue(ids, start, quality(), stored,
+                                 anyVoice ? programs : QList<domain::ProgramId>{}) ||
+        !m_session) {
         log::warn(lcUi, "player.play_refused");
         return;
     }
+    m_voices = std::move(voiceDetails); // the queue's, now
+    saveVoices();
     // The new entries, in the order given.
     const auto entries = m_session->queue().entries;
     m_origins.clear();
@@ -721,6 +830,48 @@ void BackendPlayback::loadOrigins()
             if (const QUuid id(entry); !id.isNull())
                 m_origins.insert(id, origin);
     }
+}
+
+void BackendPlayback::loadVoices()
+{
+    const QString account = m_facade ? m_facade->snapshot().accountId : QString();
+    if (m_voicesLoaded && account == m_voicesAccount)
+        return;
+    m_voicesLoaded = true;
+    m_voicesAccount = account;
+    m_voices.clear();
+    for (const QVariant& value : QSettings().value(voicesKey(account)).toList()) {
+        const QVariantMap map = value.toMap();
+        SongInfo info = bareVoice(map.value(QStringLiteral("k")).toString());
+        info.title = map.value(QStringLiteral("t")).toString();
+        info.albumKey = map.value(QStringLiteral("a")).toString();
+        info.albumTitle = map.value(QStringLiteral("n")).toString();
+        info.coverKey = map.value(QStringLiteral("c")).toString();
+        info.durationMs = map.value(QStringLiteral("d"), -1).toLongLong();
+        info.serial = map.value(QStringLiteral("s"), -1).toInt();
+        info.trackKey = map.value(QStringLiteral("r")).toString();
+        if (domain::validMusicId(info.key))
+            m_voices.insert(info.key, info);
+    }
+}
+
+void BackendPlayback::saveVoices()
+{
+    QVariantList list;
+    for (const SongInfo& info : std::as_const(m_voices))
+        list.append(QVariantMap{{QStringLiteral("k"), info.key},
+                                {QStringLiteral("t"), info.title},
+                                {QStringLiteral("a"), info.albumKey},
+                                {QStringLiteral("n"), info.albumTitle},
+                                {QStringLiteral("c"), info.coverKey},
+                                {QStringLiteral("d"), info.durationMs},
+                                {QStringLiteral("s"), info.serial},
+                                {QStringLiteral("r"), info.trackKey}});
+    QSettings settings;
+    if (list.isEmpty())
+        settings.remove(voicesKey(m_voicesAccount));
+    else
+        settings.setValue(voicesKey(m_voicesAccount), list);
 }
 
 void BackendPlayback::saveOrigins() const
@@ -1016,6 +1167,24 @@ void BackendPlayback::applyNormalization()
         static_cast<void>(m_facade->setPlaybackNormalization(*m_normalize));
 }
 
+BiliAccountState BackendPlayback::biliAccount() const
+{
+    const auto state = m_runtime.biliAccount();
+    return {int(state.status), state.name};
+}
+
+void BackendPlayback::saveBiliCookie(const QString& cookie)
+{
+    m_runtime.saveBiliCookie(cookie.toUtf8());
+}
+
+void BackendPlayback::clearBiliCookie() { m_runtime.clearBiliCookie(); }
+
+void BackendPlayback::setBiliSourceEnabled(bool on)
+{
+    m_facade->setAllowBiliSource(on);
+}
+
 void BackendPlayback::setNormalization(bool on)
 {
     m_normalize = on;
@@ -1073,6 +1242,7 @@ void BackendPlayback::startFm()
 struct BackendLyrics::Job {
     QString key;
     Reply<SongLyrics> reply;
+    quint64 generation = 0;
     quint64 query = 0; // the cache's
     Request service;   // the service's
     void finish(const Outcome<SongLyrics>& outcome)
@@ -1084,12 +1254,16 @@ struct BackendLyrics::Job {
 
 BackendLyrics::BackendLyrics(runtime::BackendRuntime& runtime, QObject* parent)
     : QObject(parent), m_session(&runtime.listening()), m_queries(runtime.resourceQueries()),
-      m_requests(new MusicRequests(runtime.facade(), this))
+      m_requests(new MusicRequests(runtime.facade(), this)), m_facade(&runtime.facade())
 {
     if (m_queries)
         connect(m_queries, &cache::CachedMusicQueryService::completed, this,
                 &BackendLyrics::completed);
     connect(m_session, &ListeningSession::lyricsChanged, this, &BackendLyrics::sessionLyrics);
+    connect(m_facade, &application::BackendFacade::playbackSourceSelected, this,
+            [this] { sessionLyrics(); });
+    connect(m_facade, &application::BackendFacade::playbackChanged, this,
+            [this] { sessionLyrics(); });
 }
 
 BackendLyrics::~BackendLyrics() = default;
@@ -1100,16 +1274,11 @@ Request BackendLyrics::lyrics(const QString& songKey, Reply<SongLyrics> reply)
         return replyLater(
             this, std::move(reply),
             Outcome<SongLyrics>{std::nullopt, false, Failure{failure::Rejected, std::nullopt}});
-    // The playing song's are already here, or on their way.
-    if (const auto own = m_session ? m_session->lyrics() : std::nullopt;
-        own && own->song.value == songKey)
-        return replyLater(this, std::move(reply), Outcome<SongLyrics>{lyricsOf(*own)});
     auto job = std::make_shared<Job>(Job{songKey, std::move(reply)});
-    if (m_session && m_session->playback().song.value == songKey &&
-        m_session->lyricsState() == domain::LyricsState::Loading)
-        m_waiting.append(job);
-    else
-        start(job);
+    QTimer::singleShot(0, this, [this, job] {
+        if (job->reply && !routePlayback(job))
+            start(job);
+    });
     return Request([self = QPointer<BackendLyrics>(this), job] {
         job->reply = {};
         job->service.cancel();
@@ -1121,19 +1290,66 @@ Request BackendLyrics::lyrics(const QString& songKey, Reply<SongLyrics> reply)
     });
 }
 
-void BackendLyrics::sessionLyrics()
+bool BackendLyrics::routePlayback(const std::shared_ptr<Job>& job)
 {
-    const auto own = m_session ? m_session->lyrics() : std::nullopt;
-    const bool loading = m_session && m_session->lyricsState() == domain::LyricsState::Loading;
-    const QString playing = m_session ? m_session->playback().song.value : QString();
-    for (const auto& job : std::exchange(m_waiting, {})) {
-        if (own && own->song.value == job->key)
+    const auto generation = m_facade ? m_facade->playbackLyricGeneration({job->key}) : 0;
+    if (job->generation && generation != job->generation) {
+        job->finish(Outcome<SongLyrics>{std::nullopt, false,
+                                       Failure{failure::Rejected, std::nullopt}});
+        return true;
+    }
+    if (!generation)
+        return false;
+    job->generation = generation;
+    if (m_session && m_session->playback().token.generation == generation) {
+        const auto own = m_session->lyrics();
+        if (own && own->song.value == job->key) {
+            log::info(lcUiBackend, "lyrics.session",
+                      {{"song", job->key}, {"token", generation},
+                       {"provider", m_session->playback().provider},
+                       {"standard_lines", own->original.standard.lines.size()},
+                       {"standard_availability", own->original.standard.availability},
+                       {"enhanced_lines", own->original.enhanced.lines.size()}});
             job->finish(Outcome<SongLyrics>{lyricsOf(*own)});
-        else if (loading && playing == job->key)
+        }
+        else if (m_session->lyricsState() == domain::LyricsState::Loading ||
+                 m_session->playback().state == domain::PlaybackState::Resolving)
             m_waiting.append(job);
         else
-            start(job); // the session's failed, or it moved on
+            job->finish(Outcome<SongLyrics>{std::nullopt, false,
+                                           Failure{failure::Rejected, std::nullopt}});
+        return true;
     }
+    if (!m_facade->playbackSource(generation)) {
+        m_waiting.append(job);
+        return true;
+    }
+    job->service.cancel();
+    job->service = m_requests->submit(
+        [generation](application::BackendFacade& facade) {
+            if (!facade.playbackSource(generation))
+                return MusicRequests::Refused;
+            return facade.playbackLyrics(generation);
+        },
+        [job](const application::MusicResult& result) {
+            if (const auto* lyrics = std::get_if<domain::SongLyrics>(&result))
+                job->finish(Outcome<SongLyrics>{lyricsOf(*lyrics)});
+            else
+                job->finish(Outcome<SongLyrics>{std::nullopt, false,
+                                               Failure{failure::Rejected, std::nullopt}});
+        },
+        [job](failure::Kind kind, std::optional<qint64> retryAfterMs) {
+            job->finish(Outcome<SongLyrics>{std::nullopt, false, Failure{kind, retryAfterMs}});
+        });
+    return true;
+}
+
+void BackendLyrics::sessionLyrics()
+{
+    for (const auto& job : std::exchange(m_waiting, {}))
+        if (job->reply && !routePlayback(job))
+            job->finish(Outcome<SongLyrics>{std::nullopt, false,
+                                           Failure{failure::Rejected, std::nullopt}});
 }
 
 void BackendLyrics::start(const std::shared_ptr<Job>& job)
@@ -1153,6 +1369,8 @@ void BackendLyrics::completed(const cache::CachedMusicResult& result)
     if (!job)
         return;
     job->query = 0;
+    if (!job->reply || routePlayback(job))
+        return;
     if (result.value) {
         if (const auto* lyrics = std::get_if<domain::SongLyrics>(&*result.value)) {
             job->finish(Outcome<SongLyrics>{lyricsOf(*lyrics)});
@@ -1171,10 +1389,14 @@ void BackendLyrics::completed(const cache::CachedMusicResult& result)
 
 void BackendLyrics::fromService(const std::shared_ptr<Job>& job)
 {
+    if (!job->reply || routePlayback(job))
+        return;
     const domain::SongId id{job->key};
     job->service = m_requests->submit(
         [id](application::BackendFacade& facade) { return facade.lyrics(id); },
-        [job](const application::MusicResult& result) {
+        [this, job](const application::MusicResult& result) {
+            if (!job->reply || routePlayback(job))
+                return;
             if (const auto* lyrics = std::get_if<domain::SongLyrics>(&result))
                 job->finish(Outcome<SongLyrics>{lyricsOf(*lyrics)});
             else

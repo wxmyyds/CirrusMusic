@@ -1,6 +1,7 @@
 #include "together_gateway.h"
 #include "infrastructure/netease/api/together_operation.h"
 #include "metadata_mapping.h"
+#include "music_mapping.h"
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QThread>
@@ -73,10 +74,16 @@ std::optional<TogetherRoom> roomFrom(const QJsonValue& v)
         if (!users.isArray() || users.toArray().size() > 1000)
             return std::nullopt;
         for (const auto& u : users.toArray()) {
-            const auto user = togetherUser(u.toObject().value(QStringLiteral("userId")));
+            const auto m = u.toObject();
+            const auto user = togetherUser(m.value(QStringLiteral("userId")));
             if (!u.isObject() || !user || user->isEmpty())
                 return std::nullopt;
-            r.members.append(*user);
+            // Display only: a nickname this client cannot show stays empty.
+            std::optional<QString> nickname;
+            if (!mapping::metadataText(m.value(QStringLiteral("nickname")), nickname, 256))
+                nickname.reset();
+            r.members.append({*user, nickname.value_or(QString()),
+                              mapping::imageFrom(m.value(QStringLiteral("avatarUrl")))});
         }
     }
     return r;
@@ -219,19 +226,23 @@ bool details(const TogetherRequest& request, const QJsonObject& root, TogetherRe
             r.heartbeatAccepted = b.toBool();
             if (!typeAndHint(o, r))
                 return false;
+            const auto time = o.value(QStringLiteral("time"));
+            if (!absent(time)) {
+                const auto ms = togetherCounter(time);
+                if (!ms)
+                    return false;
+                r.serverTimeMs = *ms;
+            }
         }
         // A false decision is valid read metadata, not activation or transport failure.
         return true;
     }
     if (kind == TogetherKind::Queue) {
-        const auto wrapper = o.value(QStringLiteral("playList"));
-        if (!wrapper.isObject())
-            return false;
-        const auto p = wrapper.toObject();
-        r.playlist = playlistFrom(p.value(QStringLiteral("playlist")));
+        // data is the app's LTPlayListWrapper: {playCommand, playlist}.
+        r.playlist = playlistFrom(o.value(QStringLiteral("playlist")));
         if (!r.playlist)
             return false;
-        const auto play = p.value(QStringLiteral("playCommand"));
+        const auto play = o.value(QStringLiteral("playCommand"));
         if (!absent(play)) {
             r.reportedPlay = reportedPlay(play);
             if (!r.reportedPlay) {
