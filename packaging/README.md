@@ -62,7 +62,7 @@ deb、AppImage 的构建机是 Ubuntu 22.04（glibc 2.35，GCC 12），包能在
 
 ## Arch Linux / pacman
 
-`.github/workflows/pacman.yml` 在 `archlinux:base-devel` 容器里先完整更新 Arch 并安装原生依赖，不使用 Ubuntu 包、Qt 官方二进制或 `packaging/deps/` 的自编库。工作流创建 `builder` 用户并把工作区交给它；`packaging/arch/build-package.sh` 只允许在 GitHub Actions 中以非 root 身份运行，`makepkg` 不使用 sudo 或自动安装依赖。
+`.github/workflows/linux-packages.yml` 的 `pacman` job 在 `archlinux:base-devel` 容器里先完整更新 Arch 并安装原生依赖，不使用 Ubuntu 包、Qt 官方二进制或 `packaging/deps/` 的自编库。工作流创建 `builder` 用户并把工作区交给它；`packaging/arch/build-package.sh` 只允许在 GitHub Actions 中以非 root 身份运行，`makepkg` 不使用 sudo 或自动安装依赖。
 
 - **来源**：对实际检出的 `HEAD` 做 `git archive`（PR 时可为合并提交），以完整提交 SHA 命名源码目录，用 SHA-256 校验源码包。版本从该提交的 `CMakeLists.txt` 的 `project(CirrusMusic VERSION ...)` 提取，填入 `packaging/arch/PKGBUILD.in`；不会下载 AUR 配方的旧发布标签，也不包含工作区未提交的改动。提交、版本和源码校验值写入 Actions 日志。
 - **构建依赖**：`base-devel`、`git`、`cmake`、`ninja`、`pkgconf`、`qt6-shadertools`、`qt6-tools`；另外安装下面的运行依赖。Qt 至少 6.10，实际版本取自 Arch 当次仓库。
@@ -101,14 +101,13 @@ dmg 随 Release 发布，标为预览：只有 Apple Silicon 版，最低 macOS 
 
 | 文件 | 何时 | 做什么 |
 | --- | --- | --- |
-| `.github/workflows/ci.yml` | 推到 master、PR、手动或被发布调用 | Linux：编译应用、gallery 和测试，qmllint，ctest。手动可加 Windows、macOS；`package=true` 打 deb、AppImage、pacman、Windows 和 macOS 的包，不建 Release（macOS 只打包）。`pacman=true` 只增加 Arch 打包，不启用 Windows/macOS，仍保留正常 Linux 构建和测试。可复用调用也支持 `package`、`pacman` 布尔输入，默认 false |
+| `.github/workflows/ci.yml` | 推到 master、PR、手动或被发布调用 | Linux：编译应用、gallery 和测试，qmllint，ctest。手动可加 Windows、macOS；`package=true` 打 deb、AppImage、Windows 和 macOS 的包，不建 Release（macOS 只打包）。不含 Arch 打包任务或 `pacman` 输入；CI 调用 Linux 打包时固定 `format=portable` |
 | `.github/workflows/windows.yml` | 被 CI 和发布调用 | Windows 编译；打包时出 zip 和安装包 |
 | `.github/workflows/macos.yml` | 被 CI 和发布调用 | macOS 编译和测试；打包时出 dmg |
-| `.github/workflows/linux-packages.yml` | 被 CI 和发布调用 | 打 deb 和 AppImage，校验桌面文件和 deb，附库的源码 |
-| `.github/workflows/pacman.yml` | 被 CI 和发布调用，也可独立手动运行 | Arch 原生构建当前检出的 HEAD、检查元数据，上传 `pacman` artifact；独立运行不依赖其他平台的 CI |
-| `.github/workflows/release.yml` | 推 `v*` 标签 | 检查标签和版本号、CHANGELOG 一致 → 跑一遍 CI → 打 Linux、Arch、Windows 和 macOS 的包 → 全部成功后建一个**草稿** Release，附上全部产物、库的源码和 SHA256SUMS |
+| `.github/workflows/linux-packages.yml` | 手动、被 CI 和发布调用 | 统一 Linux 打包入口，`format=all`（默认）打 deb、AppImage 和 Arch；`portable` 仅 deb/AppImage 和库源码；`arch` 仅原生 Arch。校验选择值，再由独立 job 构建并上传 `linux` / `pacman` artifact |
+| `.github/workflows/release.yml` | 推 `v*` 标签 | 检查标签和版本号、CHANGELOG 一致 → 跑一遍 CI → 通过统一 Linux 入口打 deb、AppImage、Arch，另打 Windows 和 macOS 包 → 全部成功后建一个**草稿** Release，附上全部产物、库的源码和 SHA256SUMS |
 
-仅试 Arch 包时，在 GitHub Actions 选择 **Pacman package → Run workflow**，选择待验证分支，完成后下载 `pacman` artifact。也可在 **CI → Run workflow** 只勾选 **Pacman only**（`pacman`），不勾选 **Build packages**；后者会启用所有平台打包。手动入口需要工作流先在默认分支注册，之后可选择包含该工作流的功能分支。该操作需要通过 GitHub Actions 执行。
+仅试 Arch 包时，在 GitHub Actions 选择 **Linux packages → Run workflow**，选择待验证分支，将 **format** 设为 **arch**，完成后下载 `pacman` artifact；该选择不构建 deb/AppImage 或其他平台。CI 不再提供 Arch 开关或任务。Release 使用默认 `all`，无需另起 Arch 工作流。手动入口需要工作流先在默认分支注册，之后可选择功能分支。该操作需要通过 GitHub Actions 执行。
 
 FFmpeg、QtKeychain、vcpkg 的编译结果按脚本和清单的哈希缓存（macOS 的键里还有系统版本下限），Qt 由 install-qt-action 缓存；pacman 工作流不复用这些库的缓存。
 

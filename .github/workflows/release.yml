@@ -40,10 +40,6 @@ jobs:
     needs: ci
     uses: ./.github/workflows/linux-packages.yml
 
-  pacman:
-    needs: ci
-    uses: ./.github/workflows/pacman.yml
-
   windows:
     needs: ci
     uses: ./.github/workflows/windows.yml
@@ -58,7 +54,7 @@ jobs:
 
   release:
     name: Draft release
-    needs: [check, linux, pacman, windows, macos]
+    needs: [check, linux, windows, macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
