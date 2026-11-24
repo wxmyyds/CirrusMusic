@@ -1,4 +1,4 @@
-#include "share.h"
+#include "sharing.h"
 
 #include "app.h"
 #include "app_settings.h"
