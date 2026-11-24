@@ -124,7 +124,9 @@ quint64 Lyrics::request(PlaybackSourceSelection source)
             finish(id, MusicFailure{MusicError::InvalidRequest});
             return;
         }
-        QUrl url(QStringLiteral("https://api.bilibili.com/x/player/v2"));
+        // The legacy /x/player/v2 endpoint can return another video's subtitle list.
+        // Use the player metadata endpoint for the exact resolved video and page.
+        QUrl url(QStringLiteral("https://api.bilibili.com/x/player/wbi/v2"));
         QUrlQuery query;
         query.addQueryItem(QStringLiteral("bvid"), it->source.bili->bvid);
         query.addQueryItem(QStringLiteral("cid"), it->source.bili->cid);
