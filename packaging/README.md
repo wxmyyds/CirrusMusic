@@ -58,7 +58,7 @@ deb、AppImage 的构建机是 Ubuntu 22.04（glibc 2.35，GCC 12），包能在
 
 - **deb**：`/opt/cirrus` 自成一体，因为发行版的 Qt 比 6.11 旧。`Depends` 由 `dpkg-shlibdeps` 按包里的程序和库算出，另加 `ca-certificates`（Qt 的 TLS 用系统的根证书）；`Recommends` 一个钥匙串服务。只 strip 还带符号的文件：再 strip 一遍 Qt 已经处理过的库，会弄坏它自带的 `libavutil`。
 - **AppImage**：同一套目录装到 `AppDir/usr`，再用 linuxdeploy（固定版本，构建时下载）补上基础系统以外的库并打包。没有自动更新信息。linuxdeploy 会把构建机的 glib 一起带上，所以 `libsecret` 也要显式带上（`--library`）：QtKeychain 在运行时才打开它，linuxdeploy 看不到；不带的话加载的是宿主系统的 libsecret，它要新版 glib 的符号，加载失败，登录状态就存不下来（0.1.0 的问题）。
-- **AUR**：`packaging/aur/PKGBUILD` 从 GitHub 的发布标签源码包编译，依赖 Arch 的系统库，`/usr` 布局。目前仍指向 v0.3.0，未上传到 AUR（AUR 暂停注册新账号），不作为分支构建的输入。更新配方后的构建验证也只能通过 GitHub Actions 执行。
+- **AUR**：`packaging/aur/PKGBUILD` 从 GitHub 的发布标签源码包编译，依赖 Arch 的系统库，`/usr` 布局。目前指向 v0.4.0，未上传到 AUR（AUR 暂停注册新账号），不作为分支构建的输入。更新配方后的构建验证也只能通过 GitHub Actions 执行。
 
 ## Arch Linux / pacman
 
