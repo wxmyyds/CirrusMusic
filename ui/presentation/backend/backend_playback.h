@@ -10,6 +10,8 @@
 #include <QTimer>
 #include <QUuid>
 
+#include <optional>
+
 namespace cirrus::application
 {
 class BackendFacade;
@@ -69,6 +71,7 @@ class BackendPlayback : public QObject, public PlaybackSource
     void removeAt(int index) override;
     void move(int from, int to) override;
     bool addSongs(const QStringList& keys, bool next, const PlayOrigin& origin = {}) override;
+    void playNow(const QString& key, bool voice, const PlayOrigin& origin = {}) override;
     void clearQueue() override;
     void setVolume(double volume) override;
     void setNormalization(bool on) override;
@@ -182,8 +185,16 @@ class BackendPlayback : public QObject, public PlaybackSource
     std::optional<Transition> m_transition; // the setting, once known
     bool m_clearing = false;                // clearQueue() is stopping playback
     bool m_notifyPending = false;
-    bool m_live = false;       // something loaded (or Personal FM waiting)
-    bool m_removing = false;   // in removeAt(): a stop now is the user's
+    bool m_live = false;     // something loaded (or Personal FM waiting)
+    bool m_removing = false; // in removeAt(): a stop now is the user's
+    // A playNow() that came before startup was over (a launch's link), played once it is.
+    struct PendingNow {
+        QString key;
+        bool voice = false;
+        PlayOrigin origin;
+    };
+    std::optional<PendingNow> m_pendingNow;
+    void schedulePending();
     bool m_started = false;    // something played or a queue came back (startup is over)
     QString m_positionAccount; // whose position savePosition() writes
     QString m_savedKey;

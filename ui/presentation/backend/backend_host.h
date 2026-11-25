@@ -20,6 +20,8 @@ class BackendRuntime;
 namespace cirrus::ui
 {
 
+class NowPlayingExport;
+
 // Owns the backend (BackendRuntime) for the app: where its files live, starting it,
 // and closing it before the app quits (docs/ui/integration.md §3). The backend
 // sources (UI phase 5) are made from its runtime.
@@ -49,6 +51,8 @@ class BackendHost : public QObject
     [[nodiscard]] application::ListeningReporter& reporter() const { return *m_reporter; }
     // Listen together (docs/api/together-polling.md); closing keeps its room (resume()).
     [[nodiscard]] application::TogetherSession& together() const { return *m_together; }
+    // What is playing, for other programs (Linux; off unless the user turns it on).
+    [[nodiscard]] NowPlayingExport& nowPlaying() const { return *m_nowPlaying; }
 
     void start();
     // Closes the backend (it never signs out); `done` runs once it has stopped, or
@@ -62,6 +66,7 @@ class BackendHost : public QObject
     std::unique_ptr<runtime::BackendRuntime> m_runtime;
     std::unique_ptr<application::ListeningReporter> m_reporter;
     std::unique_ptr<application::TogetherSession> m_together;
+    std::unique_ptr<NowPlayingExport> m_nowPlaying;
     std::function<void()> m_done;
     bool m_shuttingDown = false;
 };

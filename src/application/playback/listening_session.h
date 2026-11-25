@@ -202,7 +202,6 @@ class ListeningSession final : public QObject
     int m_failureStreak = 0;
     qint64 m_lastObservedPlayedMs = 0;
     bool m_heard = false;
-    bool m_lyricsRequested = false;
     bool m_permitBiliSource = true;
     bool m_failureStopNotified = false;
     std::optional<quint64> m_pendingFailureStop;
@@ -225,6 +224,9 @@ class ListeningSession final : public QObject
     qint64 m_userOffset = 0;
     quint64 m_lyricRequest = 0, m_revision = 0, m_controlRevision = 0;
     quint64 m_preloadLyricRequest = 0; // the preloaded song's: its sung lines, for transitions
+    std::optional<domain::PlaybackSourceSelection> m_lyricSource;
+    quint64 m_lyricSourceRevision = 0;
+    void cancelPreloadLyrics();
     quint64 m_historyClearEpoch = 0;
     QSet<QUuid> m_autoVisited;
     struct Preload {
@@ -233,6 +235,8 @@ class ListeningSession final : public QObject
         domain::SongId song;
         PlaybackQueue queue; // the queue once it plays
         bool fromFm = false; // Personal FM's supply's next: taken from it when it plays
+        std::optional<domain::PlaybackSourceSelection> lyricSource;
+        quint64 lyricSourceRevision = 0;
     };
     std::optional<Preload> m_preload;
     bool m_preloadChecked = false; // refreshPreload() ran for this load

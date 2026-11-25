@@ -10,6 +10,8 @@
 #include "logging/log.h"
 #include "logging/logger.h"
 #include "memory.h"
+#include "notice.h"
+#include "now_playing_export.h"
 #ifdef CIRRUS_UI_MPRIS
 #include "mpris.h"
 #endif
@@ -19,6 +21,10 @@
 #ifdef CIRRUS_UI_SMTC
 #include "smtc.h"
 #endif
+#ifdef CIRRUS_UI_TASKBAR
+#include "taskbar_buttons.h"
+#endif
+#include "app_link.h"
 #include "single_instance.h"
 #include "title_bar_mode.h"
 #include "update_check.h"
@@ -160,13 +166,21 @@ int main(int argc, char* argv[])
                                       QStringLiteral("info (default) or debug, for this run."),
                                       QStringLiteral("level"));
     parser.addOption(logLevel);
+    // An orpheus:// link: the browser opens the client with it (docs/ui/pages/open-links.md).
+    parser.addPositionalArgument(QStringLiteral("link"),
+                                 QStringLiteral("A NetEase web page's open-in-client link."),
+                                 QStringLiteral("[link]"));
     parser.process(app);
+    QString link;
+    for (const QString& argument : parser.positionalArguments())
+        if (cirrus::ui::applink::plausible(argument))
+            link = argument;
     if (parser.value(logLevel) == u"debug")
         cirrus::log::setVerbose(true);
 
     // A second launch shows the running app's window instead.
     cirrus::ui::SingleInstance instance;
-    if (!instance.claim())
+    if (!instance.claim(link))
         return 0;
     startLog();
     cirrus::log::info(lcApp, "app.platform",
@@ -191,11 +205,22 @@ int main(int argc, char* argv[])
     cirrus::ui::Desktop desktop(&instance);
     desktop.setShutdown(
         [&backend](std::function<void()> done) { backend.shutdown(std::move(done)); });
+    // What is playing, for desktop lyrics and status bars, while the user lets it (Linux).
+    backend.nowPlaying().follow(presentation->settings(), presentation->player(),
+                                presentation->lyrics());
+    QObject::connect(
+        &backend.nowPlaying(), &cirrus::ui::NowPlayingExport::failed, presentation, [presentation] {
+            emit presentation->notice(cirrus::ui::noticed(
+                "now_playing.unavailable",
+                QCoreApplication::translate("NowPlaying", "无法向其他程序提供播放状态")));
+        });
+    // 安装并重启 uses the same orderly shutdown as Ctrl+Q.
+    QObject::connect(presentation->updates(), &cirrus::ui::UpdateCheck::installRequested, &desktop,
+                     &cirrus::ui::Desktop::quit);
     backend.start();
 #ifdef CIRRUS_UI_MPRIS
     // Media keys and the desktop's media controls (docs/ui/pages/shell.md §7).
-    cirrus::ui::Mpris mpris(presentation->player(), &desktop, presentation->lyrics(),
-                           presentation->settings());
+    cirrus::ui::Mpris mpris(presentation->player(), &desktop);
 #endif
 #ifdef CIRRUS_UI_NOW_PLAYING
     cirrus::ui::NowPlaying nowPlaying(presentation->player());
@@ -216,9 +241,18 @@ int main(int argc, char* argv[])
     engine.addImageProvider(QStringLiteral("qr"), presentation->makeQrProvider());
     engine.setInitialProperties({{QStringLiteral("titleBar"), int(titleBar)}});
     engine.loadFromModule("CirrusMusic", "Main");
+    // Links: the one this launch came with, once the window is up, and those later launches
+    // pass on.
+    QObject::connect(&instance, &cirrus::ui::SingleInstance::linkRequested, presentation,
+                     &cirrus::ui::App::openLink);
+    if (!link.isEmpty())
+        QTimer::singleShot(0, presentation, [presentation, link] { presentation->openLink(link); });
 #ifdef CIRRUS_UI_SMTC
     // Bound to the main window; gone before it is (declared after the engine).
     std::unique_ptr<cirrus::ui::Smtc> smtc;
+#endif
+#ifdef CIRRUS_UI_TASKBAR
+    std::unique_ptr<cirrus::ui::TaskbarButtons> taskbar; // the same
 #endif
 
     // Hidden in the tray, the window gives back its GPU device and scene graph, so a
@@ -244,9 +278,13 @@ int main(int argc, char* argv[])
 #ifdef CIRRUS_UI_SMTC
         smtc = std::make_unique<cirrus::ui::Smtc>(presentation->player(), window);
 #endif
+#ifdef CIRRUS_UI_TASKBAR
+        taskbar = std::make_unique<cirrus::ui::TaskbarButtons>(presentation->player(), window);
+#endif
     }
 
     const int code = QGuiApplication::exec();
     cirrus::log::info(lcApp, "app.quit", {"code", code});
+    presentation->updates()->runInstaller();
     return code;
 }

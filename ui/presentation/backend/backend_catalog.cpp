@@ -700,6 +700,20 @@ Request BackendCatalog::podcast(const QString& key, Reply<PodcastInfo> reply)
         });
 }
 
+Request BackendCatalog::voice(const QString& key, Reply<SongInfo> reply)
+{
+    if (!domain::validMusicId(key))
+        return replyLater(
+            this, std::move(reply),
+            Outcome<SongInfo>{std::nullopt, false, Failure{failure::Rejected, std::nullopt}});
+    return read<domain::ProgramDetails>(
+        m_requests, [key](BackendFacade& facade) { return facade.programDetails({key}); },
+        std::move(reply),
+        [](const domain::ProgramDetails& details) {
+            return programOf(details.program); // remembered (KnownVoices)
+        });
+}
+
 Request BackendCatalog::podcastVoices(const QString& key, bool oldestFirst, PageRequest page,
                                       Reply<ResultPage<SongInfo>> reply)
 {

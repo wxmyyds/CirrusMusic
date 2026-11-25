@@ -244,6 +244,47 @@ Item {
         searchModelObject.submit(text);
     }
 
+    // A link the web opened the client with (App.linkRequested, docs/ui/pages/open-links.md):
+    // its page, over the player page if that is open.
+    function openLink(target: int, key: string) {
+        if (target === App.LinkUnsupported) {
+            notify(qsTr("暂不支持这类链接"));
+            return;
+        }
+        if (covered)
+            uncoverRequested();
+        switch (target) {
+        case App.LinkSong:
+            openSong(key);
+            break;
+        case App.LinkPlaylist:
+            openPlaylist(key);
+            break;
+        case App.LinkAlbum:
+            openAlbum(key);
+            break;
+        case App.LinkArtist:
+            openArtist(key);
+            break;
+        case App.LinkPodcast:
+            openPodcast(key);
+            break;
+        case App.LinkUser:
+            openUser(key);
+            break;
+        }
+    }
+    Connections {
+        target: App
+        function onLinkRequested(target: int, key: string) {
+            shell.openLink(target, key);
+        }
+        // A voice link that couldn't play.
+        function onNotice(message: string) {
+            shell.notify(message);
+        }
+    }
+
     // A short message at the bottom of the content panel (Snackbar).
     function notify(text: string) {
         if (covered)

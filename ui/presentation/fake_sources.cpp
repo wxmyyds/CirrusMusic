@@ -825,6 +825,17 @@ class FakeCatalog : public QObject, public CatalogSource
         });
     }
 
+    Request voice(const QString& key, Reply<SongInfo> reply) override
+    {
+        return replyLater<SongInfo>(this, m_controls, std::move(reply), [this, key]() {
+            Outcome<SongInfo> outcome;
+            if (m_samples->voices.contains(key))
+                outcome.value = m_samples->voices[key];
+            else
+                outcome.failure = Failure{failure::Rejected, std::nullopt};
+            return outcome;
+        });
+    }
     Request podcast(const QString& key, Reply<PodcastInfo> reply) override
     {
         return replyLater<PodcastInfo>(this, m_controls, std::move(reply), [this, key]() {
@@ -2193,6 +2204,19 @@ class FakePlayback : public QObject, public PlaybackSource
         updateNavigation();
         notify();
         return true;
+    }
+
+    void playNow(const QString& key, bool /*voice*/, const PlayOrigin& origin = {}) override
+    {
+        if (key.isEmpty())
+            return;
+        if (m_state.mode == playback::PersonalFm || m_sequence.isEmpty()) {
+            playSongs({key}, 0, origin);
+            return;
+        }
+        m_queue << key;
+        m_sequence.insert(++m_pos, int(m_queue.size()) - 1);
+        start();
     }
 
     void clearQueue() override

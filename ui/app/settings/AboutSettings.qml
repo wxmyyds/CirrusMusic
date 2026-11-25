@@ -78,9 +78,21 @@ SettingsGroup {
     // GitHub's latest release (docs/tasks/update-check.md §4).
     ActionSetting {
         readonly property int status: App.updates.status
+        readonly property int download: App.updates.canInstall ? App.updates.download
+                                                               : UpdateCheck.NoDownload
 
         text: qsTr("更新")
         supportingText: {
+            // The installer's download (Windows, update-check.md §9) comes first.
+            switch (download) {
+            case UpdateCheck.Downloading:
+                return qsTr("正在下载 %1 · %2%").arg(App.updates.latestVersion)
+                        .arg(Math.floor(App.updates.downloadProgress * 100));
+            case UpdateCheck.Downloaded:
+                return qsTr("%1 已下载").arg(App.updates.latestVersion);
+            case UpdateCheck.DownloadFailed:
+                return qsTr("下载失败，可以重试或到发布页下载");
+            }
             switch (status) {
             case UpdateCheck.Checking:
                 return qsTr("正在检查…");
@@ -102,9 +114,20 @@ SettingsGroup {
                         ? qsTr("上次检查：%1").arg(App.format.relativeTime(App.updates.lastCheck)) : "";
             }
         }
-        actionText: status === UpdateCheck.Available ? qsTr("查看") : qsTr("检查更新")
-        actionEnabled: status !== UpdateCheck.Checking
-        onTriggered: status === UpdateCheck.Available ? updateDialog.open() : App.updates.check()
+        actionText: download === UpdateCheck.Downloading ? qsTr("取消")
+                    : download === UpdateCheck.Downloaded ? qsTr("安装并重启")
+                    : status === UpdateCheck.Available ? qsTr("查看") : qsTr("检查更新")
+        actionEnabled: status !== UpdateCheck.Checking || download !== UpdateCheck.NoDownload
+        onTriggered: {
+            if (download === UpdateCheck.Downloading)
+                App.updates.cancelDownload();
+            else if (download === UpdateCheck.Downloaded)
+                App.updates.installUpdate();
+            else if (status === UpdateCheck.Available)
+                updateDialog.open();
+            else
+                App.updates.check();
+        }
     }
     ActionSetting {
         text: qsTr("第三方许可")

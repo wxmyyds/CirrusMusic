@@ -1,4 +1,5 @@
 #include "single_instance.h"
+#include "app_link.h"
 #include "logging/log.h"
 
 #include <QCoreApplication>
@@ -18,10 +19,11 @@ namespace cirrus::ui
 namespace
 {
 
-constexpr qint64 kMaxMessage = 512;
+constexpr qint64 kMaxMessage = 4096;
 constexpr int kWaitMs = 1000;
 
 const QByteArray kActivate = QByteArrayLiteral("activate");
+const QByteArray kOpen = QByteArrayLiteral("open");
 
 // The app's private runtime directory (0700).
 QString runtimeDir()
@@ -60,7 +62,7 @@ SingleInstance::SingleInstance(QObject* parent) : QObject(parent) {}
 
 SingleInstance::~SingleInstance() = default;
 
-bool SingleInstance::claim()
+bool SingleInstance::claim(const QString& link)
 {
     const QString dir = runtimeDir();
     const QString name = serverName(dir);
@@ -77,7 +79,10 @@ bool SingleInstance::claim()
     if (socket.waitForConnected(kWaitMs)) {
         QByteArray message = kActivate;
         const QByteArray token = qgetenv("XDG_ACTIVATION_TOKEN");
-        if (validToken(token))
+        if (applink::plausible(link))
+            message = kOpen + ' ' + (validToken(token) ? token : QByteArrayLiteral("-")) + ' ' +
+                      link.toLatin1();
+        else if (validToken(token))
             message += ' ' + token;
         socket.write(message + '\n');
         socket.waitForBytesWritten(kWaitMs);
@@ -116,10 +121,13 @@ void SingleInstance::read(QLocalSocket* socket)
     }
     const QList<QByteArray> parts = socket->readLine(kMaxMessage).trimmed().split(' ');
     socket->abort();
-    if (parts.size() > 2 || parts.first() != kActivate)
+    const bool open = parts.size() == 3 && parts.first() == kOpen;
+    if (!open && (parts.size() > 2 || parts.first() != kActivate))
         return;
     const QByteArray token = parts.value(1);
     emit activateRequested(validToken(token) ? QString::fromLatin1(token) : QString());
+    if (open && applink::plausible(QString::fromLatin1(parts.at(2))))
+        emit linkRequested(QString::fromLatin1(parts.at(2)));
 }
 
 } // namespace cirrus::ui

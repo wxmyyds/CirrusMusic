@@ -1,5 +1,6 @@
 #include "update_release.h"
 
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
@@ -39,8 +40,50 @@ bool isReleasePage(const QUrl& url)
     return url.isValid() && url.scheme() == QLatin1String("https") &&
            url.host() == QLatin1String("github.com") && url.port() == -1 &&
            url.userInfo().isEmpty() &&
-           url.path().startsWith(QLatin1String("/Guang233/CirrusMusic/releases/"));
+           url.path().startsWith(QLatin1String("/wxmyyds/CirrusMusic/releases/"));
 }
+
+bool isDownloadUrl(const QUrl& url, QStringView version, QStringView name)
+{
+    return url.isValid() && url.scheme() == QLatin1String("https") &&
+           url.host() == QLatin1String("github.com") && url.port() == -1 &&
+           url.userInfo().isEmpty() && !url.hasQuery() && !url.hasFragment() &&
+           url.path() ==
+               QStringLiteral("/wxmyyds/CirrusMusic/releases/download/v%1/%2").arg(version, name);
+}
+
+QString installerName(QStringView version)
+{
+    return QStringLiteral("Cirrus-%1-windows-x64-setup.exe").arg(version);
+}
+
+namespace
+{
+constexpr qint64 kMaximumInstallerBytes = 512LL * 1024 * 1024;
+
+std::optional<Asset> installerOf(const QJsonArray& assets, const QString& version)
+{
+    const QString name = installerName(version);
+    for (const auto& value : assets) {
+        const QJsonObject object = value.toObject();
+        if (object.value(QLatin1String("name")).toString() != name)
+            continue;
+        Asset asset;
+        asset.name = name;
+        asset.url = QUrl(object.value(QLatin1String("browser_download_url")).toString());
+        asset.size = qint64(object.value(QLatin1String("size")).toDouble());
+        const QString digest = object.value(QLatin1String("digest")).toString();
+        static const QRegularExpression sha256(QStringLiteral("^sha256:([0-9a-f]{64})$"));
+        const auto match = sha256.match(digest);
+        if (!isDownloadUrl(asset.url, version, name) || asset.size <= 0 ||
+            asset.size > kMaximumInstallerBytes || !match.hasMatch())
+            return std::nullopt;
+        asset.sha256 = QByteArray::fromHex(match.captured(1).toLatin1());
+        return asset;
+    }
+    return std::nullopt;
+}
+} // namespace
 
 QString notesToPlainText(const QString& markdown)
 {
@@ -93,6 +136,8 @@ std::optional<Release> parseRelease(const QByteArray& json)
         QDateTime::fromString(object.value(QLatin1String("published_at")).toString(), Qt::ISODate);
     if (!isReleasePage(release.page))
         return std::nullopt;
+    release.installer =
+        installerOf(object.value(QLatin1String("assets")).toArray(), release.version);
     return release;
 }
 } // namespace cirrus::ui::updates

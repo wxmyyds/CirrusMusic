@@ -99,16 +99,15 @@ set_tests_properties(backend_runtime PROPERTIES TIMEOUT 90)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     find_package(Qt6 REQUIRED COMPONENTS DBus)
-    qt_add_executable(tst_mpris_lyrics unit/mpris_lyrics_test.cpp
+    qt_add_executable(tst_mpris unit/mpris_test.cpp
         ../ui/app/mpris.cpp ../ui/app/mpris.h
-        ../ui/app/lyrics_dbus.cpp ../ui/app/lyrics_dbus.h
         ../ui/app/desktop.cpp ../ui/app/desktop.h
         ../ui/app/single_instance.cpp ../ui/app/single_instance.h
         ../ui/app/gpu_preference.cpp ../ui/app/gpu_preference.h)
-    target_include_directories(tst_mpris_lyrics PRIVATE ../ui/app)
-    target_link_libraries(tst_mpris_lyrics PRIVATE cirrus_presentation cirrus_logging Qt6::DBus Qt6::Test)
-    add_test(NAME mpris_lyrics COMMAND tst_mpris_lyrics)
-    set_tests_properties(mpris_lyrics PROPERTIES TIMEOUT 15)
+    target_include_directories(tst_mpris PRIVATE ../ui/app)
+    target_link_libraries(tst_mpris PRIVATE cirrus_presentation cirrus_logging Qt6::DBus Qt6::Test)
+    add_test(NAME mpris COMMAND tst_mpris)
+    set_tests_properties(mpris PROPERTIES TIMEOUT 15)
 endif()
 
 qt_add_executable(tst_music unit/music_test.cpp)
@@ -193,6 +192,8 @@ add_test(NAME playback_observation_feed COMMAND tst_playback_observation_feed)
 set_tests_properties(playback_observation_feed PROPERTIES TIMEOUT 30)
 
 if(TARGET cirrus_observation_linux)
+    target_link_libraries(tst_backend_runtime PRIVATE cirrus_observation_linux_client cirrus_observation_codec)
+    target_compile_definitions(tst_backend_runtime PRIVATE CIRRUS_TEST_NOW_PLAYING_EXPORT)
     qt_add_executable(tst_linux_observation_endpoint unit/linux_observation_endpoint_test.cpp)
     target_link_libraries(tst_linux_observation_endpoint PRIVATE cirrus_observation_linux Qt6::Test)
     add_test(NAME linux_observation_endpoint COMMAND tst_linux_observation_endpoint)
@@ -460,3 +461,9 @@ qt_add_executable(tst_share unit/share_test.cpp ${PROJECT_SOURCE_DIR}/ui/present
 target_include_directories(tst_share PRIVATE ${PROJECT_SOURCE_DIR}/ui/presentation)
 target_link_libraries(tst_share PRIVATE Qt6::Test Qt6::Core)
 add_test(NAME share COMMAND tst_share)
+
+# The NetEase web's open-in-client links (docs/ui/pages/open-links.md), on their own.
+qt_add_executable(tst_app_link unit/app_link_test.cpp ${PROJECT_SOURCE_DIR}/ui/presentation/app_link.cpp)
+target_include_directories(tst_app_link PRIVATE ${PROJECT_SOURCE_DIR}/ui/presentation)
+target_link_libraries(tst_app_link PRIVATE Qt6::Test Qt6::Core)
+add_test(NAME app_link COMMAND tst_app_link)

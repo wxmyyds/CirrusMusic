@@ -68,6 +68,19 @@ class App : public QObject
     Q_PROPERTY(cirrus::ui::FakeControls* debug READ debug CONSTANT)
 
   public:
+    // What an opened link is (applink::Target, docs/ui/pages/open-links.md).
+    enum LinkTarget {
+        LinkSong,
+        LinkVoice,
+        LinkPlaylist,
+        LinkAlbum,
+        LinkArtist,
+        LinkPodcast,
+        LinkUser,
+        LinkUnsupported
+    };
+    Q_ENUM(LinkTarget)
+
     ~App() override;
 
     static void install(Sources sources);
@@ -78,6 +91,10 @@ class App : public QObject
 
     // Puts plain text on the system clipboard (copying a comment).
     Q_INVOKABLE static void copyText(const QString& text);
+    // An orpheus:// link the web asked the client to open (a launch argument, open-links.md):
+    // a song to play or a voice plays next at once; anything else goes to the shell as
+    // linkRequested (LinkUnsupported when it can't be read). Logged without the link.
+    void openLink(const QString& url);
 
     [[nodiscard]] AppSettings* settings() const { return m_settings; }
     [[nodiscard]] CacheStatus* cache() const { return m_cache; }
@@ -105,10 +122,17 @@ class App : public QObject
     // `image://qr/<serial>` provider for the sign-in code; the engine takes ownership.
     [[nodiscard]] QQuickImageProvider* makeQrProvider();
 
+  signals:
+    // Shell.openLink: the page of `key` (digits), or a notice for LinkUnsupported (no key).
+    void linkRequested(int target, const QString& key);
+    // A link that couldn't play.
+    void notice(const QString& message);
+
   private:
     explicit App(Sources sources);
 
     Sources m_sources;
+    Request m_linkVoice; // the voice a link plays, while it is read
     AppSettings* m_settings;
     CacheStatus* m_cache;
     Diagnostics* m_diagnostics;

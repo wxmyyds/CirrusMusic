@@ -20,6 +20,7 @@ namespace cirrus::ui
 // Other platforms (X11, Windows) cannot rely on a compositor for translucency here,
 // so their frame has no shadow margin. On Windows 11 the system rounds the corners
 // (DWM corner preference; square while maximized or fullscreen); X11 stays square.
+// - `dark` makes the system's title bar on Windows dark too (system title bar mode).
 class WindowFrame : public QObject
 {
     Q_OBJECT
@@ -29,6 +30,8 @@ class WindowFrame : public QObject
     Q_PROPERTY(bool clientSide READ clientSide WRITE setClientSide NOTIFY clientSideChanged)
     Q_PROPERTY(int shadowMargin READ shadowMargin WRITE setShadowMargin NOTIFY shadowMarginChanged)
     Q_PROPERTY(int resizeMargin READ resizeMargin WRITE setResizeMargin NOTIFY resizeMarginChanged)
+    // The app's theme is dark: the system's own title bar (Windows) follows it.
+    Q_PROPERTY(bool dark READ dark WRITE setDark NOTIFY darkChanged)
     // The platform can show a translucent shadow margin around the frame.
     Q_PROPERTY(bool translucent READ translucent CONSTANT)
     // The compositor tiled the window on at least one edge (Wayland only).
@@ -47,6 +50,8 @@ class WindowFrame : public QObject
     void setShadowMargin(int margin);
     [[nodiscard]] int resizeMargin() const { return m_resizeMargin; }
     void setResizeMargin(int margin);
+    [[nodiscard]] bool dark() const { return m_dark; }
+    void setDark(bool dark);
     [[nodiscard]] bool translucent() const { return m_translucent; }
     [[nodiscard]] bool tiled() const { return m_tiled; }
     [[nodiscard]] int margin() const { return m_margin; }
@@ -59,13 +64,14 @@ class WindowFrame : public QObject
     void clientSideChanged();
     void shadowMarginChanged();
     void resizeMarginChanged();
+    void darkChanged();
     void tiledChanged();
     void marginChanged();
 
   private:
     void update();
     void watchSurface();
-    void updateCorners();
+    void updateDwm();
     [[nodiscard]] bool readTiled() const;
 
     QPointer<QQuickWindow> m_window;
@@ -78,8 +84,10 @@ class WindowFrame : public QObject
     int m_margin = 0;
     int m_appliedMargin = 0;
     QRegion m_appliedMask;
-    WId m_cornerWindow = 0; // the native window the corner preference was set on
+    bool m_dark = false;
+    WId m_dwmWindow = 0; // the native window the DWM attributes below were set on
     int m_appliedCorner = -1;
+    int m_appliedDark = -1;
     bool m_watchingSurface = false;
 };
 

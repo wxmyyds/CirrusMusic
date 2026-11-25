@@ -119,8 +119,6 @@ add_library(cirrus_application STATIC
     application/playback/together_session.h
     application/playback/playback_observation_publisher.cpp
     application/playback/playback_observation_publisher.h
-    application/playback/system_media_commands.cpp
-    application/playback/system_media_commands.h
     application/playback/playback_coordinator.cpp
     application/playback/playback_coordinator.h
     application/playback/provider_router.cpp
@@ -148,56 +146,6 @@ add_library(cirrus_observation_feed STATIC
     infrastructure/ipc/playback_observation_feed.cpp
 )
 target_link_libraries(cirrus_observation_feed PUBLIC cirrus_application cirrus_observation_codec)
-
-# Portable native command gate/lifecycle. No platform framework by default;
-# unsupported start fails closed. Never linked/activated by the product entry.
-add_library(cirrus_system_media_native STATIC
-    infrastructure/system_media/native_media_inbox.h
-    infrastructure/system_media/native_media_inbox.cpp
-    infrastructure/system_media/native_media_service.h
-    infrastructure/system_media/native_media_service.cpp
-    infrastructure/system_media/native_media_platform.h
-)
-target_link_libraries(cirrus_system_media_native PUBLIC cirrus_application)
-option(CIRRUS_BUILD_SMTC "Build the optional Windows SDK/C++ WinRT SMTC adapter" OFF)
-option(CIRRUS_BUILD_NOW_PLAYING "Build the optional macOS Now Playing adapter" OFF)
-if(CIRRUS_BUILD_SMTC)
-    if(NOT WIN32)
-        message(FATAL_ERROR "CIRRUS_BUILD_SMTC requires a native Windows SDK and Qt Kit")
-    endif()
-    target_sources(cirrus_system_media_native PRIVATE infrastructure/system_media/windows_smtc_platform.cpp)
-    target_compile_definitions(cirrus_system_media_native PRIVATE CIRRUS_NATIVE_SMTC NOMINMAX WIN32_LEAN_AND_MEAN _WIN32_WINNT=0x0A00)
-    target_link_libraries(cirrus_system_media_native PRIVATE windowsapp runtimeobject ole32 user32)
-endif()
-if(CIRRUS_BUILD_NOW_PLAYING)
-    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-        message(FATAL_ERROR "CIRRUS_BUILD_NOW_PLAYING requires a native macOS SDK and Qt Kit")
-    endif()
-    enable_language(OBJCXX)
-    find_library(CIRRUS_MEDIA_PLAYER_FRAMEWORK MediaPlayer REQUIRED)
-    find_library(CIRRUS_FOUNDATION_FRAMEWORK Foundation REQUIRED)
-    target_sources(cirrus_system_media_native PRIVATE infrastructure/system_media/macos_now_playing_platform.mm)
-    target_compile_definitions(cirrus_system_media_native PRIVATE CIRRUS_NATIVE_NOW_PLAYING)
-    set_target_properties(cirrus_system_media_native PROPERTIES OBJCXX_STANDARD 20 OBJCXX_STANDARD_REQUIRED ON OBJCXX_EXTENSIONS OFF)
-    target_compile_options(cirrus_system_media_native PRIVATE "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>" "$<$<COMPILE_LANGUAGE:OBJCXX>:-fblocks>")
-    target_link_libraries(cirrus_system_media_native PRIVATE ${CIRRUS_MEDIA_PLAYER_FRAMEWORK} ${CIRRUS_FOUNDATION_FRAMEWORK})
-endif()
-
-# Optional native session-bus adapter; never linked/activated by the product entry.
-option(CIRRUS_BUILD_MPRIS "Build the optional Linux MPRIS adapter" OFF)
-if(CIRRUS_BUILD_MPRIS)
-    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        message(FATAL_ERROR "CIRRUS_BUILD_MPRIS requires Linux")
-    endif()
-    find_package(Qt6 6.10 REQUIRED COMPONENTS DBus)
-    add_library(cirrus_system_media_mpris STATIC
-        infrastructure/system_media/mpris_service.h
-        infrastructure/system_media/mpris_service.cpp
-        infrastructure/system_media/mpris_worker.h
-        infrastructure/system_media/mpris_worker.cpp
-    )
-    target_link_libraries(cirrus_system_media_mpris PUBLIC cirrus_observation_feed PRIVATE Qt6::DBus cirrus_observation_linux)
-endif()
 
 # Linux resource/credential harness primitive, not composed into the product.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

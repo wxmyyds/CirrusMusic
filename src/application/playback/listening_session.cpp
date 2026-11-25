@@ -11,12 +11,20 @@
 namespace cirrus::application
 {
 using namespace domain;
+namespace
+{
+bool sameSource(const PlaybackSourceSelection& a, const PlaybackSourceSelection& b)
+{
+    return a.token == b.token && a.song == b.song && a.provider == b.provider && a.bili == b.bili;
+}
+} // namespace
 ListeningSession::ListeningSession(BackendFacade& backend, QObject* parent)
     : QObject(parent), m_backend(backend)
 {
     Q_ASSERT(backend.thread() == thread());
     connect(&backend, &BackendFacade::playbackChanged, this, &ListeningSession::receive);
-    connect(&backend, &BackendFacade::playbackSourceSelected, this, &ListeningSession::sourceSelected);
+    connect(&backend, &BackendFacade::playbackSourceSelected, this,
+            &ListeningSession::sourceSelected);
     connect(&backend, &BackendFacade::acknowledged, this, [this] {
         if (const auto revision = std::exchange(m_pendingFailureStop, std::nullopt))
             QTimer::singleShot(0, this, [this, revision] { stopForFailures(*revision); });
@@ -49,13 +57,15 @@ ListeningSession::ListeningSession(BackendFacade& backend, QObject* parent)
                 if (!current() || context != m_token.session)
                     return;
                 const auto revision = m_revision;
+                const auto sourceRevision = m_lyricSourceRevision;
+                const QPointer<ListeningSession> guard(this);
                 const auto* lyrics = std::get_if<SongLyrics>(&result);
                 if (!lyrics || lyrics->song != m_playback.song) {
                     const auto* failure = std::get_if<MusicFailure>(&result);
                     m_lyricsState = LyricsState::Failed;
                     emit lyricsFailed(failure ? *failure
                                               : MusicFailure{MusicError::InvalidResponse});
-                    if (revision == m_revision)
+                    if (guard && revision == m_revision && sourceRevision == m_lyricSourceRevision)
                         emit lyricsChanged(m_lyricsState);
                     return;
                 }
@@ -65,8 +75,10 @@ ListeningSession::ListeningSession(BackendFacade& backend, QObject* parent)
                 // Where it's sung, for the transition out of it (docs/tasks/automix.md §7).
                 static_cast<void>(m_backend.setPlaybackVocals(m_playback.token.generation,
                                                               vocalSpans(*lyrics, m_userOffset)));
+                if (!guard || revision != m_revision || sourceRevision != m_lyricSourceRevision)
+                    return;
                 emit lyricsChanged(m_lyricsState);
-                if (revision == m_revision)
+                if (guard && revision == m_revision && sourceRevision == m_lyricSourceRevision)
                     refreshCursors();
             });
 }
@@ -98,14 +110,27 @@ bool ListeningSession::acceptLoadCommand(quint64 id, quint64 revision)
     }
     return true;
 }
+void ListeningSession::cancelPreloadLyrics()
+{
+    const auto id = std::exchange(m_preloadLyricRequest, 0);
+    if (m_preload) {
+        m_preload->lyricSource.reset();
+        ++m_preload->lyricSourceRevision;
+    }
+    if (id)
+        m_backend.cancelMusic(id);
+}
 void ListeningSession::cancelLyrics()
 {
     const auto id = std::exchange(m_lyricRequest, 0);
+    m_lyricSource.reset();
+    ++m_lyricSourceRevision;
     m_lyrics.reset();
     m_timeline.clear();
     m_lyricsState = LyricsState::None;
-    m_lyricsRequested = false;
-    if (id)
+    const QPointer<ListeningSession> guard(this);
+    cancelPreloadLyrics();
+    if (guard && id)
         m_backend.cancelMusic(id);
 }
 void ListeningSession::reset()
@@ -172,7 +197,7 @@ bool ListeningSession::begin(PlaybackQueue candidate, TransportIntent intent, Au
     const auto revision = ++m_revision;
     m_starting = true;
     const auto id = m_backend.playSong(entry->song, quality, intent,
-                                      entry->program.value.isEmpty() && m_permitBiliSource);
+                                       entry->program.value.isEmpty() && m_permitBiliSource);
     m_starting = false;
     log::debug(lcPlayback, "queue.begin",
                {{"song", entry->song.value},
@@ -195,10 +220,12 @@ void ListeningSession::commit(PlaybackQueue candidate, TransportIntent intent, A
     m_preload.reset();
     m_preloadChecked = false;
     const auto oldLyricRequest = std::exchange(m_lyricRequest, 0);
+    const auto oldPreloadLyricRequest = std::exchange(m_preloadLyricRequest, 0);
+    m_lyricSource.reset();
+    ++m_lyricSourceRevision;
     m_lyrics.reset();
     m_timeline.clear();
     m_lyricsState = LyricsState::Loading;
-    m_lyricsRequested = false;
     const bool leaveFm = !fm && m_mode == ListeningMode::PersonalFm;
     m_restoredFm = false;
     if (!fm)
@@ -232,6 +259,8 @@ void ListeningSession::commit(PlaybackQueue candidate, TransportIntent intent, A
     // Captured old query must retire even when source-stop observers submit a newer intent.
     if (oldLyricRequest)
         m_backend.cancelMusic(oldLyricRequest);
+    if (oldPreloadLyricRequest)
+        m_backend.cancelMusic(oldPreloadLyricRequest);
     if (revision != m_revision)
         return;
     if (entry->program.value.isEmpty())
@@ -449,8 +478,6 @@ bool ListeningSession::stopPlayback(bool keepFmQueue)
         m_fmPending.reset();
     }
     m_preload.reset();
-    if (const auto request = std::exchange(m_preloadLyricRequest, 0))
-        m_backend.cancelMusic(request);
     cancelLyrics();
     if (revision != m_revision)
         return true;
@@ -626,8 +653,7 @@ void ListeningSession::setBiliSourcePermitted(bool permit)
         return;
     m_permitBiliSource = permit;
     m_preload.reset();
-    if (const auto id = std::exchange(m_preloadLyricRequest, 0))
-        m_backend.cancelMusic(id);
+    cancelPreloadLyrics();
     if (current())
         static_cast<void>(m_backend.preloadSong({}, m_quality, false));
     refreshPreload();
@@ -635,36 +661,96 @@ void ListeningSession::setBiliSourcePermitted(bool permit)
 
 void ListeningSession::requestLyrics()
 {
-    const auto entry = m_queue.current();
-    if (!entry || !entry->program.value.isEmpty() || !current() || m_terminalHandled ||
-        m_playback.state == PlaybackState::Failed ||
-        m_playback.state == PlaybackState::Empty || m_lyricsRequested ||
-        !m_backend.playbackSource(m_token.generation))
-        return;
-    m_lyricsRequested = true;
-    const auto revision = m_revision;
-    const auto id = m_backend.playbackLyrics(m_token.generation);
-    if (revision != m_revision) {
-        if (id)
-            m_backend.cancelMusic(id);
-        return;
-    }
-    m_lyricRequest = id;
-    m_lyricsState = id ? LyricsState::Loading : LyricsState::Failed;
-    emit lyricsChanged(m_lyricsState);
+    if (const auto selection = m_backend.playbackSource(m_token.generation))
+        sourceSelected(*selection);
 }
 
 void ListeningSession::sourceSelected(PlaybackSourceSelection selection)
 {
+    const auto selected = m_backend.playbackSource(selection.token.generation);
+    if (!current() || !selected || !sameSource(selection, *selected))
+        return;
+    const auto revision = m_revision;
+    const QPointer<ListeningSession> guard(this);
+    auto* backend = &m_backend; // facade outlives this session, including reentrant deletion
     if (selection.token == m_token) {
-        requestLyrics();
+        const auto entry = m_queue.current();
+        if (!entry || !entry->program.value.isEmpty() || selection.song != m_playback.song ||
+            m_terminalHandled || m_playback.state == PlaybackState::Failed ||
+            m_playback.state == PlaybackState::Empty ||
+            (m_lyricSource && sameSource(*m_lyricSource, selection)))
+            return;
+        const bool replacing = m_lyricSource.has_value();
+        const auto old = std::exchange(m_lyricRequest, 0);
+        m_lyricSource = selection;
+        const auto sourceRevision = ++m_lyricSourceRevision;
+        m_lyrics.reset();
+        m_timeline.clear();
+        const bool hadCursors = m_cursors != LyricCursors{};
+        m_cursors = {};
+        m_lyricsState = LyricsState::Loading;
+        const auto valid = [&] {
+            return guard && m_revision == revision && m_lyricSourceRevision == sourceRevision &&
+                   current();
+        };
+        if (old)
+            backend->cancelMusic(old); // request id was retired before cancellation can reenter
+        if (!valid())
+            return;
+        if (replacing)
+            static_cast<void>(backend->setPlaybackVocals(selection.token.generation, {}));
+        if (!valid())
+            return;
+        emit lyricsChanged(m_lyricsState); // invalidate the published document before querying
+        if (!valid())
+            return;
+        if (hadCursors)
+            emit cursorsChanged(m_cursors);
+        if (!valid())
+            return;
+        const auto id = backend->playbackLyrics(selection.token.generation);
+        if (!valid()) {
+            if (id)
+                backend->cancelMusic(id);
+            return;
+        }
+        m_lyricRequest = id;
+        if (!id) {
+            m_lyricsState = LyricsState::Failed;
+            emit lyricsChanged(m_lyricsState);
+        }
         return;
     }
     const auto entry = m_preload ? m_preload->queue.current() : std::nullopt;
-    if (m_preload && (m_preload->fromFm || (entry && entry->program.value.isEmpty())) &&
-        selection.token.generation == m_preload->generation &&
-        selection.token.session == m_token.session && !m_preloadLyricRequest)
-        m_preloadLyricRequest = m_backend.playbackLyrics(m_preload->generation);
+    if (!m_preload || (!m_preload->fromFm && (!entry || !entry->program.value.isEmpty())) ||
+        selection.token.generation != m_preload->generation ||
+        selection.token.session != m_token.session || selection.song != m_preload->song ||
+        (m_preload->lyricSource && sameSource(*m_preload->lyricSource, selection)))
+        return;
+    const bool replacing = m_preload->lyricSource.has_value();
+    const auto old = std::exchange(m_preloadLyricRequest, 0);
+    m_preload->lyricSource = selection;
+    const auto sourceRevision = ++m_preload->lyricSourceRevision;
+    const auto valid = [&] {
+        return guard && m_revision == revision && current() && m_preload &&
+               m_preload->generation == selection.token.generation &&
+               m_preload->lyricSourceRevision == sourceRevision;
+    };
+    if (old)
+        backend->cancelMusic(old);
+    if (!valid())
+        return;
+    if (replacing)
+        static_cast<void>(backend->setPlaybackVocals(selection.token.generation, {}));
+    if (!valid())
+        return;
+    const auto id = backend->playbackLyrics(selection.token.generation);
+    if (!valid()) {
+        if (id)
+            backend->cancelMusic(id);
+        return;
+    }
+    m_preloadLyricRequest = id;
 }
 
 void ListeningSession::refreshCursors()
@@ -729,7 +815,7 @@ void ListeningSession::receive(PlaybackSnapshot snapshot)
             m_failureStreak = qMin(m_failureStreak + 1, 10);
             m_autoVisited.insert(m_queue.snapshot().active);
         }
-        if (m_lyricsState == LyricsState::Loading && !m_lyricsRequested)
+        if (m_lyricsState == LyricsState::Loading && !m_lyricSource)
             m_lyricsState = LyricsState::Failed;
     }
     m_playback = snapshot;
@@ -808,8 +894,7 @@ void ListeningSession::refreshPreload()
     if (!entry) {
         if (m_preload) {
             m_preload.reset();
-            if (const auto id = std::exchange(m_preloadLyricRequest, 0))
-                m_backend.cancelMusic(id);
+            cancelPreloadLyrics();
             static_cast<void>(m_backend.preloadSong({}, m_quality));
         }
         return;
@@ -833,8 +918,7 @@ void ListeningSession::requestPreload(SongId song, QUuid entry, PlaybackQueue qu
     }
     m_preload = Preload{id, entry, song, std::move(queue), fromFm};
     // Its lyrics too: where it's sung, for the transition into it.
-    if (const auto old = std::exchange(m_preloadLyricRequest, 0))
-        m_backend.cancelMusic(old);
+    cancelPreloadLyrics();
     if (const auto selection = m_backend.playbackSource(id))
         sourceSelected(*selection);
 }

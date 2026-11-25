@@ -279,8 +279,7 @@ void ListeningSession::refreshFmPreload()
     if (supply.upcoming.isEmpty()) {
         if (m_preload) {
             m_preload.reset();
-            if (const auto id = std::exchange(m_preloadLyricRequest, 0))
-                m_backend.cancelMusic(id);
+            cancelPreloadLyrics();
             static_cast<void>(m_backend.preloadSong({}, m_quality));
         }
         return; // asked again when the supply refills

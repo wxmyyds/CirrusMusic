@@ -179,6 +179,12 @@ void Player::playSongs(const QStringList& keys, int index, int origin, const QSt
         m_source->playSongs(keys, index, PlayOrigin{origin, originId, originName});
 }
 
+void Player::playNow(const QString& key, bool voice)
+{
+    if (m_source && !key.isEmpty())
+        m_source->playNow(key, voice);
+}
+
 void Player::addSongs(const QStringList& keys, bool next, int origin, const QString& originId,
                       const QString& originName)
 {

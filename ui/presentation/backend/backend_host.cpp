@@ -6,6 +6,7 @@
 #include "application/playback/listening_session.h"
 #include "application/playback/together_session.h"
 #include "infrastructure/runtime/backend_runtime.h"
+#include "now_playing_export.h"
 
 #include <QDir>
 #include <QFile>
@@ -64,6 +65,7 @@ BackendHost::BackendHost(const Paths& paths, QObject* parent)
     auto& facade = m_runtime->facade();
     m_reporter = std::make_unique<application::ListeningReporter>(facade, m_runtime->listening());
     m_together = std::make_unique<application::TogetherSession>(facade, m_runtime->listening());
+    m_nowPlaying = std::make_unique<NowPlayingExport>(*m_runtime);
     connect(&facade, &application::BackendFacade::started, this,
             [](application::StartupError error) {
                 if (error == application::StartupError::None)
@@ -93,7 +95,8 @@ BackendHost::BackendHost(const Paths& paths, QObject* parent)
     });
 }
 
-BackendHost::~BackendHost() = default; // together and the reporter go first (declared last)
+// The export, together and the reporter go first (declared last).
+BackendHost::~BackendHost() = default;
 
 void BackendHost::start() { m_runtime->facade().start(); }
 
@@ -121,8 +124,9 @@ void BackendHost::shutdown(std::function<void()> done)
 
 void BackendHost::finish()
 {
+    // The now-playing socket and files are removed on their own thread before the app quits.
     if (auto done = std::exchange(m_done, {}))
-        done();
+        m_nowPlaying->close(std::move(done));
 }
 
 } // namespace cirrus::ui
