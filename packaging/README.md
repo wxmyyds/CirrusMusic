@@ -92,7 +92,7 @@ Qt Multimedia 与 Cirrus 解码器可能各有不同 SONAME 的 FFmpeg，部署�
 
 ## Windows 与 macOS
 
-Windows x86_64 使用 `windows-2022` 原生 MSVC，ARM64 使用 `windows-11-arm` 原生 MSVC；vcpkg 的目标与 host triplet 均匹配 CPU。主程序及部署 DLL 检查 PE 架构、运行依赖和必要运行库。安装器 `AppId` 保持一致，x64 与 ARM64 目录/文件名及最低系统要求分别生成。更新器根据应用构建架构选择对应安装器，仍验证 fork 下载地址和 GitHub SHA-256，不用另一个 CPU 的资产替代。
+Windows x86_64 使用 `windows-2022` 原生 MSVC，ARM64 使用 `windows-11-arm` 原生 MSVC；vcpkg 的目标与 host triplet 均匹配 CPU。MSVC CRT 来源固定为当前 `VCToolsRedistDir`、编译器目标 ABI 与工具集版本对应的目录；`runtime.py` 从主程序和全部插件的真实 DLL 导入闭包部署所需 CRT，逐一核对架构和来源，不复制整组候选文件，也不以构建机预装 CRT 满足包内依赖。主程序及部署 DLL 检查 PE 架构、运行依赖和必要运行库。安装器 `AppId` 保持一致，x64 与 ARM64 目录/文件名及最低系统要求分别生成。更新器根据应用构建架构选择对应安装器，仍验证 fork 下载地址和 GitHub SHA-256，不用另一个 CPU 的资产替代。
 
 Windows 安装器未作发行者签名。x64 目标为 Windows 10/11；ARM64 目标为 Windows 11 22H2 及更新版本。
 
