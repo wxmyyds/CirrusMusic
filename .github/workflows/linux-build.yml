@@ -53,7 +53,9 @@ jobs:
     runs-on: ${{ matrix.runner }}
     container:
       image: ${{ matrix.image }}
-      options: --user 0
+      # pacman applies Landlock before setting no_new_privs itself. Container
+      # root has no CAP_SYS_ADMIN, so set no_new_privs before bootstrap.
+      options: --user 0 --security-opt no-new-privileges
     timeout-minutes: 120
     defaults:
       run:

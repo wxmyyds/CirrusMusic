@@ -63,13 +63,13 @@ Linux 通用编译、部署、桌面资源和依赖安装直接放在 `packaging
 
 Arch ARM 镜像不是 Arch Linux ARM 官方发布镜像。当前固定 `base-devel-20261124.45339717499` 的 ARM64 manifest：`sha256:89dd0b1da3cab11ef9a0f12481794cf31fd2cb7377ced80aa2041d3a5cae757d`。更新镜像时应重新核对维护来源和原生架构。
 
-依赖安装统一由 `packaging/linux/install-build-deps.sh` 按发行版执行。每个构建 job 检查 `/etc/os-release` 与 `uname -m`，安装依赖后以无特权的 `cirrus-builder` 用户构建。
+依赖安装统一由 `packaging/linux/install-build-deps.sh` 按发行版执行。容器启动时设置 `no_new_privs`，使 pacman 能在没有 `CAP_SYS_ADMIN` 的容器中应用 Landlock。每个构建 job 检查 `/etc/os-release` 与 `uname -m`，安装依赖后以无特权的 `cirrus-builder` 用户构建。
 
 - **Arch**：对检出提交做 `git archive`，以 SHA-256 验证源码，渲染 `packaging/linux/arch/PKGBUILD.in` 后调用 `makepkg`。装到 `/usr`，不打包系统 Qt/FFmpeg。配方同时支持 `x86_64`、`aarch64`，检查包版本、实际架构、桌面资源和许可证。关闭 LTO 和额外 debug 包；依赖 Arch 滚动仓库，Qt 私有接口升级后需要重新构建。
 - **Debian**：装到 `/opt/cirrus`，自带 Qt/FFmpeg；桌面集成和文档放到 `/usr/share`，`/usr/bin/cirrus` 链接到主程序。`dpkg-shlibdeps` 从 Debian 包数据库生成外部 ABI 依赖，再添加证书、libsecret、图标主题依赖。目标是 Debian 13，不再声称兼容旧 Ubuntu 22.04 / Debian 12。
 - **Fedora**：同一应用安装布局，由 Fedora 的 `rpmbuild` 生成 RPM；保留外部库的自动 ABI 依赖，排除已随包部署的私有 SONAME 依赖，并禁止把私有库发布为全局 Provides。只产生一个对应原生架构的二进制 RPM。
 
-Debian/Fedora 部署后检查全部 ELF 架构和依赖，拒绝缺库以及指向 Qt SDK、依赖构建目录等路径的泄漏。只 strip 尚未去符号的文件。桌面文件与 AppStream 元数据在打包时验证。
+Debian/Fedora 部署后，从原生编译器定位系统 bzip2 库，核对架构和导出符号，将 Qt SDK 中的 bzip2 导入统一为该实际库的 SONAME，并验证最终解析路径。随后检查全部 ELF 架构和依赖，拒绝缺库以及指向 Qt SDK、依赖构建目录等路径的泄漏。只 strip 尚未去符号的文件。桌面文件与 AppStream 元数据在打包时验证。
 
 Arch 只保留 `packaging/linux/arch/` 的当前源码构建链路，旧上游 AUR 配方已移除。`packaging/linux/arch/cpkg/` 负责将同一份二进制产物接入 `arch-cloud-pkgs` 的统一 OCI 发布器，不在包仓库重新构建 Cirrus。
 

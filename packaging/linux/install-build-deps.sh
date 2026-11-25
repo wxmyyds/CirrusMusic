@@ -36,7 +36,7 @@ case "$distribution" in
             "${compiler[@]}" "${runtime[@]}" \
             make cmake ccache ninja-build nasm patchelf pkg-config file binutils dpkg-dev \
             git curl ca-certificates tar xz-utils gzip zstd python3 python3-venv python3-pip \
-            libssl-dev zlib1g-dev libzstd-dev libsecret-1-dev \
+            libssl-dev zlib1g-dev libzstd-dev libbz2-dev libsecret-1-dev \
             libgl-dev libegl-dev libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev \
             libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
             libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1 \
@@ -48,7 +48,7 @@ case "$distribution" in
         "${privilege[@]}" dnf install -y \
             gcc gcc-c++ make cmake ccache ninja-build nasm patchelf pkgconf-pkg-config file binutils \
             git /usr/bin/curl ca-certificates tar xz gzip zstd python3 python3-pip \
-            openssl-devel zlib-devel libzstd-devel libsecret-devel \
+            openssl-devel zlib-devel libzstd-devel bzip2-devel libsecret-devel \
             mesa-libGL-devel mesa-libEGL-devel mesa-libgbm libxkbcommon-devel libxkbcommon-x11 wayland-devel \
             libxcb xcb-util-cursor xcb-util-wm xcb-util-image xcb-util-keysyms xcb-util-renderutil \
             fontconfig dbus-libs dbus-daemon pulseaudio-libs gtk3 libXrandr libSM libICE cups-libs libxcrypt-compat \
