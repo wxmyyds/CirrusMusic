@@ -25,7 +25,7 @@ Linux 通用编译、部署、桌面资源和依赖安装直接放在 `packaging
 | `linux-build.yml` | 手动、可复用调用 | Arch、Debian、Fedora × x86_64、ARM64，矩阵展开为六个独立构建 job |
 | `windows-build.yml` | 手动、可复用调用 | x86_64、ARM64 两个独立构建 job，各输出 ZIP 和安装器 |
 | `macos-build.yml` | 手动、可复用调用 | ARM64、x86_64 两个独立构建 job，各输出 DMG |
-| `release.yml` | 手动选择 `ref`、`tag`、`publish` | 固定源码提交 → 并行运行三平台 CI 和十个原生构建目标 → 汇合校验完整产物清单和 SHA-256 → 发布 → 清理中转包 |
+| `release.yml` | 手动选择 `ref`、`tag`、`publish` | 固定源码提交 → 并行运行三平台 CI 和十个原生构建目标 → 汇合校验完整产物清单和 SHA-256 → 发布 |
 
 构建工作流没有 `package`、`format` 或平台开关；CI 不再承担打包任务。旧 Linux portable/AppImage 打包链路已移除。独立工作流的 `ref` 留空时使用所选工作流提交；Release 始终向 CI 和三个 build 工作流传入同一个完整提交 SHA。
 
@@ -110,6 +110,6 @@ macOS ARM64 使用 `macos-15`，x86_64 使用 `macos-15-intel`，均原生编译
 
 GHCR 首次创建包默认是 Private。首次正式发行后，需要包所有者将 Cirrus 包可见性设为 Public；工作流验证匿名访问，不能匿名拉取时明确失败，不会把私有上传报告为可安装。调整可见性后可重跑失败的发布 job，继续使用原运行的同一批构建产物。详见 `linux/arch/cpkg/README.md`。
 
-`release-manifest` artifact 保存版本、源码提交、资产清单和校验值，保留 7 天；测试报告保留 3 天。二进制 artifact 保留 1 天，重跑时只替换当前运行的同名产物。完整 Release 的校验和发布 dry-run 或正式发布全部成功后，独立清理 job 通过包仓库的统一脚本删除本次运行的 `cirrus-*` 中转包，保留清单和报告；失败或取消时不清理，便于在 1 天内诊断和重跑。
+`release-manifest` artifact 保存版本、源码提交、资产清单和校验值，保留 7 天；测试报告保留 3 天。二进制 artifact 保留 1 天，重跑时只替换当前运行的同名产物。完整 Release 和独立平台构建均不运行产物清理脚本；维护者按需手动删除旧 Actions 产物，清理时保留仍在运行或需要重跑验证的产物。
 
-独立平台构建不执行清理 job，安装包可在 1 天内下载。清理不会删除 GitHub Release 资产、GHCR 包或编译缓存；单次完整构建的短时产物峰值仍可能超过 500 MB。验证此工作流不等于完成各平台安装或桌面运行回归。
+安装包可在保留期内下载；GitHub Release 资产、GHCR 包和编译缓存不属于此次 Actions 产物手动清理范围。单次完整构建的短时产物峰值仍可能超过 500 MB。验证此工作流不等于完成各平台安装或桌面运行回归。

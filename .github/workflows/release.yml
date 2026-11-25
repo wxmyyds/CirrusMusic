@@ -219,23 +219,3 @@ jobs:
           gh release create "$TAG" --target "$SOURCE_COMMIT" --draft \
             --title "Cirrus $VERSION" --notes-file notes.md dist/*
           gh release edit "$TAG" --draft=false
-
-  cleanup:
-    name: Remove consumed build artifacts
-    needs: release
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      actions: write
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          repository: wxmyyds/arch-cloud-pkgs
-          ref: ${{ inputs.cpkg_ref }}
-          persist-credentials: false
-
-      - name: Delete verified intermediate packages
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash .github/scripts/cleanup-run-artifacts.sh cirrus-
