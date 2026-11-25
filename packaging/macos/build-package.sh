@@ -77,7 +77,7 @@ bad=0
 while IFS= read -r -d '' f; do
     description=$(file -b "$f")
     [[ "$description" == *Mach-O* ]] || continue
-    if ! lipo -verify_arch "$arch" "$f"; then
+    if ! lipo "$f" -verify_arch "$arch"; then
         echo "::error::$f does not contain $arch"
         bad=1
         continue

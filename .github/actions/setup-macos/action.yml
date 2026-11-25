@@ -62,7 +62,7 @@ runs:
         pkg_config="$(brew --prefix pkgconf)/bin/pkg-config"
         [[ -x "$pkg_config" ]]
         command -v ccache
-        lipo -verify_arch "$CIRRUS_MACOS_ARCH" "$QT_ROOT_DIR/lib/QtCore.framework/QtCore"
+        lipo "$QT_ROOT_DIR/lib/QtCore.framework/QtCore" -verify_arch "$CIRRUS_MACOS_ARCH"
         {
           echo "CIRRUS_CMAKE_PREFIX_PATH=$QT_ROOT_DIR;$DEPS;$openssl;$zstd"
           echo "CIRRUS_PKG_CONFIG_EXECUTABLE=$pkg_config"
@@ -123,5 +123,5 @@ runs:
             { echo "::error::$library is missing from $DEPS/lib"; exit 1; }
         done
         for library in "$DEPS"/lib/*.dylib; do
-          lipo -verify_arch "$CIRRUS_MACOS_ARCH" "$library"
+          lipo "$library" -verify_arch "$CIRRUS_MACOS_ARCH"
         done
