@@ -25,7 +25,7 @@ Linux 通用编译、部署、桌面资源和依赖安装直接放在 `packaging
 | `linux-build.yml` | 手动、可复用调用 | Arch、Debian、Fedora × x86_64、ARM64，矩阵展开为六个独立构建 job |
 | `windows-build.yml` | 手动、可复用调用 | x86_64、ARM64 两个独立构建 job，各输出 ZIP 和安装器 |
 | `macos-build.yml` | 手动、可复用调用 | ARM64、x86_64 两个独立构建 job，各输出 DMG |
-| `release.yml` | 手动选择 `ref`、`tag`、`publish` | 固定源码提交 → 并行运行三平台 CI 和十个原生构建目标 → 汇合校验完整产物清单和 SHA-256 → 发布 |
+| `release.yml` | 手动选择 `ref`、`tag`、`publish` | 检查版本、Tag 和 Changelog 并固定源码提交 → CI 测试 → 并行构建三平台十个原生目标 → 汇合校验完整产物清单和 SHA-256 → 发布 |
 
 构建工作流没有 `package`、`format` 或平台开关；CI 不再承担打包任务。旧 Linux portable/AppImage 打包链路已移除。独立工作流的 `ref` 留空时使用所选工作流提交；Release 始终向 CI 和三个 build 工作流传入同一个完整提交 SHA。
 
@@ -103,10 +103,10 @@ macOS ARM64 使用 `macos-15`，x86_64 使用 `macos-15-intel`，均原生编译
 1. 先合入配套 `arch-cloud-pkgs` 更新（标准后缀、Cirrus 目录、双架构 OCI 读取和统一发布器），再发布 Cirrus。其 `main` 是正式 cpkg 发布器来源。
 2. 在待发布源码中更新版本和对应 CHANGELOG 章节，提交并推送；来源必须包含本套构建工作流和脚本。
 3. 在 Actions 运行 **Release**，填写来源 `ref`、匹配的 `tag` 和 `cpkg_ref`（默认 `main`）。`publish=false` 可用包仓库验证分支/提交，验证同一批真实包及 OCI 元数据，不写入 GHCR 或 GitHub Release。验证运行按工作流提交隔离；正式发布始终按 tag 串行。
-4. `publish=true` 仅接受 `cpkg_ref=main`。CI 与六个 Linux、两个 Windows、两个 macOS 构建目标按同一个完整源码 SHA 并行验证；最终发布 job 同时依赖 CI 和全部构建成功。任一测试或构建失败，发布 job 不运行。
+4. `publish=true` 仅接受 `cpkg_ref=main`。`check` 检查发布版本、Tag 和非空 Changelog 后，CI 按锁定的完整源码 SHA 运行三平台测试；只有 CI 全部通过，才并行启动六个 Linux、两个 Windows、两个 macOS 构建目标。最终发布 job 等待三个平台全部构建成功；任一检查、测试或构建失败，发布 job 不运行。
 5. 发布 job 精确核对十组 artifact、十二个二进制包和一份库源码，不接受遗漏、额外文件、空文件或重名；生成 `BUILD-METADATA.json` 与 `SHA256SUMS.txt`。
 6. 同一批 Arch 包由 `packaging/linux/arch/cpkg/publish.sh` 交给包仓库的统一发布器，形成 `ghcr.io/wxmyyds/cirrus` 双架构 OCI index；cpkg 按本机架构取包。
-7. 若目标标签已经存在，必须仍指向选定的源码提交。所有资产先上传到草稿，完整上传成功后才正式发布；新标签指向锁定的源码提交。标签 push 不再自动触发 Release。
+7. 若目标标签已经存在，必须仍指向选定的源码提交；正式发布包前保留一次指向校验，避免构建期间的 Tag 变化影响发布。所有资产先上传到草稿，完整上传成功后才正式发布；新标签指向锁定的源码提交。标签 push 不再自动触发 Release。
 
 GHCR 首次创建包默认是 Private。首次正式发行后，需要包所有者将 Cirrus 包可见性设为 Public；工作流验证匿名访问，不能匿名拉取时明确失败，不会把私有上传报告为可安装。调整可见性后可重跑失败的发布 job，继续使用原运行的同一批构建产物。详见 `linux/arch/cpkg/README.md`。
 
