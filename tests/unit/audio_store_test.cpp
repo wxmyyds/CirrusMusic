@@ -33,7 +33,8 @@ MediaSource source(const QByteArray& body, bool withMd5 = true, const char* name
     return s;
 }
 // A Bilibili stream-addressed source: no digest, a stream name, its CDN, its headers.
-MediaSource biliSource(const QByteArray& body, const QString& key = QStringLiteral("bili-auto-BV1-1-id-30280"))
+MediaSource biliSource(const QByteArray& body,
+                       const QString& key = QStringLiteral("bili-auto-BV1-1-id-30280"))
 {
     MediaSource s{QUrl(QStringLiteral("https://upos-sz-mirrorcos.bilivideo.com/a.m4s")), "hires",
                   "aac", body.size(), QDeadlineTimer(60000)};
@@ -421,8 +422,14 @@ class AudioStoreTest : public QObject
         server.blockBytes = 1024;
         auto s = store(server);
         auto stream = s->open(source(server.body));
-        auto read = readAsync(stream, Chunk * 2, 100);
-        QTest::qWait(100);
+        // The downloader may start directly at the seek position. Request more
+        // than the first block so the read must still wait for further bytes.
+        auto read = readAsync(stream, Chunk * 2, 4 * 1024);
+        const QByteArray there = "bytes=" + QByteArray::number(Chunk * 2) + '-';
+        QTRY_VERIFY_WITH_TIMEOUT(
+            std::any_of(server.ranges.cbegin(), server.ranges.cend(),
+                        [&](const auto& range) { return range.startsWith(there); }),
+            1000);
         QVERIFY(!ready(read));
         stream->cancel();
         QTRY_VERIFY_WITH_TIMEOUT(ready(read), 1000);

@@ -12,6 +12,9 @@
 #include <QtTest>
 
 #include <csignal>
+#ifdef Q_OS_WIN
+#include "infrastructure/storage/private_files.h"
+#endif
 #ifdef Q_OS_LINUX
 #include <sys/wait.h>
 #include <unistd.h>
@@ -168,10 +171,15 @@ class LoggingTest : public QObject
         const QString all = lines.join(u'\n');
         QVERIFY(!all.contains("secret"));
         QVERIFY(!all.contains("hidden by default"));
+#ifdef Q_OS_WIN
+        QVERIFY2(storage::isPrivateDirectory(dir.filePath("logs")), storage::lastRefusal().reason);
+        QVERIFY2(storage::isPrivateFileOrAbsent(file), storage::lastRefusal().reason);
+#else
         QCOMPARE(QFileInfo(dir.filePath("logs")).permissions() & QFileDevice::ReadOther,
                  QFileDevice::Permissions{});
         QCOMPARE(QFileInfo(file).permissions() & (QFileDevice::ReadGroup | QFileDevice::ReadOther),
                  QFileDevice::Permissions{});
+#endif
     }
 
     void optionalFieldsAndDurations()

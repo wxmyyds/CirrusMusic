@@ -1,5 +1,5 @@
-# Manually select the source ref and version tag. Test first, then build all
-# platforms in parallel; publish only after the complete asset set is verified.
+# Manually select the source ref and version tag. Test and build the same SHA
+# in parallel; publish only after every test, build and asset check succeeds.
 name: Release
 
 on:
@@ -79,28 +79,28 @@ jobs:
 
   linux:
     name: Linux packages
-    needs: [check, ci]
+    needs: check
     uses: ./.github/workflows/linux-build.yml
     with:
       ref: ${{ needs.check.outputs.commit }}
 
   windows:
     name: Windows packages
-    needs: [check, ci]
+    needs: check
     uses: ./.github/workflows/windows-build.yml
     with:
       ref: ${{ needs.check.outputs.commit }}
 
   macos:
     name: macOS packages
-    needs: [check, ci]
+    needs: check
     uses: ./.github/workflows/macos-build.yml
     with:
       ref: ${{ needs.check.outputs.commit }}
 
   release:
     name: Verify assets and publish
-    needs: [check, linux, windows, macos]
+    needs: [check, ci, linux, windows, macos]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

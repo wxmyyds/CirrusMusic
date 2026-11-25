@@ -32,7 +32,7 @@ Which libraries a package carries:
   zlib, zstd and the Microsoft Visual C++ runtime; the macOS dmg also carries OpenSSL and
   zstd, and uses the system's zlib. On Linux, OpenSSL, zlib, zstd and libsecret come from the
   system.
-- **Native Arch packages and AUR/source builds** use the distribution's libraries.
+- **Native Arch packages** use the distribution's libraries.
 
 ## Sources
 

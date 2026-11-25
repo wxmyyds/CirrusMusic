@@ -103,7 +103,7 @@ macOS ARM64 使用 `macos-15`，x86_64 使用 `macos-15-intel`，均原生编译
 1. 先合入配套 `arch-cloud-pkgs` 更新（标准后缀、Cirrus 目录、双架构 OCI 读取和统一发布器），再发布 Cirrus。其 `main` 是正式 cpkg 发布器来源。
 2. 在待发布源码中更新版本和对应 CHANGELOG 章节，提交并推送；来源必须包含本套构建工作流和脚本。
 3. 在 Actions 运行 **Release**，填写来源 `ref`、匹配的 `tag` 和 `cpkg_ref`（默认 `main`）。`publish=false` 可用包仓库验证分支/提交，验证同一批真实包及 OCI 元数据，不写入 GHCR 或 GitHub Release。
-4. `publish=true` 仅接受 `cpkg_ref=main`；同样先测试，再并行构建六个 Linux、两个 Windows、两个 macOS 目标。任一测试或构建失败，发布 job 不运行。
+4. `publish=true` 仅接受 `cpkg_ref=main`。CI 与六个 Linux、两个 Windows、两个 macOS 构建目标按同一个完整源码 SHA 并行验证；最终发布 job 同时依赖 CI 和全部构建成功。任一测试或构建失败，发布 job 不运行。
 5. 发布 job 精确核对十组 artifact、十二个二进制包和一份库源码，不接受遗漏、额外文件、空文件或重名；生成 `BUILD-METADATA.json` 与 `SHA256SUMS.txt`。
 6. 同一批 Arch 包由 `packaging/linux/arch/cpkg/publish.sh` 交给包仓库的统一发布器，形成 `ghcr.io/wxmyyds/cirrus` 双架构 OCI index；cpkg 按本机架构取包。
 7. 若目标标签已经存在，必须仍指向选定的源码提交。所有资产先上传到草稿，完整上传成功后才正式发布；新标签指向锁定的源码提交。标签 push 不再自动触发 Release。
