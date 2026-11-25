@@ -550,7 +550,10 @@ void BackendRuntimeTest::biliLyricsAndCookieThroughThread()
             {socketRoot.path(), "com.guang233.Cirrus", QUuid(discovery["instanceId"].toString())},
             error);
         QVERIFY(client);
-        QTRY_COMPARE(client->advance(), LinuxObservationClientState::Verified);
+        QTRY_VERIFY(client->advance() == LinuxObservationClientState::Verified ||
+                    client->state() == LinuxObservationClientState::Failed);
+        QCOMPARE(client->error(), LinuxObservationClientError::None);
+        QCOMPARE(client->state(), LinuxObservationClientState::Verified);
         const auto descriptor = client->takeVerifiedDescriptor();
         QVERIFY(descriptor >= 0);
         ObservationPeer peer(descriptor);

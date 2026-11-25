@@ -6,6 +6,7 @@
 #include <QJsonDocument>
 #include <QTemporaryDir>
 #include <QtTest>
+#include <cerrno>
 #include <cstring>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -89,11 +90,13 @@ struct Fixture {
     domain::PlaybackObservation value = test::observationValue();
     domain::PlaybackLyricDocument doc = test::observationDocument();
     LinuxObservationIo io{source, wake};
-    Fixture()
+    explicit Fixture(bool published = true)
     {
         value.sequence = 1;
-        source->beginView(value.binding);
-        source->publish(value, std::make_shared<const domain::PlaybackLyricDocument>(doc));
+        if (published) {
+            source->beginView(value.binding);
+            source->publish(value, std::make_shared<const domain::PlaybackLyricDocument>(doc));
+        }
     }
     LinuxEndpointError start()
     {
@@ -117,6 +120,42 @@ class LinuxObservationIoTest final : public QObject
         const auto socket = f.socket();
         f.io.stop();
         QVERIFY(!QFileInfo::exists(socket));
+    }
+    void connectionBeforeFirstViewSurvivesPublication()
+    {
+        Fixture f(false);
+        f.source->retire({});
+        QCOMPARE(f.start(), LinuxEndpointError::None);
+        Peer p;
+        QVERIFY(p.connectTo(f.socket()));
+        QVERIFY(p.send(request("h", "hello")));
+        // Drive the I/O turn while the owner has deliberately published no view.
+        QTRY_VERIFY(f.io.statistics().turns > 0);
+        char pending;
+        const auto peek = ::recv(p.fd, &pending, 1, MSG_DONTWAIT | MSG_PEEK);
+        const auto pendingError = errno;
+        QCOMPARE(peek, ssize_t(-1));
+        QVERIFY(pendingError == EAGAIN || pendingError == EWOULDBLOCK);
+        QCOMPARE(f.io.statistics().currentClients, 0);
+        QVERIFY(f.source->beginView(f.value.binding));
+        QVERIFY(f.source->publish(f.value,
+                                  std::make_shared<const domain::PlaybackLyricDocument>(f.doc)));
+        QVERIFY(f.wake->request());
+        f.io.wake();
+        QByteArray body;
+        QTRY_VERIFY(!(body = p.next()).isEmpty());
+        const auto hello = QJsonDocument::fromJson(body).object();
+        QVERIFY(hello["ok"].toBool());
+        QCOMPARE(hello["id"].toString(), QString("h"));
+        QCOMPARE(hello["instanceId"].toString(),
+                 f.value.binding.instanceId.toString(QUuid::WithoutBraces));
+        p.consume();
+        QVERIFY(p.send(request("s", "getSnapshot")));
+        QTRY_VERIFY(!(body = p.next()).isEmpty());
+        const auto response = QJsonDocument::fromJson(body).object();
+        QVERIFY(response["ok"].toBool());
+        QCOMPARE(response["snapshot"].toObject()["instanceId"].toString(),
+                 f.value.binding.instanceId.toString(QUuid::WithoutBraces));
     }
     void helloSnapshotSliceAndBaseline()
     {

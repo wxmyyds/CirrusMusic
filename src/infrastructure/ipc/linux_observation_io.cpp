@@ -168,8 +168,12 @@ class LinuxObservationIo::Impl
         }
         engine.pump(now()); // <=128 structural records, <=1 request/client
         collect();
+        // The endpoint can be discovered before the owner publishes its first view.
+        // Keep those peers in the bounded listen backlog until a coherent view exists;
+        // opening against a retired mailbox would immediately discard their handshake.
         // <=1 accept/syscall per turn, including overload. Never spin accept to EAGAIN.
-        const int fd = endpoint->acceptSameUser();
+        const bool canAccept = latest.has_value();
+        const int fd = canAccept ? endpoint->acceptSameUser() : -1;
         if (fd >= 0) {
             stats.maximumAcceptsPerTurn = 1;
             auto slot =
@@ -251,7 +255,7 @@ class LinuxObservationIo::Impl
             }
         collect();
         if (listener)
-            listener->setEnabled(true);
+            listener->setEnabled(canAccept);
         if (again)
             schedule();
     }

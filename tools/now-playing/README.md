@@ -67,13 +67,13 @@ $XDG_RUNTIME_DIR/com.guang233.Cirrus/          0700
 
 | 方法 | 字段 | 回复 |
 |---|---|---|
-| `hello` | — | `instanceId`、`methods`、`tracks`（六轨的名字）、`limits`。**第一条请求必须是它**，5 秒内不发会被断开 |
+| `hello` | — | `instanceId`、`methods`、`tracks`（六轨的名字）、`limits`。**第一条请求必须是它**，服务端接收连接后 5 秒内不发会被断开 |
 | `getSnapshot` | — | `snapshot`：当前的完整快照 |
 | `subscribe` | `topics`：`snapshot`、`lyrics`、`cursor` 中的 1–3 个 | `topics`、`snapshot`；之后有变化时收到事件 |
 | `unsubscribe` | — | 没有别的字段，之后不再收到事件 |
 | `getLyricsSlice` | `instanceId`、`viewEpoch`、`trackId`、`lyricsRevision`（都抄自快照）、`track`、`fromLine`、`maxLines`（1–128） | 这一轨从 `fromLine` 起的歌词行 |
 
-- Cirrus 刚启动、还没准备好时，`hello` 会回复 `NotReady`，过一会儿重新连接即可。
+- 发现清单可先于首个有效快照出现。有效视图尚未就绪时，连接暂留内核有界监听队列，待就绪后再被接收并处理 `hello`。服务端的 5 秒握手期限从接收连接（`accept`）起算；客户端也应独立限制整个连接与握手过程的等待时间。
 - 事件：
   - 每个事件都带一份完整快照，不是增量。几次变化可能合成一个事件，所以 `sequence` 会跳号。
   - 播放时进度最多每秒推 4 次；换歌、暂停、跳转、歌词变化会立刻推。
