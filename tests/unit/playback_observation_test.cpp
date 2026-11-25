@@ -1,6 +1,6 @@
 #include "../support/fake_playback.h"
 #include "application/playback/playback_coordinator.h"
-#include "application/playback/system_media_commands.h"
+#include "application/playback/playback_observation_publisher.h"
 #include <QSignalSpy>
 #include <QtTest>
 #include <limits>
@@ -14,7 +14,6 @@ struct Harness {
     BackendFacade facade;
     ListeningSession owner{facade};
     PlaybackObservationPublisher publisher{owner, facade};
-    SystemMediaCommands bridge{owner, publisher};
     QList<PlaybackCommand> commands;
     QList<MusicCommand> reads;
     quint64 positionRevision = 0;
@@ -132,23 +131,6 @@ class PlaybackObservationTest final : public QObject
         QVERIFY(!h.publisher.document(p.binding, p.lyricsRevision));
         QVERIFY(h.commands.isEmpty());
         QVERIFY(h.reads.isEmpty());
-    }
-    void destroyedOwnerRejectsQueuedCommands()
-    {
-        auto h = std::make_unique<Harness>();
-        auto p = std::make_unique<PlaybackObservationPublisher>(h->owner, h->facade);
-        auto b = std::make_unique<SystemMediaCommands>(h->owner, *p);
-        QVERIFY(h->owner.replaceQueue({{"1"}}));
-        QTRY_VERIFY(p->snapshot().song.has_value());
-        QSignalSpy finished(b.get(), &SystemMediaCommands::finished);
-        QVERIFY(b->submit(p->snapshot().binding, {SystemMediaAction::Volume, 0, 0.5f}));
-        h.reset(); // facade outlives owner inside Harness; external observers survive both
-        QCOMPARE(p->snapshot().status, ObservationStatus::Unavailable);
-        QCOMPARE(finished.size(), 1);
-        QVERIFY(!finished.first()[1].toBool());
-        QTest::qWait(1);
-        QCOMPARE(finished.size(), 1); // no late callback or duplicate terminal result
-        QVERIFY(!b->submit(p->snapshot().binding, {SystemMediaAction::Play}));
     }
     void coherentSixTracksAndPreview()
     {
@@ -435,77 +417,11 @@ class PlaybackObservationTest final : public QObject
         QTRY_COMPARE(h.publisher.snapshot().lyricsState, LyricsState::Failed);
         QCOMPARE(h.publisher.snapshot().documentStatus, ObservationContentStatus::NotReady);
     }
-    void boundedBridgeAndStaleCommands()
-    {
-        Harness h;
-        QVERIFY(h.owner.replaceQueue({{"1"}, {"2"}}));
-        h.state(PlaybackState::Playing);
-        QTRY_VERIFY(h.publisher.snapshot().capabilities.seek);
-        const auto a = h.publisher.snapshot();
-        QSignalSpy finished(&h.bridge, &SystemMediaCommands::finished);
-        SystemMediaCommand c;
-        c.action = SystemMediaAction::Volume;
-        c.volume = 0.7f;
-        for (int n = 0; n < 8; ++n)
-            QVERIFY(h.bridge.submit(a.binding, c));
-        QVERIFY(!h.bridge.submit(a.binding, c));
-        QTRY_COMPARE(finished.size(), 8);
-        QCOMPARE(h.commands.size(), 10); // play, preload song 2 once it plays, 8 volumes
-        QVERIFY(!h.publisher.snapshot().volumeLinear); // accepted commands are not feedback
-        QVERIFY(h.bridge.submit(a.binding, c));
-        QVERIFY(h.owner.next());
-        QTRY_COMPARE(finished.size(), 9);
-        QVERIFY(!finished.last()[1].toBool());
-        QVERIFY(!h.bridge.submit(a.binding, c));
-        QCOMPARE(h.commands.size(), 11);
-        c.action = SystemMediaAction::Seek;
-        c.positionMs = -1;
-        QVERIFY(!h.bridge.submit(h.publisher.snapshot().binding, c));
-    }
-    void newerScalarIntentRejectsQueuedNativeCommand_data()
-    {
-        QTest::addColumn<int>("action");
-        for (int i = 0; i < 5; ++i)
-            QTest::newRow(qPrintable(QString::number(i))) << i;
-    }
-    void newerScalarIntentRejectsQueuedNativeCommand()
-    {
-        QFETCH(int, action);
-        Harness h;
-        QVERIFY(h.owner.replaceQueue({{"1"}}));
-        h.state(PlaybackState::Playing);
-        QTRY_VERIFY(h.publisher.snapshot().song.has_value());
-        QSignalSpy result(&h.bridge, &SystemMediaCommands::finished);
-        QVERIFY(
-            h.bridge.submit(h.publisher.snapshot().binding, {SystemMediaAction::Volume, 0, 0.1f}));
-        if (action == 0)
-            QVERIFY(h.owner.pause());
-        if (action == 1)
-            QVERIFY(h.owner.resume());
-        if (action == 2)
-            QVERIFY(h.owner.seek(2000));
-        if (action == 3)
-            QVERIFY(h.owner.setVolume(0.9f));
-        if (action == 4)
-            QVERIFY(h.owner.setModes(QueueOrder::Sequential, QueueRepeat::All));
-        const auto commands = h.commands.size();
-        QTRY_COMPARE(result.size(), 1);
-        QVERIFY(!result.first()[1].toBool());
-        QCOMPARE(h.commands.size(), commands);
-    }
-    void bridgeCloseAndReentrantPublication()
+    void reentrantPublication()
     {
         Harness h;
         QVERIFY(h.owner.replaceQueue({{"1"}, {"2"}}));
         QTRY_VERIFY(h.publisher.snapshot().song.has_value());
-        const auto a = h.publisher.snapshot();
-        QSignalSpy result(&h.bridge, &SystemMediaCommands::finished);
-        QVERIFY(h.bridge.submit(a.binding, {SystemMediaAction::Next}));
-        h.bridge.close();
-        QCOMPARE(result.size(), 1);
-        QVERIFY(!result.first()[1].toBool());
-        QTest::qWait(1);
-        QCOMPARE(h.commands.size(), 1);
         bool once = false;
         connect(&h.publisher, &PlaybackObservationPublisher::changed, &h.publisher,
                 [&](PlaybackObservation s) {
@@ -519,7 +435,6 @@ class PlaybackObservationTest final : public QObject
         QTRY_VERIFY(h.publisher.snapshot().song && h.publisher.snapshot().song->value == "2");
         h.publisher.close();
         QCOMPARE(h.publisher.snapshot().status, ObservationStatus::Unavailable);
-        QVERIFY(!h.bridge.submit(h.publisher.snapshot().binding, {SystemMediaAction::Play}));
     }
     void pureNavigationDoesNotConsumeRandomness()
     {

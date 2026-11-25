@@ -79,6 +79,55 @@ class UpdateReleaseTest : public QObject
             !parseRelease("{\"tag_name\": \"v0.2.0\", \"html_url\": \"https://example.com/x\"}"));
     }
 
+    void findsTheWindowsInstaller()
+    {
+        const QByteArray head =
+            "{\"tag_name\": \"v0.5.0\", \"draft\": false, \"prerelease\": false,"
+            " \"html_url\": \"https://github.com/Guang233/CirrusMusic/releases/tag/v0.5.0\","
+            " \"assets\": [";
+        const QByteArray zip = "{\"name\": \"Cirrus-0.5.0-windows-x64.zip\", \"size\": 9,"
+                               " \"browser_download_url\": "
+                               "\"https://github.com/Guang233/CirrusMusic/releases/download/v0.5.0/"
+                               "Cirrus-0.5.0-windows-x64.zip\","
+                               " \"digest\": \"sha256:" +
+                               QByteArray(64, 'a') + "\"}";
+        const auto setup = [](const QByteArray& url, const QByteArray& digest, int size) {
+            return "{\"name\": \"Cirrus-0.5.0-windows-x64-setup.exe\", \"size\": " +
+                   QByteArray::number(size) + ", \"browser_download_url\": \"" + url +
+                   "\", \"digest\": \"" + digest + "\"}";
+        };
+        const QByteArray url = "https://github.com/Guang233/CirrusMusic/releases/download/v0.5.0/"
+                               "Cirrus-0.5.0-windows-x64-setup.exe";
+        const QByteArray digest = "sha256:" + QByteArray(62, '0') + "ff";
+
+        const auto release = parseRelease(head + zip + ", " + setup(url, digest, 1234) + "]}");
+        QVERIFY(release && release->installer);
+        QCOMPARE(release->installer->name, u"Cirrus-0.5.0-windows-x64-setup.exe"_s);
+        QCOMPARE(release->installer->url, QUrl(QString::fromLatin1(url)));
+        QCOMPARE(release->installer->size, 1234);
+        QCOMPARE(release->installer->sha256, QByteArray(31, '\0') + '\xff');
+
+        // The release is still one; only its installer is not taken.
+        const auto without = [&](const QByteArray& asset) {
+            const auto r = parseRelease(head + asset + "]}");
+            return r && !r->installer;
+        };
+        QVERIFY(without(zip));
+        QVERIFY(without(setup(url, "sha1:" + QByteArray(40, '0'), 1234)));
+        QVERIFY(without(setup(url, "sha256:" + QByteArray(64, 'A'), 1234)));
+        QVERIFY(without(setup(url, digest, 0)));
+        QVERIFY(without(setup("http://github.com/Guang233/CirrusMusic/releases/download/v0.5.0/"
+                              "Cirrus-0.5.0-windows-x64-setup.exe",
+                              digest, 1234)));
+        QVERIFY(without(setup("https://github.com/Guang233/CirrusMusic/releases/download/v0.4.0/"
+                              "Cirrus-0.5.0-windows-x64-setup.exe",
+                              digest, 1234)));
+        QVERIFY(without(setup("https://example.com/Guang233/CirrusMusic/releases/download/v0.5.0/"
+                              "Cirrus-0.5.0-windows-x64-setup.exe",
+                              digest, 1234)));
+        QVERIFY(without(setup(url + "?x=1", digest, 1234)));
+    }
+
     void writesTheNotesAsPlainText()
     {
         const QString markdown =

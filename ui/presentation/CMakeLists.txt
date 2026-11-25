@@ -36,6 +36,8 @@ qt_add_qml_module(cirrus_presentation
         sharing.cpp
         share_text.h
         share_text.cpp
+        app_link.h
+        app_link.cpp
         update_release.h
         update_release.cpp
         cover_provider.h

@@ -294,14 +294,14 @@ FocusScope {
 
         // The wheel browses (a MouseArea over the lines that takes nothing else: the
         // lines keep their hover and clicks). Touchpads scroll by pixels, wheels by
-        // notches of about two lines.
+        // notches of about two lines (times the user's Wheel.speed).
         MouseArea {
             anchors.fill: parent
             z: 1
             acceptedButtons: Qt.NoButton
             onWheel: wheel => {
                 const pixels = wheel.pixelDelta.y !== 0 && wheel.phase !== Qt.NoScrollPhase;
-                root.scrollBy(pixels ? wheel.pixelDelta.y : wheel.angleDelta.y / 120 * root.fontSize * 2.5);
+                root.scrollBy(pixels ? wheel.pixelDelta.y : wheel.angleDelta.y / 120 * root.fontSize * 2.5 * Wheel.speed);
             }
         }
         DragHandler {

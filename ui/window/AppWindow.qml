@@ -76,6 +76,7 @@ Window {
         id: windowFrame
         window: window
         clientSide: window.customFrame
+        dark: Theme.dark
     }
 
     Shadow {

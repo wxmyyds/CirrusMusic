@@ -186,6 +186,10 @@ elseif(WIN32)
         target_compile_definitions(appCirrusMusic PRIVATE CIRRUS_UI_SMTC)
         target_link_libraries(appCirrusMusic PRIVATE windowsapp runtimeobject)
     endif()
+    # Previous, play/pause and next under the taskbar thumbnail (taskbar_buttons.h).
+    target_sources(appCirrusMusic PRIVATE taskbar_buttons.h taskbar_buttons.cpp)
+    target_compile_definitions(appCirrusMusic PRIVATE CIRRUS_UI_TASKBAR)
+    target_link_libraries(appCirrusMusic PRIVATE ole32 uuid)
 elseif(APPLE)
     # The bundle's icon (Finder, Dock), made from the committed PNGs (tools/ui/make_icon.py)
     # with the system's iconutil. There is no 1024 px PNG, so no icon_512x512@2x.

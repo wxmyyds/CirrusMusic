@@ -58,6 +58,7 @@ class BackendCatalog : public QObject, public CatalogSource
     Request similarSongs(const QString& key, Reply<QList<SongInfo>> reply) override;
     Request similarPlaylists(const QString& key, Reply<QList<CollectionItem>> reply) override;
     Request podcast(const QString& key, Reply<PodcastInfo> reply) override;
+    Request voice(const QString& key, Reply<SongInfo> reply) override;
     Request podcastVoices(const QString& key, bool oldestFirst, PageRequest page,
                           Reply<ResultPage<SongInfo>> reply) override;
     Request dailySongs(Reply<QList<SongInfo>> reply) override;

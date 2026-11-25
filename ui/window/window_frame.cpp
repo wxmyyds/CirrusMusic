@@ -1,6 +1,7 @@
 #include "window_frame.h"
 
 #include <QGuiApplication>
+#include <QStyleHints>
 
 #ifdef Q_OS_WIN
 #ifndef NOMINMAX
@@ -37,6 +38,17 @@ QtWaylandClient::QWaylandWindow* waylandWindow(QWindow* window)
 
 WindowFrame::WindowFrame(QObject* parent) : QObject(parent)
 {
+#ifdef Q_OS_WIN
+    // Qt sets the title bar's dark mode from the system's scheme when that changes: set
+    // ours again after it.
+    connect(
+        QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged, this,
+        [this] {
+            m_appliedDark = -1;
+            update();
+        },
+        Qt::QueuedConnection);
+#endif
 #ifdef CIRRUS_HAVE_WAYLAND
     m_translucent = QGuiApplication::platformName().startsWith(QLatin1String("wayland"));
 #endif
@@ -52,8 +64,9 @@ void WindowFrame::setWindow(QQuickWindow* window)
     m_watchingSurface = false;
     m_appliedMargin = 0;
     m_appliedMask = {};
-    m_cornerWindow = 0;
+    m_dwmWindow = 0;
     m_appliedCorner = -1;
+    m_appliedDark = -1;
     m_window = window;
     if (window) {
         m_connections = {
@@ -96,6 +109,15 @@ void WindowFrame::setResizeMargin(int margin)
         return;
     m_resizeMargin = margin;
     emit resizeMarginChanged();
+    update();
+}
+
+void WindowFrame::setDark(bool dark)
+{
+    if (m_dark == dark)
+        return;
+    m_dark = dark;
+    emit darkChanged();
     update();
 }
 
@@ -178,31 +200,52 @@ void WindowFrame::update()
         m_appliedMask = mask;
     }
 
-    updateCorners();
+    updateDwm();
 }
 
 // Windows 11 rounds decorated windows by itself but not frameless ones: ask for it,
 // and for square corners while maximized or fullscreen (DWM keeps a frameless
 // window's rounding there, which would leave the desktop showing in the corners).
 // Windows 10 has no such attribute; the call fails there and the corners stay square.
-void WindowFrame::updateCorners()
+// The system's title bar is light unless asked to be dark, whatever the app's theme.
+// Both are set again on a new native window (a title bar mode change recreates it).
+void WindowFrame::updateDwm()
 {
 #ifdef Q_OS_WIN
     if (!m_window || !m_window->handle())
         return;
+    const WId id = m_window->winId();
+    if (id != m_dwmWindow) {
+        m_dwmWindow = id;
+        m_appliedCorner = m_appliedDark = -1;
+    }
+    const auto hwnd = reinterpret_cast<HWND>(id);
+
     // Values of DWM_WINDOW_CORNER_PREFERENCE (Windows 11 SDK).
     constexpr int kDefault = 0, kSquare = 1, kRound = 2;
     constexpr DWORD kCornerPreference = 33; // DWMWA_WINDOW_CORNER_PREFERENCE
     const bool filled =
         m_window->windowStates().testAnyFlags(Qt::WindowMaximized | Qt::WindowFullScreen);
     const int corner = !m_clientSide ? kDefault : filled ? kSquare : kRound;
-    const WId id = m_window->winId();
-    if (id == m_cornerWindow && corner == m_appliedCorner)
-        return;
-    m_cornerWindow = id;
-    m_appliedCorner = corner;
-    const DWORD value = corner;
-    DwmSetWindowAttribute(reinterpret_cast<HWND>(id), kCornerPreference, &value, sizeof(value));
+    if (corner != m_appliedCorner) {
+        m_appliedCorner = corner;
+        const DWORD value = corner;
+        DwmSetWindowAttribute(hwnd, kCornerPreference, &value, sizeof(value));
+    }
+
+    // DWMWA_USE_IMMERSIVE_DARK_MODE: 20 since Windows 10 2004, 19 before it (1809–1909).
+    constexpr DWORD kDarkMode = 20, kDarkModeBefore2004 = 19;
+    if (int(m_dark) != m_appliedDark) {
+        m_appliedDark = int(m_dark);
+        const BOOL value = m_dark ? TRUE : FALSE;
+        if (FAILED(DwmSetWindowAttribute(hwnd, kDarkMode, &value, sizeof(value))))
+            DwmSetWindowAttribute(hwnd, kDarkModeBefore2004, &value, sizeof(value));
+        // A shown system title bar repaints with it on the next frame change only.
+        if (!m_clientSide && m_window->isVisible())
+            SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
+                             SWP_FRAMECHANGED);
+    }
 #endif
 }
 

@@ -22,10 +22,11 @@ T.ScrollBar {
     minimumSize: orientation === Qt.Horizontal ? height / width : width / height
 
     // Qt's own wheel scrolling, 120 px a notch at the usual 3 lines (Qt's 72 px felt slow,
-    // 2026-11-14), and wheel notches stay notches on Qt 6.12 under Wayland (WheelFilter).
+    // 2026-11-14) times the user's Wheel.speed, and wheel notches stay notches on Qt 6.12
+    // under Wayland (WheelFilter).
     WheelFilter {
         target: control.orientation === Qt.Vertical ? control.parent as Flickable : null
-        scale: 5 / 3
+        scale: 5 / 3 * Wheel.speed
     }
 
     Spring {

@@ -8,10 +8,14 @@
 #include <QCoreApplication>
 #include <QDesktopServices>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QProcess>
+#include <QSettings>
+#include <QStandardPaths>
 
 #include <algorithm>
 
@@ -22,6 +26,8 @@ namespace
 constexpr qint64 kFirstDelayMs = 30 * 1000;         // after the start: not with its requests
 constexpr qint64 kIntervalMs = 24 * 60 * 60 * 1000; // between checks of its own
 constexpr int kTimeoutMs = 15 * 1000;
+// The installer's download is aborted after this long without a byte.
+constexpr int kDownloadStallMs = 30 * 1000;
 
 const char* outcomeName(UpdateCheck::Status status)
 {
@@ -67,6 +73,9 @@ void UpdateCheck::setPackage(const QString& package)
         const QDir dir(QCoreApplication::applicationDirPath());
         m_install = QFileInfo::exists(dir.filePath(QStringLiteral("unins000.exe"))) ? WindowsSetup
                                                                                     : WindowsZip;
+        // An installer left from an earlier update (or one never run) is not kept.
+        if (m_install == WindowsSetup)
+            removeDownloads();
     } else if (package == QLatin1String("macos")) {
         m_install = MacDmg;
     } else if (package == QLatin1String("aur")) {
@@ -125,6 +134,13 @@ void UpdateCheck::finish(QNetworkReply* reply, bool manual)
     Failure failure = NoFailure;
     if (httpStatus == 200) {
         if (const auto release = updates::parseRelease(reply->readAll())) {
+            // A download of another version is no longer wanted.
+            if (release->version != m_release.version && m_download != NoDownload) {
+                cancelDownload();
+                removeDownloads();
+                m_installer.clear();
+                setDownload(NoDownload);
+            }
             m_release = *release;
             status = updates::isNewer(release->version, QCoreApplication::applicationVersion())
                          ? Available
@@ -179,6 +195,181 @@ bool UpdateCheck::openRelease() const
         return false;
     log::info(lcUiNav, "update.open_release");
     return QDesktopServices::openUrl(m_release.page);
+}
+
+bool UpdateCheck::canInstall() const
+{
+    return m_install == WindowsSetup && m_release.installer &&
+           updates::isNewer(m_release.version, QCoreApplication::applicationVersion());
+}
+
+qreal UpdateCheck::downloadProgress() const
+{
+    if (!m_release.installer || m_release.installer->size <= 0)
+        return 0;
+    return std::clamp(qreal(m_received) / qreal(m_release.installer->size), qreal(0), qreal(1));
+}
+
+QString UpdateCheck::downloadFolder() const
+{
+    return QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) +
+           QStringLiteral("/Cirrus/updates");
+}
+
+void UpdateCheck::removeDownloads() const
+{
+    // Only the app's own folder for them, under its cache.
+    QDir folder(downloadFolder());
+    if (folder.exists())
+        folder.removeRecursively();
+}
+
+void UpdateCheck::setDownload(Download download)
+{
+    m_download = download;
+    emit downloadChanged();
+}
+
+void UpdateCheck::downloadInstaller()
+{
+    if (!canInstall() || m_downloadReply)
+        return;
+    const updates::Asset asset = *m_release.installer;
+    removeDownloads();
+    m_installer.clear();
+    const QString folder = downloadFolder();
+    delete m_downloadFile;
+    m_downloadFile = new QFile(folder + u'/' + asset.name + QStringLiteral(".part"), this);
+    if (!QDir().mkpath(folder) ||
+        !QFile::setPermissions(folder, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner) ||
+        !m_downloadFile->open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        log::warn(lcUi, "update.download_failed", {"reason", QStringLiteral("file")});
+        setDownload(DownloadFailed);
+        return;
+    }
+    m_downloadHash.reset();
+    m_received = 0;
+    m_downloadClock.start();
+    log::info(lcUi, "update.download",
+              {{"latest", m_release.version}, {"size_kb", asset.size / 1024}});
+
+    if (!m_network)
+        m_network = new QNetworkAccessManager(this);
+    // GitHub redirects to its file host; Qt follows https redirects only (its default policy).
+    QNetworkRequest request(asset.url);
+    request.setHeader(QNetworkRequest::UserAgentHeader,
+                      QStringLiteral("Cirrus/%1").arg(QCoreApplication::applicationVersion()));
+    request.setTransferTimeout(kDownloadStallMs);
+    m_downloadReply = m_network->get(request);
+    QNetworkReply* reply = m_downloadReply;
+    connect(reply, &QNetworkReply::readyRead, this, [this, reply, size = asset.size] {
+        const QByteArray data = reply->readAll();
+        m_received += data.size();
+        // Never more than GitHub said the file has.
+        if (m_received > size || m_downloadFile->write(data) != data.size()) {
+            reply->abort();
+            return;
+        }
+        m_downloadHash.addData(data);
+        emit downloadChanged();
+    });
+    connect(reply, &QNetworkReply::finished, this, [this, reply] { downloadFinished(reply); });
+    setDownload(Downloading);
+}
+
+void UpdateCheck::downloadFinished(QNetworkReply* reply)
+{
+    reply->deleteLater();
+    m_downloadReply.clear();
+    m_downloadFile->close();
+    if (!m_release.installer) {
+        QFile::remove(m_downloadFile->fileName());
+        return;
+    }
+    const updates::Asset asset = *m_release.installer;
+    const QString part = m_downloadFile->fileName();
+    const bool canceled = reply->error() == QNetworkReply::OperationCanceledError &&
+                          m_received <= asset.size && m_download == NoDownload;
+    QString reason;
+    if (reply->error() != QNetworkReply::NoError)
+        reason = m_received > asset.size ? QStringLiteral("size") : QStringLiteral("network");
+    else if (m_received != asset.size)
+        reason = QStringLiteral("size");
+    else if (m_downloadHash.result() != asset.sha256)
+        reason = QStringLiteral("digest");
+    if (!reason.isEmpty()) {
+        QFile::remove(part);
+        if (canceled) {
+            log::info(lcUi, "update.download_canceled");
+            return;
+        }
+        log::warn(lcUi, "update.download_failed",
+                  {{"reason", reason},
+                   {"received_kb", m_received / 1024},
+                   log::fieldIf(reply->error() != QNetworkReply::NoError, "err",
+                                log::message(reply->errorString()))});
+        setDownload(DownloadFailed);
+        return;
+    }
+    const QString path = QFileInfo(part).absolutePath() + u'/' + asset.name;
+    QFile::remove(path);
+    if (!QFile::rename(part, path)) {
+        QFile::remove(part);
+        log::warn(lcUi, "update.download_failed", {"reason", QStringLiteral("file")});
+        setDownload(DownloadFailed);
+        return;
+    }
+    m_installer = path;
+    log::info(lcUi, "update.downloaded", {"ms", m_downloadClock.elapsed()});
+    setDownload(Downloaded);
+    emit downloaded(noticed("update.downloaded", tr("Cirrus %1 已下载").arg(m_release.version)));
+}
+
+void UpdateCheck::cancelDownload()
+{
+    if (!m_downloadReply)
+        return;
+    // Downloading → nothing: finished() sees NoDownload and tells no failure.
+    setDownload(NoDownload);
+    m_downloadReply->abort();
+}
+
+void UpdateCheck::installUpdate()
+{
+    if (m_download != Downloaded || !QFileInfo::exists(m_installer))
+        return;
+    m_installerArmed = m_installer;
+    log::info(lcUi, "update.install_requested");
+    emit installRequested();
+}
+
+bool UpdateCheck::runInstaller()
+{
+    if (m_installerArmed.isEmpty())
+        return false;
+#ifdef Q_OS_WIN
+    // Silent (a progress window, no questions), closing what still holds the files, and
+    // opening Cirrus again when done (/RELAUNCH, packaging/windows/cirrus.iss). Where Cirrus
+    // is and for whom stay as they were: the uninstall key shows which install this is.
+    QStringList arguments{QStringLiteral("/SILENT"), QStringLiteral("/SUPPRESSMSGBOXES"),
+                          QStringLiteral("/NORESTART"), QStringLiteral("/CLOSEAPPLICATIONS"),
+                          QStringLiteral("/RELAUNCH=1")};
+    const QString key = QStringLiteral("\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\"
+                                       "{6E0C2B7A-5D3F-4C1E-9A8B-2F4D7C9E1A35}_is1");
+    const QString location = QStringLiteral("InstallLocation");
+    if (QSettings(QStringLiteral("HKEY_CURRENT_USER") + key, QSettings::NativeFormat)
+            .contains(location))
+        arguments << QStringLiteral("/CURRENTUSER");
+    else if (QSettings(QStringLiteral("HKEY_LOCAL_MACHINE") + key, QSettings::Registry64Format)
+                 .contains(location))
+        arguments << QStringLiteral("/ALLUSERS");
+    const bool started = QProcess::startDetached(m_installerArmed, arguments);
+    log::info(lcUi, "update.installer_started", {{"ok", started}, {"args", arguments.join(u' ')}});
+    return started;
+#else
+    log::warn(lcUi, "update.installer_unsupported");
+    return false;
+#endif
 }
 
 } // namespace cirrus::ui

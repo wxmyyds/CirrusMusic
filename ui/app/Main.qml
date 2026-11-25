@@ -62,6 +62,11 @@ AppWindow {
         property: "variant"
         value: App.settings.variant
     }
+    Binding {
+        target: Wheel
+        property: "speed"
+        value: App.settings.wheelSpeed
+    }
     // The playing song's cover: the "follow the cover" seed and the player's colors.
     Binding {
         target: Theme
@@ -260,6 +265,14 @@ AppWindow {
                 player.notifyAction(message, qsTr("查看"), open);
             else
                 shell.notifyAction(message, qsTr("查看"), open);
+        }
+        // The Windows installer is downloaded and checked (update-check.md §9).
+        function onDownloaded(message: string) {
+            const install = () => App.updates.installUpdate();
+            if (player.opened)
+                player.notifyAction(message, qsTr("安装并重启"), install);
+            else
+                shell.notifyAction(message, qsTr("安装并重启"), install);
         }
     }
     UpdateDialog {

@@ -1,4 +1,7 @@
 #include "app.h"
+#include "app_link.h"
+#include "logging/log.h"
+#include "notice.h"
 
 #include "app_settings.h"
 #include "cache_status.h"
@@ -72,6 +75,34 @@ App* App::create(QQmlEngine*, QJSEngine*)
     Q_ASSERT_X(g_instance, "App::create", "call App::install() before loading QML");
     QJSEngine::setObjectOwnership(g_instance, QJSEngine::CppOwnership);
     return g_instance;
+}
+
+void App::openLink(const QString& url)
+{
+    const auto request = applink::parse(url);
+    log::info(lcUi, "link.open",
+              {{"read", request.has_value()},
+               log::fieldIf(request.has_value(), "target", request ? int(request->target) : -1),
+               log::fieldIf(request.has_value(), "play", request && request->play)});
+    if (!request) {
+        emit linkRequested(LinkUnsupported, {});
+        return;
+    }
+    if (request->target == applink::Target::Song && request->play) {
+        m_player->playNow(request->id, false);
+    } else if (request->target == applink::Target::Voice) {
+        // Read first: a voice plays its track (podcast-playback.md).
+        const QString key = request->id;
+        m_linkVoice = catalog()->voice(key, [this, key](const Outcome<SongInfo>& outcome) {
+            m_linkVoice.release();
+            if (outcome.value && !outcome.value->trackKey.isEmpty())
+                m_player->playNow(key, true);
+            else
+                emit notice(noticed("link.voice_unplayable", tr("这期声音播放不了")));
+        });
+    } else {
+        emit linkRequested(int(request->target), request->id);
+    }
 }
 
 void App::copyText(const QString& text)

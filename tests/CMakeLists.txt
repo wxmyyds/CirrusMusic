@@ -460,3 +460,9 @@ qt_add_executable(tst_share unit/share_test.cpp ${PROJECT_SOURCE_DIR}/ui/present
 target_include_directories(tst_share PRIVATE ${PROJECT_SOURCE_DIR}/ui/presentation)
 target_link_libraries(tst_share PRIVATE Qt6::Test Qt6::Core)
 add_test(NAME share COMMAND tst_share)
+
+# The NetEase web's open-in-client links (docs/ui/pages/open-links.md), on their own.
+qt_add_executable(tst_app_link unit/app_link_test.cpp ${PROJECT_SOURCE_DIR}/ui/presentation/app_link.cpp)
+target_include_directories(tst_app_link PRIVATE ${PROJECT_SOURCE_DIR}/ui/presentation)
+target_link_libraries(tst_app_link PRIVATE Qt6::Test Qt6::Core)
+add_test(NAME app_link COMMAND tst_app_link)

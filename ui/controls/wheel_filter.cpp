@@ -3,8 +3,19 @@
 #include <QCoreApplication>
 #include <QWheelEvent>
 
+#include <algorithm>
+
 namespace cirrus::ui
 {
+
+void Wheel::setSpeed(qreal speed)
+{
+    speed = std::clamp<qreal>(speed, 0.25, 4);
+    if (qFuzzyCompare(speed, m_speed))
+        return;
+    m_speed = speed;
+    emit speedChanged();
+}
 
 WheelFilter::WheelFilter(QObject* parent) : QObject(parent) {}
 

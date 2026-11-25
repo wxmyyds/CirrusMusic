@@ -62,6 +62,8 @@ class CatalogSource
     virtual Request podcast(const QString& key, Reply<PodcastInfo> reply) = 0;
     virtual Request podcastVoices(const QString& key, bool oldestFirst, PageRequest page,
                                   Reply<ResultPage<SongInfo>> reply) = 0;
+    // One voice (a podcast program) by its key, with its track (a link names only it).
+    virtual Request voice(const QString& key, Reply<SongInfo> reply) = 0;
 
     // Home or discover sections.
     virtual Request feed(Feed which, Reply<QList<FeedSection>> reply) = 0;
@@ -298,6 +300,10 @@ class PlaybackSource
     // the queue they play. False in Personal FM (its queue can't be edited) or when the
     // queue can't take them.
     virtual bool addSongs(const QStringList& keys, bool next, const PlayOrigin& origin = {}) = 0;
+    // Puts one song (or voice) right after the playing one and plays it, keeping the queue;
+    // with nothing to keep (empty, Personal FM) a queue of just it. A voice must be one the
+    // catalog has read (CatalogSource::voice), as for playVoices() (open-links.md).
+    virtual void playNow(const QString& key, bool voice, const PlayOrigin& origin = {}) = 0;
     // Empties the queue and stops (Queue mode).
     virtual void clearQueue() = 0;
     virtual void setVolume(double volume) = 0;

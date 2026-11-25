@@ -74,6 +74,11 @@ class AppSettings : public QObject
     // startup, before the window exists (ui/app/gpu_preference.h).
     CIRRUS_SETTING(bool, preferDiscreteGpu, setPreferDiscreteGpu, "graphics/preferDiscreteGpu",
                    true)
+    // How far a mouse wheel notch scrolls: 1 is 120 px in a list (Wheel.speed, 0.5–3).
+    CIRRUS_SETTING(double, wheelSpeed, setWheelSpeed, "input/wheelSpeed", 1.0)
+    // Other programs of this user may read what is playing and its lyrics (Linux,
+    // ui/presentation/backend/now_playing_export.h).
+    CIRRUS_SETTING(bool, shareNowPlaying, setShareNowPlaying, "system/shareNowPlaying", false)
     // The window as it was left: its size when not maximized, and whether it was. The
     // position is not kept (Wayland doesn't let apps place windows).
     CIRRUS_SETTING(int, windowWidth, setWindowWidth, "window/width", 1200)

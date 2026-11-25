@@ -32,9 +32,16 @@ qt_add_library(cirrus_presentation_backend STATIC
     backend_stats.cpp
     backend_together.h
     backend_together.cpp
+    now_playing_export.h
+    now_playing_export.cpp
 )
 target_compile_features(cirrus_presentation_backend PUBLIC cxx_std_20)
 target_include_directories(cirrus_presentation_backend PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(cirrus_presentation_backend
     PUBLIC cirrus_presentation
     PRIVATE cirrus_backend cirrus_resource_cache qrcodegen Qt6::Core Qt6::Gui)
+# The local now-playing interface (now_playing_export.h) exists on Linux only.
+if(TARGET cirrus_observation_linux_service)
+    target_link_libraries(cirrus_presentation_backend PRIVATE cirrus_observation_linux_service)
+    target_compile_definitions(cirrus_presentation_backend PRIVATE CIRRUS_NOW_PLAYING_EXPORT)
+endif()
