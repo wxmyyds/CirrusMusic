@@ -11,9 +11,15 @@ make_deb() {
     local elf_arguments=() library_arguments=() path
     for path in "${elves[@]}"; do elf_arguments+=("-e$path"); done
     for path in "${library_dirs[@]}"; do library_arguments+=("-l$path"); done
-    # Bundled libraries have no Debian shlibs records; all external libraries were
-    # resolved above and their ABI requirements come from the native dpkg database.
-    depends=$(cd "$temporary" && dpkg-shlibdeps -O --ignore-missing-info \
+    # Give only the shipped SONAMEs explicit package-local ownership. Exclude
+    # that self-dependency; every external ABI must have native Debian metadata.
+    for path in "${elves[@]}"; do
+        soname=$(LC_ALL=C readelf -d "$path" | awk -F '[][]' '/\(SONAME\)/ {print $2}')
+        if [[ $soname =~ ^(.+)\.so\.([0-9][0-9.]*)$ ]]; then
+            printf '%s %s cirrus\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+        fi
+    done | sort -u > "$temporary/debian/shlibs.local"
+    depends=$(cd "$temporary" && dpkg-shlibdeps -O -xcirrus \
         "${library_arguments[@]}" "${elf_arguments[@]}" | sed -n 's/^shlibs:Depends=//p')
     [[ -n $depends ]]
     depends+=", ca-certificates, libsecret-1-0, hicolor-icon-theme"

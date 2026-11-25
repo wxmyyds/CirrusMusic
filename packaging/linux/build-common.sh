@@ -85,6 +85,16 @@ while IFS= read -r -d '' path; do
         printf 'Wrong ELF architecture: %s (%s)\n' "$path" "$actual" >&2
         exit 1
     }
+    while IFS= read -r runpath; do
+        [[ -n $runpath ]] || { printf 'Empty runtime search path: %s\n' "$path" >&2; exit 1; }
+        IFS=: read -r -a runtime_paths <<< "$runpath"
+        for entry in "${runtime_paths[@]}"; do
+            case "$entry" in
+                '$ORIGIN' | '$ORIGIN/'* | '${ORIGIN}' | '${ORIGIN}/'* | /opt/cirrus/lib | /opt/cirrus/lib/* | /lib | /lib/* | /lib64 | /lib64/* | /usr/lib | /usr/lib/* | /usr/lib64 | /usr/lib64/*) ;;
+                *) printf 'Build-machine runtime search path in %s: %s\n' "$path" "$entry" >&2; exit 1 ;;
+            esac
+        done
+    done < <(LC_ALL=C readelf -d "$path" | awk -F '[][]' '/\((RPATH|RUNPATH)\)/ {print $2}')
     if [[ $description == *'not stripped'* ]]; then
         strip --strip-unneeded "$path"
     fi
