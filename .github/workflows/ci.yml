@@ -117,6 +117,8 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: test-results-${{ matrix.platform }}-${{ matrix.arch }}
+          retention-days: 3
+          overwrite: ${{ github.run_attempt > 1 }}
           path: |
             build/junit.xml
             build/Testing/Temporary/LastTest.log

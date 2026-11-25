@@ -68,5 +68,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: cirrus-macos-${{ matrix.arch }}
+          retention-days: 1
+          overwrite: ${{ github.run_attempt > 1 }}
           path: dist/Cirrus-*-macos-${{ matrix.arch }}.dmg
           if-no-files-found: error

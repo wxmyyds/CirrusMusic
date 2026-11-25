@@ -73,7 +73,9 @@ Cirrus 是一个非官方的网易云音乐桌面客户端，用 C++ 和 Qt Quic
 
 Linux 构建包含 Arch、Debian、Fedora 的 ARM64 与 x86_64 六个原生发行版 job；Windows 和 macOS 各两个原生架构 job。`CI` 独立执行 Linux、Windows、macOS 测试，不生成安装包。
 
-发布使用 `Release` 工作流：指定源码 `ref` 和版本 `tag`，通过测试后并行调用三个构建工作流，全部成功后统一校验和发布。`publish=false` 可验证完整流程而不发行。细节见 [打包与发布](packaging/README.md)，代码结构见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+发布使用 `Release` 工作流：指定源码 `ref` 和版本 `tag`，锁定完整源码提交，并行运行三平台测试和十个原生构建目标，全部成功后统一校验和发布。`publish=false` 可验证完整流程而不发行。细节见 [打包与发布](packaging/README.md)，代码结构见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
+独立构建的软件包保留 1 天，测试报告保留 3 天。Release 完成全部校验及发布 dry-run 或正式发布后，自动删除中转包，仅保留 7 天的来源清单和校验值。需要下载测试安装包时，请运行上面的单平台构建工作流。
 
 ## 数据存放位置
 

@@ -48,5 +48,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: cirrus-windows-${{ matrix.arch }}
+          retention-days: 1
+          overwrite: ${{ github.run_attempt > 1 }}
           path: dist/*
           if-no-files-found: error
