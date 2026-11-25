@@ -94,6 +94,7 @@ jobs:
       - name: Run tests
         env:
           QT_QPA_PLATFORM: offscreen
+          QT_FORCE_STDERR_LOGGING: '1'
         run: |
           set -euo pipefail
           command=(ctest --test-dir build --output-on-failure --no-tests=error --parallel 4
