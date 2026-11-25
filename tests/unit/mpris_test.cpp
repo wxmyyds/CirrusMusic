@@ -38,7 +38,7 @@ ui::PlaybackSnapshot pausedSong()
     ui::PlaybackSnapshot state;
     state.current.key = "1";
     state.current.title = "Song";
-    state.current.artistText = "Artist";
+    state.current.artists = {{"", "Artist"}};
     state.current.albumTitle = "Album";
     state.generation = 1;
     state.provider = ui::playback::Bilibili;

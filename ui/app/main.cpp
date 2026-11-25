@@ -215,8 +215,8 @@ int main(int argc, char* argv[])
                 QCoreApplication::translate("NowPlaying", "无法向其他程序提供播放状态")));
         });
     // 安装并重启 uses the same orderly shutdown as Ctrl+Q.
-    QObject::connect(presentation->updates(), &cirrus::ui::UpdateCheck::installRequested,
-                     &desktop, &cirrus::ui::Desktop::quitNow);
+    QObject::connect(presentation->updates(), &cirrus::ui::UpdateCheck::installRequested, &desktop,
+                     &cirrus::ui::Desktop::quit);
     backend.start();
 #ifdef CIRRUS_UI_MPRIS
     // Media keys and the desktop's media controls (docs/ui/pages/shell.md §7).

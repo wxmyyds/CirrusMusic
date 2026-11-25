@@ -18,11 +18,9 @@ class UiPlaybackSnapshot final : public ui::PlaybackSource
             changed();
     }
     const ui::PlaybackSnapshot& snapshot() const override { return state; }
-    void setChangedHandler(std::function<void()> handler) override
-    {
-        changed = std::move(handler);
-    }
+    void setChangedHandler(std::function<void()> handler) override { changed = std::move(handler); }
     void playSongs(const QStringList&, int, const ui::PlayOrigin&) override {}
+    void playNow(const QString&, bool, const ui::PlayOrigin&) override {}
     void playVoices(const QStringList&, int) override {}
     bool canPlayVoices() const override { return false; }
     void playPause() override {}
