@@ -4,9 +4,6 @@
 #include "desktop.h"
 #include "media_state.h"
 #include "player.h"
-#include "lyrics.h"
-#include "lyrics_dbus.h"
-#include "app_settings.h"
 
 #include <QDBusConnection>
 #include <QDBusMessage>
@@ -35,9 +32,8 @@ QString loopOf(int repeat)
 }
 } // namespace
 
-Mpris::Mpris(Player* player, Desktop* desktop, CurrentLyrics* lyrics,
-             AppSettings* settings, QObject* parent)
-    : QObject(parent), m_player(player), m_desktop(desktop), m_lyrics(lyrics), m_settings(settings)
+Mpris::Mpris(Player* player, Desktop* desktop, QObject* parent)
+    : QObject(parent), m_player(player), m_desktop(desktop)
 {
     new MprisRoot(this);
     new MprisPlayer(this);
@@ -53,13 +49,8 @@ Mpris::Mpris(Player* player, Desktop* desktop, CurrentLyrics* lyrics,
     m_registered = true;
     connect(m_player, &Player::changed, this, &Mpris::playerChanged);
     connect(m_player, &Player::currentChanged, this, &Mpris::playerChanged);
-    if (m_lyrics)
-        connect(m_lyrics, &CurrentLyrics::changed, this, &Mpris::playerChanged);
     m_sent = playerProperties();
     m_sent.remove(QStringLiteral("Position"));
-    if (m_settings)
-        connect(m_settings, &AppSettings::externalLyricsChanged, this, &Mpris::playerChanged);
-    m_lyricsDBus = new LyricsDBus(this, m_lyrics, m_settings);
 }
 
 Mpris::~Mpris()
@@ -67,7 +58,6 @@ Mpris::~Mpris()
     if (!m_registered)
         return;
     QDBusConnection bus = QDBusConnection::sessionBus();
-    delete m_lyricsDBus;
     bus.unregisterService(kService);
     bus.unregisterObject(kPath);
 }
@@ -81,12 +71,6 @@ QString Mpris::trackId() const
     for (const QChar c : key)
         part += c.isLetterOrNumber() && c.unicode() < 128 ? c : QLatin1Char('_');
     return QStringLiteral("/com/guang233/Cirrus/track/s") + part;
-}
-
-QString Mpris::lyricText() const
-{
-    return m_settings && m_settings->externalLyrics() && m_lyrics
-               ? m_lyrics->playbackText() : QString{};
 }
 
 qint64 Mpris::positionUs() const { return media::positionNow(*m_player) * 1000; }
@@ -226,9 +210,6 @@ QVariantMap MprisPlayer::metadata() const
         values.insert(QStringLiteral("xesam:album"), song.albumTitle);
     if (const QString art = media::coverUrl(song.coverKey, 512); !art.isEmpty())
         values.insert(QStringLiteral("mpris:artUrl"), art);
-    // MPRIS defines xesam:asText as lyric text, not a timeline or a provider URL.
-    if (const QString text = m_owner->lyricText(); !text.isEmpty())
-        values.insert(QStringLiteral("xesam:asText"), text);
     return values;
 }
 

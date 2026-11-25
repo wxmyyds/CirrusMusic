@@ -16,12 +16,17 @@ struct Harness {
     PlaybackObservationPublisher publisher{owner, facade};
     QList<PlaybackCommand> commands;
     QList<MusicCommand> reads;
+    QList<PlaybackCommand> vocals;
     quint64 positionRevision = 0;
+    SourceProvider provider = SourceProvider::Netease;
+    std::optional<BiliStreamMeta> bili;
     Harness()
     {
         QObject::connect(&facade, &BackendFacade::playbackRequested, &facade,
                          [this](PlaybackCommand c) {
-                             if (c.action != PlaybackAction::Vocals) // a side note for mixing
+                             if (c.action == PlaybackAction::Vocals)
+                                 vocals.append(c);
+                             else
                                  commands.append(c);
                              QTimer::singleShot(0, &facade, [this, c] {
                                  BackendEvent e;
@@ -51,7 +56,7 @@ struct Harness {
     void selectSource()
     {
         const auto c = play();
-        facade.deliverPlaybackSource({c.token, c.query.song, SourceProvider::Netease, {}});
+        facade.deliverPlaybackSource({c.token, c.query.song, provider, bili});
     }
     void state(PlaybackState state, qint64 position = 0, std::optional<PreviewRange> preview = {},
                quint64 jump = 0)
@@ -61,6 +66,7 @@ struct Harness {
         PlaybackSnapshot p;
         p.token = c.token;
         p.song = c.query.song;
+        p.provider = provider;
         p.state = state;
         p.intent = c.intent;
         p.positionMs = position;
@@ -238,6 +244,187 @@ class PlaybackObservationTest final : public QObject
         QVERIFY(a.entry != b.entry);
         QVERIFY(!b.cursors && !b.metadata);
         QCOMPARE(b.lyricsState, LyricsState::Loading);
+    }
+    void biliReplacementSourceChangesAndOffsets()
+    {
+        Harness h;
+        QVERIFY(h.owner.replaceQueue({{"1"}}));
+        h.state(PlaybackState::Paused, 1150);
+        auto netease = lyric("1");
+        netease.original.standard.lines = {{0, 5000, "Previous NetEase document", {}}};
+        h.lyrics(netease);
+        QTRY_COMPARE(h.publisher.snapshot().documentStatus, ObservationContentStatus::Ready);
+        const auto old = h.publisher.snapshot();
+        const auto neteaseRequest = h.reads.last();
+
+        QVERIFY(h.owner.setLyricOffset(100));
+        const auto token = h.owner.playback().token;
+        QSignalSpy canceled(&h.facade, &BackendFacade::musicCancelRequested);
+        // Replace the selected source under the SAME load, first after a completed document.
+        h.provider = SourceProvider::Bilibili;
+        h.bili = BiliStreamMeta{"BV1testpage", "456", "30280", {}};
+        h.selectSource();
+        QCOMPARE(h.owner.playback().token, token);
+        QVERIFY(!h.owner.lyrics());
+        QCOMPARE(h.owner.cursors(), LyricCursors{});
+        QCOMPARE(h.owner.lyricOffsetMs(), qint64(100));
+        QVERIFY(!h.publisher.document(old.binding, old.lyricsRevision));
+        QVERIFY(!h.publisher.snapshot().cursors);
+        QVERIFY(h.vocals.last().vocals.isEmpty());
+        QCOMPARE(h.vocals.last().next, token);
+        QCOMPARE(h.reads.size(), 2);
+        h.selectSource();
+        QCOMPARE(h.reads.size(), 2); // repeated pending selection is a no-op
+        const auto firstPageRequest = h.reads.last();
+        const auto* first = std::get_if<PlaybackLyricQuery>(&firstPageRequest.query);
+        QVERIFY(first && first->source.bili);
+        QCOMPARE(first->source.provider, SourceProvider::Bilibili);
+        QCOMPARE(first->source.bili->cid, QString("456"));
+        h.facade.deliverMusic(
+            {neteaseRequest.id, neteaseRequest.generation, neteaseRequest.context, netease});
+        QTRY_COMPARE(h.publisher.snapshot().lyricsState, LyricsState::Loading);
+        QCOMPARE(h.publisher.snapshot().documentStatus, ObservationContentStatus::NotReady);
+
+        // Replace again while the previous page query is still pending.
+        h.bili->bvid = "BV2testpage";
+        h.bili->cid = "789";
+        h.selectSource();
+        QCOMPARE(canceled.size(), 1);
+        QCOMPARE(canceled.first().first().toULongLong(), firstPageRequest.id);
+        QCOMPARE(h.owner.playback().token, token);
+        QCOMPARE(h.owner.lyricOffsetMs(), qint64(100));
+        h.selectSource();
+        QCOMPARE(h.reads.size(), 3);
+        const auto activeRequest = h.reads.last();
+        const auto* active = std::get_if<PlaybackLyricQuery>(&activeRequest.query);
+        QVERIFY(active && active->source.bili);
+        QCOMPARE(active->source.bili->bvid, QString("BV2testpage"));
+        QCOMPARE(active->source.bili->cid, QString("789"));
+        QCOMPARE(active->source.token, first->source.token);
+        QCOMPARE(active->source.token, token);
+        auto subtitle = lyric("1");
+        subtitle.original.standard.providerOffsetMs = 100;
+        subtitle.original.standard.lines = {{1000, 2000, "Active Bili page", {}}};
+        subtitle.original.enhanced = {};
+        subtitle.translation = {};
+        subtitle.romanization = {};
+        h.facade.deliverMusic(
+            {activeRequest.id, activeRequest.generation, activeRequest.context, subtitle});
+        QTRY_COMPARE(h.publisher.snapshot().documentStatus, ObservationContentStatus::Ready);
+        const auto current = h.publisher.snapshot();
+        QCOMPARE(current.binding, old.binding);
+        QVERIFY(current.lyricsRevision > old.lyricsRevision);
+        QVERIFY(current.cursors->original.standard.lines.isEmpty());
+        h.selectSource();
+        QCOMPARE(h.reads.size(), 3); // completed identical selection is also a no-op
+        QCOMPARE(h.publisher.snapshot().lyricsRevision, current.lyricsRevision);
+        QCOMPARE((*current.lyricTracks)[0].providerOffsetMs, qint64(100));
+        const auto document = h.publisher.document(current.binding, current.lyricsRevision);
+        QVERIFY(document);
+        QCOMPARE(document->lyrics.original.standard.lines.first().text,
+                 QString("Active Bili page"));
+        QCOMPARE(document->lyrics.original.standard.lines.first().startMs,
+                 std::optional<qint64>(1000));
+        QCOMPARE(document->lyrics.original.standard.lines.first().endMs,
+                 std::optional<qint64>(2000));
+        QVERIFY(document->lyrics.original.standard.lines.first().words.isEmpty());
+        QVERIFY(h.owner.setLyricOffset(100));
+        QTRY_COMPARE(h.publisher.snapshot().userOffsetMs, qint64(100));
+        QVERIFY(h.publisher.snapshot().cursors->original.standard.lines.isEmpty());
+        QCOMPARE(h.publisher.snapshot().lyricsRevision, current.lyricsRevision);
+        h.state(PlaybackState::Paused, 1200);
+        QTRY_COMPARE(h.publisher.snapshot().cursors->original.standard.lines, QList<qsizetype>{0});
+        // A late result for the canceled previous Bili page cannot replace the active document.
+        h.facade.deliverMusic(
+            {firstPageRequest.id, firstPageRequest.generation, firstPageRequest.context, netease});
+        QCOMPARE(h.owner.lyrics()->original.standard.lines.first().text,
+                 QString("Active Bili page"));
+        const auto afterStale = h.publisher.document(current.binding, current.lyricsRevision);
+        QVERIFY(afterStale);
+        QCOMPARE(afterStale->lyrics.original.standard.lines.first().text,
+                 QString("Active Bili page"));
+        QCOMPARE(afterStale->lyrics.original.standard.lines.first().startMs,
+                 std::optional<qint64>(1000));
+        QCOMPARE(h.reads.size(), 3); // One owner query per distinct source, all under one load.
+    }
+    void sameLoadSourceIdentity_data()
+    {
+        QTest::addColumn<int>("field");
+        QTest::addColumn<bool>("completed");
+        for (int field = 0; field < 5; ++field)
+            for (bool completed : {false, true})
+                QTest::newRow(qPrintable(QString("%1-%2").arg(field).arg(completed)))
+                    << field << completed;
+    }
+    void sameLoadSourceIdentity()
+    {
+        QFETCH(int, field);
+        QFETCH(bool, completed);
+        Harness h;
+        h.provider = SourceProvider::Bilibili;
+        h.bili = BiliStreamMeta{"BV1testpage", "456", "30280", {}};
+        QVERIFY(h.owner.replaceQueue({{"1"}}));
+        h.state(PlaybackState::Paused, 1500);
+        if (completed)
+            h.lyrics(lyric("1"));
+        const auto old = h.reads.last();
+        const auto token = h.owner.playback().token;
+        QVERIFY(h.owner.setLyricOffset(250));
+        if (field == 0)
+            h.bili->bvid = "BV2testpage";
+        if (field == 1)
+            h.bili->cid = "789";
+        if (field == 2)
+            h.bili->streamId = "30250";
+        if (field == 3)
+            h.bili->qualityTag = "hires";
+        if (field == 4) {
+            h.provider = SourceProvider::Netease;
+            h.bili.reset();
+        }
+        h.selectSource();
+        QCOMPARE(h.reads.size(), 2);
+        const auto fresh = h.reads.last();
+        QVERIFY(fresh.id != old.id);
+        QCOMPARE(std::get<PlaybackLyricQuery>(fresh.query).source.token, token);
+        QCOMPARE(h.owner.cursors(), LyricCursors{});
+        QVERIFY(!h.owner.lyrics());
+        h.facade.deliverMusic({old.id, old.generation, old.context, lyric("1")});
+        QTRY_COMPARE(h.publisher.snapshot().lyricsState, LyricsState::Loading);
+        QVERIFY(!h.publisher.snapshot().cursors);
+        QCOMPARE(h.publisher.snapshot().userOffsetMs, qint64(250));
+        h.selectSource();
+        QCOMPARE(h.reads.size(), 2);
+        h.facade.deliverMusic({fresh.id, fresh.generation, fresh.context, lyric("1")});
+        QTRY_COMPARE(h.publisher.snapshot().documentStatus, ObservationContentStatus::Ready);
+        h.selectSource();
+        QCOMPARE(h.reads.size(), 2);
+    }
+    void sourceReplacementReentrantCancellation()
+    {
+        Harness h;
+        h.provider = SourceProvider::Bilibili;
+        h.bili = BiliStreamMeta{"BV1testpage", "456", "30280", {}};
+        QVERIFY(h.owner.replaceQueue({{"1"}}));
+        h.state(PlaybackState::Paused, 1500);
+        const auto old = h.reads.last();
+        bool once = false;
+        connect(&h.facade, &BackendFacade::musicCancelRequested, &h.owner, [&](quint64 id) {
+            if (id == old.id && !std::exchange(once, true)) {
+                h.bili->cid = "999";
+                h.selectSource();
+            }
+        });
+        h.bili->cid = "789";
+        h.selectSource();
+        QVERIFY(once);
+        QCOMPARE(h.reads.size(), 2); // the interrupted middle selection must not query
+        QCOMPARE(std::get<PlaybackLyricQuery>(h.reads.last().query).source.bili->cid,
+                 QString("999"));
+        h.lyrics(lyric("1"));
+        QTRY_COMPARE(h.publisher.snapshot().documentStatus, ObservationContentStatus::Ready);
+        h.facade.deliverMusic({old.id, old.generation, old.context, lyric("1")});
+        QCOMPARE(h.owner.lyricsState(), LyricsState::Ready);
     }
     void privacy_data()
     {

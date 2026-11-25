@@ -220,8 +220,7 @@ int main(int argc, char* argv[])
     backend.start();
 #ifdef CIRRUS_UI_MPRIS
     // Media keys and the desktop's media controls (docs/ui/pages/shell.md §7).
-    cirrus::ui::Mpris mpris(presentation->player(), &desktop, presentation->lyrics(),
-                           presentation->settings());
+    cirrus::ui::Mpris mpris(presentation->player(), &desktop);
 #endif
 #ifdef CIRRUS_UI_NOW_PLAYING
     cirrus::ui::NowPlaying nowPlaying(presentation->player());

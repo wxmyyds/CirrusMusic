@@ -43,9 +43,7 @@ class PlaybackCoordinator final : public QObject
         quint64 request = 0;             // resolving
         bool loaded = false;             // handed to the backend
         QList<domain::VocalSpan> vocals; // until it is
-        QString actualQuality;
-        std::optional<domain::PreviewRange> preview;
-        domain::SourceProvider provider = domain::SourceProvider::Netease;
+        domain::MediaSource source;      // accepted physical source; refresh may only renew its URL
     };
     struct Refresh {
         domain::LoadToken token;
@@ -72,7 +70,8 @@ class PlaybackCoordinator final : public QObject
     QTimer m_deadline;
     QElapsedTimer m_loadClock; // since start(), for the log
     std::optional<qint64> m_seek;
-    domain::StreamQuery m_query; // the current load's, for refreshing its address
+    domain::StreamQuery m_query;                 // the current load's, for refreshing its address
+    std::optional<domain::MediaSource> m_source; // pinned identity; never retarget partial media
     // The current load's sung lines, until it is handed to the backend (the lyrics often
     // come before the address).
     QList<domain::VocalSpan> m_vocals;

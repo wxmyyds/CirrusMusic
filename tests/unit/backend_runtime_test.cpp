@@ -1,9 +1,9 @@
 #include "../support/comment_write_support.h"
 #include "../support/fake_http.h"
 #include "../support/fake_playback.h"
+#include "../support/fake_secret_store.h"
 #include "../support/presentation_playback_snapshot.h"
 #include "../support/synthetic_bilibili.h"
-#include "../support/fake_secret_store.h"
 #include "../support/synthetic_cover.h"
 #include "../support/synthetic_daily_playlists.h"
 #include "../support/synthetic_discovery_browse.h"
@@ -13,19 +13,32 @@
 #include "../support/synthetic_together_http.h"
 #include "application/music/personal_fm_source.h"
 #include "application/playback/listening_session.h"
+#include "application/playback/playback_observation_publisher.h"
 #include "application/ports/playback.h"
 #include "backend_playback.h"
-#include "lyrics.h"
-#include "player.h"
 #include "infrastructure/bootstrap/xeapi_key_vault.h"
+#include "infrastructure/cache/resource_cache_service.h"
 #include "infrastructure/netease/music/comment_v3_issuer.h"
 #include "infrastructure/netease/music/cover_upload.h"
 #include "infrastructure/netease/network/http_transport.h"
 #include "infrastructure/netease/protocol/openssl_primitives.h"
 #include "infrastructure/runtime/backend_runtime.h"
+#include "lyrics.h"
+#include "player.h"
+#ifdef CIRRUS_TEST_NOW_PLAYING_EXPORT
+#include "../support/observation_peer.h"
+#include "app_settings.h"
+#include "infrastructure/ipc/linux_observation_client.h"
+#include "now_playing_export.h"
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QScopeGuard>
+#endif
 #include "infrastructure/secrets/tracked_secret_store.h"
 #include "infrastructure/storage/installation_store.h"
 #include "infrastructure/storage/listening_state_store.h"
+#include <QSettings>
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -252,7 +265,17 @@ static QList<Plan> loginPlans()
 class BackendRuntimeTest : public QObject
 {
     Q_OBJECT
+    QTemporaryDir m_settings;
   private slots:
+    void initTestCase()
+    {
+        QVERIFY(m_settings.isValid());
+        QSettings::setDefaultFormat(QSettings::IniFormat);
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, m_settings.path());
+        QSettings::setPath(QSettings::IniFormat, QSettings::SystemScope, m_settings.path());
+        QCoreApplication::setOrganizationName("CirrusRuntimeTest");
+        QCoreApplication::setApplicationName(QUuid::createUuid().toString(QUuid::Id128));
+    }
     void startLoginCloseRestore();
     void musicQueriesThroughThread();
     void discoveryThroughThread();
@@ -316,9 +339,11 @@ void BackendRuntimeTest::biliLyricsAndCookieThroughThread()
 {
     QFETCH(int, subtitleCase);
     QTemporaryDir directory;
+    QTemporaryDir cacheDirectory;
     auto state = std::make_shared<SharedState>();
     Gate gate;
-    const BackendConfig config{directory.filePath("state.sqlite"), "synthetic"};
+    const BackendConfig config{directory.filePath("state.sqlite"), "synthetic", false,
+                               subtitleCase == 0 ? cacheDirectory.path() : QString{}};
     seed(config.databasePath, *state);
     state->records.insert("bilibili.cookie", "SESSDATA=synthetic");
     const auto permission = netease::detail::aes(
@@ -327,6 +352,9 @@ void BackendRuntimeTest::biliLyricsAndCookieThroughThread()
     QVERIFY(permission);
     QList<Plan> plans{Plan{*permission}, Plan{
         "{\"code\":200,\"songs\":[{\"id\":1,\"name\":\"Song\",\"dt\":200000,\"ar\":[{\"id\":2,\"name\":\"Artist\"}]}]}"}};
+    if (subtitleCase == 0)
+        plans.prepend(
+            Plan{R"({"code":200,"lrc":{"lyric":"[00:00]Cached NetEase text\n[00:02]"}})"});
     const bool useNetease = subtitleCase == 1 || subtitleCase == 2 || subtitleCase >= 6;
     if (useNetease) {
         auto lyric = Plan{QJsonDocument(QJsonObject{
@@ -381,8 +409,33 @@ void BackendRuntimeTest::biliLyricsAndCookieThroughThread()
     QTRY_COMPARE(facade.state(), BackendState::Ready);
     QTRY_VERIFY(facade.snapshot().token.isValid());
     QTRY_COMPARE(runtime.biliAccount().status, domain::BiliAccountStatus::LoggedIn);
+    PlaybackObservationPublisher publisher(runtime.listening(), facade);
     UiPlaybackSnapshot playback;
     ui::BackendLyrics lyricsSource(runtime);
+    if (subtitleCase == 0) {
+        // Seed the real cache from the real NetEase decoder before Bili is selected.
+        QSignalSpy fetched(&facade, &BackendFacade::musicCompleted);
+        QVERIFY(facade.lyrics({"1"}));
+        QTRY_COMPARE(fetched.size(), 1);
+        const auto result = qvariant_cast<MusicResult>(fetched.first().at(2));
+        QVERIFY(std::holds_alternative<domain::SongLyrics>(result));
+        auto* resourceCache = runtime.resourceCache();
+        QVERIFY(resourceCache);
+        const auto permit = resourceCache->writeContext();
+        QVERIFY(permit);
+        QSignalSpy stored(resourceCache, &cache::ResourceCacheService::completed);
+        QVERIFY(resourceCache->putLyrics(*permit, std::get<domain::SongLyrics>(result), 60000));
+        QTRY_COMPARE(stored.size(), 1);
+        QCOMPARE(qvariant_cast<domain::CacheResult>(stored.first().first()).status,
+                 domain::CacheStatus::Stored);
+        std::optional<ui::Outcome<ui::SongLyrics>> cached;
+        auto read = lyricsSource.lyrics("1", [&](auto value) { cached = std::move(value); });
+        QTRY_VERIFY(cached.has_value());
+        QVERIFY(cached->value);
+        QCOMPARE(cached->value->original.standard->lines.first().text,
+                 QString("Cached NetEase text"));
+        QCOMPARE(state->requests.load(), 1); // A genuine cache hit, not a second fetch.
+    }
     ui::Player player(&playback, nullptr);
     ui::CurrentLyrics shown(&lyricsSource, &player);
     connect(&runtime.listening(), &ListeningSession::playbackChanged, &player,
@@ -432,7 +485,125 @@ void BackendRuntimeTest::biliLyricsAndCookieThroughThread()
     QTRY_COMPARE(openedLater.status(), ui::lyrics::Ready);
     QCOMPARE(openedLater.lines()->rowCount(), 1);
     QCOMPARE(runtime.listening().lyrics()->original.standard.lines.first().text, expected);
-    QCOMPARE(state->requests.load(), subtitleCase == 0 ? 2 : 3);
+    QTRY_COMPARE(publisher.snapshot().documentStatus, domain::ObservationContentStatus::Ready);
+    const auto exported = publisher.snapshot();
+    const auto document = publisher.document(exported.binding, exported.lyricsRevision);
+    QVERIFY(document);
+    QCOMPARE(document->lyrics.original.standard.lines.first().text, expected);
+    QCOMPARE(document->lyrics.original.standard.lines.first().startMs, std::optional<qint64>(0));
+    if (subtitleCase == 0) {
+        QCOMPARE(document->lyrics.original.standard.lines.first().endMs,
+                 std::optional<qint64>(2000));
+        QVERIFY(document->lyrics.original.standard.lines.first().words.isEmpty());
+        QCOMPARE(document->lyrics.original.standard.timing, domain::LyricTiming::Lines);
+        QCOMPARE(document->lyrics.original.enhanced.availability,
+                 domain::LyricAvailability::Missing);
+    }
+#ifdef CIRRUS_TEST_NOW_PLAYING_EXPORT
+    if (subtitleCase == 0) {
+        using namespace infrastructure::ipc;
+        QTemporaryDir socketRoot{QDir::tempPath() + "/cnp-XXXXXX"};
+        QVERIFY(socketRoot.isValid());
+        const bool hadRoot = qEnvironmentVariableIsSet("XDG_RUNTIME_DIR");
+        const auto previousRoot = qgetenv("XDG_RUNTIME_DIR");
+        const auto restoreRoot = qScopeGuard([&] {
+            if (hadRoot)
+                qputenv("XDG_RUNTIME_DIR", previousRoot);
+            else
+                qunsetenv("XDG_RUNTIME_DIR");
+        });
+        qputenv("XDG_RUNTIME_DIR", socketRoot.path().toUtf8());
+        QSettings().remove("system/shareNowPlaying");
+        QSettings().setValue("lyrics/externalExport", true); // Never migrate the old opt-in.
+        ui::AppSettings settings;
+        QVERIFY(!settings.shareNowPlaying());
+        ui::NowPlayingExport exporter(runtime);
+        QSignalSpy failed(&exporter, &ui::NowPlayingExport::failed);
+        exporter.follow(&settings, &player, &shown);
+        const auto entries = [&] {
+            return QDir(socketRoot.path() + "/com.guang233.Cirrus")
+                .entryList({"i-*"}, QDir::Dirs | QDir::NoDotAndDotDot);
+        };
+        QVERIFY(entries().isEmpty());
+        const auto reads = state->requests.load();
+        QSignalSpy observerReads(&facade, &BackendFacade::musicRequested);
+        settings.setShareNowPlaying(true);
+        QTRY_COMPARE(entries().size(), 1);
+        const auto leaf = socketRoot.path() + "/com.guang233.Cirrus/" + entries().first();
+        const auto manifestPath = leaf + "/observation-v1.json";
+        QTRY_VERIFY(QFileInfo::exists(manifestPath));
+        QFile manifest(manifestPath);
+        QVERIFY(manifest.open(QIODevice::ReadOnly));
+        const auto discovery = QJsonDocument::fromJson(manifest.readAll()).object();
+        manifest.close();
+        QCOMPARE(discovery["schema"].toInt(), 1);
+        QCOMPARE(discovery.size(), 4); // Discovery only, never a lyric-file transport.
+        QCOMPARE(QDir(leaf).entryList(QDir::AllEntries | QDir::NoDotAndDotDot, QDir::Name),
+                 (QStringList{"observation-v1.json", "s"}));
+        LinuxObservationClientError error;
+        auto client = LinuxObservationClient::connect(
+            {socketRoot.path(), "com.guang233.Cirrus", QUuid(discovery["instanceId"].toString())},
+            error);
+        QVERIFY(client);
+        QTRY_COMPARE(client->advance(), LinuxObservationClientState::Verified);
+        const auto descriptor = client->takeVerifiedDescriptor();
+        QVERIFY(descriptor >= 0);
+        ObservationPeer peer(descriptor);
+        QJsonObject snapshot;
+        const auto ready = [&] {
+            const auto response = peer.request("getSnapshot");
+            snapshot = response["snapshot"].toObject();
+            return response["ok"].toBool() &&
+                   snapshot["lyrics"].toObject()["documentExportStatus"].toString() == "ready";
+        };
+        QTRY_VERIFY(ready());
+        QCOMPARE(snapshot["track"].toObject()["providerSongId"].toString(), QString("1"));
+        const auto tracks = snapshot["lyrics"].toObject()["tracks"].toObject();
+        QCOMPARE(tracks.size(), 6);
+        QCOMPARE(tracks["original.standard"].toObject()["summary"].toObject()["timing"].toString(),
+                 QString("lines"));
+        const auto selected = facade.playbackSource(facade.playback().token.generation);
+        QVERIFY(selected && selected->bili);
+        QCOMPARE(selected->bili->bvid, QString("BV1testpage"));
+        QCOMPARE(selected->bili->cid, QString("456"));
+        QJsonObject binding{{"instanceId", snapshot["instanceId"]},
+                            {"viewEpoch", snapshot["viewEpoch"]},
+                            {"trackId", snapshot["trackId"]},
+                            {"lyricsRevision", snapshot["lyricsRevision"]},
+                            {"track", "original.standard"},
+                            {"fromLine", 0},
+                            {"maxLines", 128}};
+        const auto slice = peer.request("getLyricsSlice", binding);
+        QVERIFY(slice["ok"].toBool());
+        const auto lines = slice["lines"].toArray();
+        QCOMPARE(lines.size(), 1);
+        const auto line = lines.first().toObject();
+        QCOMPARE(line["text"].toString(), QString("Subtitle"));
+        QCOMPARE(line["startMs"].toInteger(), qint64(0));
+        QCOMPARE(line["endMs"].toInteger(), qint64(2000));
+        QVERIFY(line["words"].toArray().isEmpty());
+        shown.setOffset(250);
+        QTRY_VERIFY([&] {
+            const auto response = peer.request("getSnapshot");
+            return response["snapshot"].toObject()["lyrics"].toObject()["userOffsetMs"].toInt() ==
+                   250;
+        }());
+        QCOMPARE(peer.request("getLyricsSlice", binding)["lines"].toArray(), lines);
+        QCOMPARE(state->requests.load(), reads); // Observer adds no HTTP reads.
+        settings.setShareNowPlaying(false);
+        QTRY_VERIFY(peer.closed());
+        QTRY_VERIFY(!QFileInfo::exists(manifestPath));
+        QTRY_VERIFY(!QFileInfo::exists(discovery["endpoint"].toString()));
+        bool closed = false;
+        exporter.close([&] { closed = true; });
+        QTRY_VERIFY(closed);
+        QVERIFY(failed.isEmpty());
+        QVERIFY(observerReads.isEmpty());
+        QCOMPARE(runtime.listening().lyricsState(), domain::LyricsState::Ready);
+        QCOMPARE(state->requests.load(), reads);
+    }
+#endif
+    QCOMPARE(state->requests.load(), 3);
     QCOMPARE(facade.playback().provider, domain::SourceProvider::Bilibili);
     runtime.clearBiliCookie();
     QTRY_COMPARE(runtime.biliAccount().status, domain::BiliAccountStatus::LoggedOut);

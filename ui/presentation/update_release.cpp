@@ -40,7 +40,7 @@ bool isReleasePage(const QUrl& url)
     return url.isValid() && url.scheme() == QLatin1String("https") &&
            url.host() == QLatin1String("github.com") && url.port() == -1 &&
            url.userInfo().isEmpty() &&
-           url.path().startsWith(QLatin1String("/Guang233/CirrusMusic/releases/"));
+           url.path().startsWith(QLatin1String("/wxmyyds/CirrusMusic/releases/"));
 }
 
 bool isDownloadUrl(const QUrl& url, QStringView version, QStringView name)
@@ -49,7 +49,7 @@ bool isDownloadUrl(const QUrl& url, QStringView version, QStringView name)
            url.host() == QLatin1String("github.com") && url.port() == -1 &&
            url.userInfo().isEmpty() && !url.hasQuery() && !url.hasFragment() &&
            url.path() ==
-               QStringLiteral("/Guang233/CirrusMusic/releases/download/v%1/%2").arg(version, name);
+               QStringLiteral("/wxmyyds/CirrusMusic/releases/download/v%1/%2").arg(version, name);
 }
 
 QString installerName(QStringView version)

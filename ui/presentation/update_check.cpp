@@ -111,7 +111,7 @@ void UpdateCheck::start(bool manual)
     if (!m_network)
         m_network = new QNetworkAccessManager(this);
     QNetworkRequest request(
-        QUrl(QStringLiteral("https://api.github.com/repos/Guang233/CirrusMusic/releases/latest")));
+        QUrl(QStringLiteral("https://api.github.com/repos/wxmyyds/CirrusMusic/releases/latest")));
     // A plain client name; nothing that identifies the user or this installation.
     request.setHeader(QNetworkRequest::UserAgentHeader,
                       QStringLiteral("Cirrus/%1").arg(QCoreApplication::applicationVersion()));

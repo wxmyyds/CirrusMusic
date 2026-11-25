@@ -15,16 +15,20 @@ SettingsGroup {
     ChoiceSetting {
         text: qsTr("窗口装饰")
         supportingText: qsTr("窗口按钮、阴影和圆角由谁绘制")
-        options: [{
+        options: [
+            {
                 value: TitleBarMode.Custom,
                 text: qsTr("应用绘制")
-            }, {
+            },
+            {
                 value: TitleBarMode.Hidden,
                 text: qsTr("无")
-            }, {
+            },
+            {
                 value: TitleBarMode.System,
                 text: qsTr("系统")
-            }]
+            }
+        ]
         value: (group.Window.window as AppWindow)?.titleBar ?? -1
         onChosen: value => {
             App.settings.titleBar = value;
@@ -33,16 +37,20 @@ SettingsGroup {
     }
     ChoiceSetting {
         text: qsTr("关闭主窗口时")
-        options: [{
+        options: [
+            {
                 value: -1,
                 text: qsTr("每次询问")
-            }, {
+            },
+            {
                 value: 1,
                 text: Desktop.trayAvailable ? qsTr("最小化到托盘") : qsTr("后台播放")
-            }, {
+            },
+            {
                 value: 0,
                 text: qsTr("退出")
-            }]
+            }
+        ]
         value: App.settings.closeAction
         onChosen: value => App.settings.closeAction = value
     }
@@ -66,7 +74,7 @@ SettingsGroup {
     SwitchSetting {
         // The local now-playing interface (tools/now-playing/README.md) is Linux only.
         visible: Qt.platform.os === "linux"
-        text: qsTr("向其他程序提供播放状态")
+        text: qsTr("向其他程序提供播放状态 (私货)")
         supportingText: qsTr("歌名、进度和歌词，供桌面歌词、状态栏等读取")
         value: App.settings.shareNowPlaying
         onSwitched: value => App.settings.shareNowPlaying = value

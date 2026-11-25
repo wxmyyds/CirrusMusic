@@ -7,7 +7,7 @@ Cirrus 可以把正在播放的歌、进度和歌词提供给同一用户的其�
 - **只读**：不能控制播放。控制请用 MPRIS（`org.mpris.MediaPlayer2.cirrus`）。
 - **只在本机**：走 Unix 套接字，没有网络端口，只接受同一用户的程序。
 - **只有 Linux。**
-- **默认关闭**：在 设置 › 窗口与系统 › 向其他程序提供播放状态 里打开。
+- **默认关闭**：在 设置 › 窗口与系统 › 向其他程序提供播放状态 (私货) 里打开。
 
 只要标题、歌手、进度，MPRIS 就够了。这个接口多出来的是**带时间的歌词**：原文、翻译、罗马音各有逐行和逐字两种，Cirrus 还会告诉你现在唱到哪一行、哪个字。
 
@@ -18,6 +18,12 @@ python3 cirrus_now_playing.py                          # 每首歌一行标题�
 python3 cirrus_now_playing.py --track translation.standard
 python3 cirrus_now_playing.py --once                   # 打印一份快照（JSON）
 ```
+
+本 fork 沿用上游协议 v1；Bilibili 字幕使用同一个实际播放会话的歌词文档，
+源数据只有逐行时间时不会生成逐字时间。`providerSongId` 仍是目录歌曲身份，
+不代表实际音频或歌词的提供方；不要据此推断源为网易云。
+
+旧的 `org.cirrus.Lyrics1` 和 `xesam:asText` 导出已移除，不提供兼容接口。
 
 下面是协议 v1。
 

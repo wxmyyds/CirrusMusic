@@ -244,6 +244,77 @@ class PlaybackTest : public QObject
         resolver.finish(2, PlaybackFailure{PlaybackError::Unavailable});
         QCOMPARE(backend.refreshes.size(), 1); // the backend fails it as Expired itself
     }
+    void refreshCannotRetargetPhysicalSource_data()
+    {
+        QTest::addColumn<int>("target");   // current, preloaded, adopted preload
+        QTest::addColumn<int>("mutation"); // URL-only control, then identity changes
+        for (int target = 0; target < 3; ++target)
+            for (int mutation = 0; mutation < 8; ++mutation)
+                QTest::newRow(qPrintable(QString("%1-%2").arg(target).arg(mutation)))
+                    << target << mutation;
+    }
+    void refreshCannotRetargetPhysicalSource()
+    {
+        QFETCH(int, target);
+        QFETCH(int, mutation);
+        application::SessionCoordinator session;
+        test::FakeStreamResolver resolver;
+        test::FakePlaybackBackend backend;
+        application::PlaybackCoordinator player(session, resolver, backend);
+        const LoadToken first{session.snapshot().token, 1}, next{first.session, 2};
+        auto accepted = source("1");
+        accepted.provider = SourceProvider::Bilibili;
+        accepted.identity = StreamKey{"bili:original"};
+        accepted.bili = BiliStreamMeta{"BV1Q541167Qg", "123", "30280", {}};
+        QVERIFY(player.start(first, {{"1"}, AudioQuality::Standard, true}));
+        resolver.finish(0, accepted);
+        emit backend.event({first, Kind::Ready});
+        auto token = first;
+        if (target != 0) {
+            accepted.song = SongId{"2"};
+            QVERIFY(player.preload(first, next, StreamQuery{{"2"}, AudioQuality::Standard, true}));
+            resolver.finish(1, accepted);
+            token = next;
+            if (target == 2)
+                emit backend.event({next, Kind::Advanced});
+        }
+        QSignalSpy selections(&player, &application::PlaybackCoordinator::sourceSelected);
+        const auto active = player.snapshot().token;
+        auto fresh = accepted;
+        fresh.url = QUrl("https://upos-sz-mirrorcos.bilivideo.com/renewed.m4s");
+        fresh.validUntil = QDeadlineTimer(90000);
+        switch (mutation) {
+        case 1:
+            fresh.provider = SourceProvider::Netease;
+            break;
+        case 2:
+            fresh.bili->cid = "456";
+            break;
+        case 3:
+            fresh.identity = StreamKey{"bili:different"};
+            break;
+        case 4:
+            ++fresh.size;
+            break;
+        case 5:
+            fresh.format = "flac";
+            break;
+        case 6:
+            fresh.actualQuality = "lossless";
+            break;
+        case 7:
+            fresh.preview = PreviewRange{1000, 2000};
+            break;
+        }
+        const auto request = resolver.requests.size();
+        emit backend.event({token, Kind::SourceExpired});
+        QCOMPARE(resolver.requests.size(), request + 1);
+        resolver.finish(request, fresh);
+        QCOMPARE(backend.refreshes.size(), mutation == 0 ? 1 : 0);
+        QCOMPARE(selections.count(), 0);
+        QCOMPARE(player.snapshot().token, active);
+        QCOMPARE(player.snapshot().provider, SourceProvider::Bilibili);
+    }
     void permissionExpiryAndErrorAreBounded()
     {
         application::SessionCoordinator session;

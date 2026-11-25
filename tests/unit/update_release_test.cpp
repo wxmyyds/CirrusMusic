@@ -37,15 +37,18 @@ class UpdateReleaseTest : public QObject
     void acceptsOnlyTheProjectsReleasePages()
     {
         QVERIFY(
-            isReleasePage(QUrl(u"https://github.com/Guang233/CirrusMusic/releases/tag/v0.1.2"_s)));
+            isReleasePage(QUrl(u"https://github.com/wxmyyds/CirrusMusic/releases/tag/v0.1.2"_s)));
         QVERIFY(
-            !isReleasePage(QUrl(u"http://github.com/Guang233/CirrusMusic/releases/tag/v0.1.2"_s)));
+            !isReleasePage(QUrl(u"http://github.com/wxmyyds/CirrusMusic/releases/tag/v0.1.2"_s)));
         QVERIFY(
             !isReleasePage(QUrl(u"https://github.com/someone/CirrusMusic/releases/tag/v0.1.2"_s)));
+        // Upstream releases would replace this fork's provider support and exclusions.
+        QVERIFY(
+            !isReleasePage(QUrl(u"https://github.com/Guang233/CirrusMusic/releases/tag/v0.5.0"_s)));
         QVERIFY(!isReleasePage(
-            QUrl(u"https://github.com.evil.example/Guang233/CirrusMusic/releases/x"_s)));
-        QVERIFY(!isReleasePage(QUrl(u"https://user@github.com/Guang233/CirrusMusic/releases/x"_s)));
-        QVERIFY(!isReleasePage(QUrl(u"https://github.com/Guang233/CirrusMusic/archive/x"_s)));
+            QUrl(u"https://github.com.evil.example/wxmyyds/CirrusMusic/releases/x"_s)));
+        QVERIFY(!isReleasePage(QUrl(u"https://user@github.com/wxmyyds/CirrusMusic/releases/x"_s)));
+        QVERIFY(!isReleasePage(QUrl(u"https://github.com/wxmyyds/CirrusMusic/archive/x"_s)));
     }
 
     void parsesTheLatestRelease()
@@ -54,7 +57,7 @@ class UpdateReleaseTest : public QObject
         const QByteArray json =
             "{\"tag_name\": \"v0.1.2\", \"name\": \"Cirrus 0.1.2\", \"draft\": false,"
             " \"prerelease\": false,"
-            " \"html_url\": \"https://github.com/Guang233/CirrusMusic/releases/tag/v0.1.2\","
+            " \"html_url\": \"https://github.com/wxmyyds/CirrusMusic/releases/tag/v0.1.2\","
             " \"published_at\": \"2026-11-20T08:00:00Z\","
             " \"body\": \"### 修复\\r\\n\\r\\n- 一处 **问题**。\\r\\n\"}";
         const auto release = parseRelease(json);
@@ -69,7 +72,7 @@ class UpdateReleaseTest : public QObject
     {
         QVERIFY(!parseRelease("not json"));
         const char* page =
-            "\"html_url\": \"https://github.com/Guang233/CirrusMusic/releases/tag/v0.2.0\"";
+            "\"html_url\": \"https://github.com/wxmyyds/CirrusMusic/releases/tag/v0.2.0\"";
         QVERIFY(!parseRelease(QByteArray("{\"tag_name\": \"v0.2.0\", \"prerelease\": true, ") +
                               page + '}'));
         QVERIFY(
@@ -83,11 +86,11 @@ class UpdateReleaseTest : public QObject
     {
         const QByteArray head =
             "{\"tag_name\": \"v0.5.0\", \"draft\": false, \"prerelease\": false,"
-            " \"html_url\": \"https://github.com/Guang233/CirrusMusic/releases/tag/v0.5.0\","
+            " \"html_url\": \"https://github.com/wxmyyds/CirrusMusic/releases/tag/v0.5.0\","
             " \"assets\": [";
         const QByteArray zip = "{\"name\": \"Cirrus-0.5.0-windows-x64.zip\", \"size\": 9,"
                                " \"browser_download_url\": "
-                               "\"https://github.com/Guang233/CirrusMusic/releases/download/v0.5.0/"
+                               "\"https://github.com/wxmyyds/CirrusMusic/releases/download/v0.5.0/"
                                "Cirrus-0.5.0-windows-x64.zip\","
                                " \"digest\": \"sha256:" +
                                QByteArray(64, 'a') + "\"}";
@@ -96,7 +99,7 @@ class UpdateReleaseTest : public QObject
                    QByteArray::number(size) + ", \"browser_download_url\": \"" + url +
                    "\", \"digest\": \"" + digest + "\"}";
         };
-        const QByteArray url = "https://github.com/Guang233/CirrusMusic/releases/download/v0.5.0/"
+        const QByteArray url = "https://github.com/wxmyyds/CirrusMusic/releases/download/v0.5.0/"
                                "Cirrus-0.5.0-windows-x64-setup.exe";
         const QByteArray digest = "sha256:" + QByteArray(62, '0') + "ff";
 
@@ -113,16 +116,19 @@ class UpdateReleaseTest : public QObject
             return r && !r->installer;
         };
         QVERIFY(without(zip));
+        QVERIFY(without(setup("https://github.com/Guang233/CirrusMusic/releases/download/v0.5.0/"
+                              "Cirrus-0.5.0-windows-x64-setup.exe",
+                              digest, 1234)));
         QVERIFY(without(setup(url, "sha1:" + QByteArray(40, '0'), 1234)));
         QVERIFY(without(setup(url, "sha256:" + QByteArray(64, 'A'), 1234)));
         QVERIFY(without(setup(url, digest, 0)));
-        QVERIFY(without(setup("http://github.com/Guang233/CirrusMusic/releases/download/v0.5.0/"
+        QVERIFY(without(setup("http://github.com/wxmyyds/CirrusMusic/releases/download/v0.5.0/"
                               "Cirrus-0.5.0-windows-x64-setup.exe",
                               digest, 1234)));
-        QVERIFY(without(setup("https://github.com/Guang233/CirrusMusic/releases/download/v0.4.0/"
+        QVERIFY(without(setup("https://github.com/wxmyyds/CirrusMusic/releases/download/v0.4.0/"
                               "Cirrus-0.5.0-windows-x64-setup.exe",
                               digest, 1234)));
-        QVERIFY(without(setup("https://example.com/Guang233/CirrusMusic/releases/download/v0.5.0/"
+        QVERIFY(without(setup("https://example.com/wxmyyds/CirrusMusic/releases/download/v0.5.0/"
                               "Cirrus-0.5.0-windows-x64-setup.exe",
                               digest, 1234)));
         QVERIFY(without(setup(url + "?x=1", digest, 1234)));

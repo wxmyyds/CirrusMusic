@@ -50,6 +50,16 @@ std::variant<StreamSource, PlaybackFailure> usable(StreamResult result, const So
         return PlaybackFailure{PlaybackError::Expired};
     return source;
 }
+// Refresh resumes a partially consumed stream. A different provider/page/encoding
+// must be a new load, never a replacement URL for the old cache and lyric binding.
+bool sameStream(const MediaSource& a, const MediaSource& b)
+{
+    return a.provider == b.provider && a.identity == b.identity && a.bili == b.bili &&
+           a.size == b.size && a.format == b.format && a.actualQuality == b.actualQuality &&
+           a.preview.has_value() == b.preview.has_value() &&
+           (!a.preview ||
+            (a.preview->startMs == b.preview->startMs && a.preview->endMs == b.preview->endMs));
+}
 } // namespace
 
 void PlaybackCoordinator::resolved(quint64 id, SessionToken context, StreamResult result)
@@ -75,6 +85,10 @@ void PlaybackCoordinator::resolved(quint64 id, SessionToken context, StreamResul
         if (!forCurrent && !forNext)
             return;
         auto source = usable(std::move(result), refresh.query.song);
+        const auto* accepted = forCurrent ? (m_source ? &*m_source : nullptr) : &m_next->source;
+        if (const auto* fresh = std::get_if<StreamSource>(&source);
+            fresh && (!accepted || !sameStream(*accepted, *fresh)))
+            source = PlaybackFailure{PlaybackError::Expired};
         if (const auto* failure = std::get_if<PlaybackFailure>(&source))
             log::warn(lcPlayback, "load.refresh_failed",
                       {{"token", refresh.token.generation},
@@ -110,6 +124,7 @@ void PlaybackCoordinator::resolved(quint64 id, SessionToken context, StreamResul
                 {"preview", source.preview.has_value()},
                 {"bytes", source.size},
                 {"ms", m_loadClock.elapsed()}});
+    m_source = source;
     m_snapshot.actualQuality = source.actualQuality;
     m_snapshot.preview = source.preview;
     m_snapshot.provider = source.provider;
@@ -168,9 +183,7 @@ void PlaybackCoordinator::preloaded(StreamResult result)
         return;
     }
     auto& source = std::get<StreamSource>(checked);
-    m_next->actualQuality = source.actualQuality;
-    m_next->preview = source.preview;
-    m_next->provider = source.provider;
+    m_next->source = source;
     m_next->loaded = true;
     const auto token = m_next->token;
     const QPointer<PlaybackCoordinator> guard(this);
@@ -213,9 +226,10 @@ void PlaybackCoordinator::advance()
     snapshot.intent = m_snapshot.intent;
     snapshot.state =
         m_snapshot.intent == TransportIntent::Play ? PlaybackState::Playing : PlaybackState::Paused;
-    snapshot.actualQuality = next.actualQuality;
-    snapshot.preview = next.preview;
-    snapshot.provider = next.provider;
+    m_source = next.source;
+    snapshot.actualQuality = next.source.actualQuality;
+    snapshot.preview = next.source.preview;
+    snapshot.provider = next.source.provider;
     snapshot.volumeLinear = m_snapshot.volumeLinear;
     m_snapshot = std::move(snapshot);
     m_query = next.query;
@@ -254,11 +268,12 @@ bool PlaybackCoordinator::current(LoadToken token) const
 }
 bool PlaybackCoordinator::acceptsLyrics(LoadToken token) const
 {
-    return current(token) || (current(m_snapshot.token) && m_next && m_next->loaded &&
-                              m_next->token == token);
+    return current(token) ||
+           (current(m_snapshot.token) && m_next && m_next->loaded && m_next->token == token);
 }
 void PlaybackCoordinator::retire()
 {
+    m_source.reset();
     m_ready = false;
     m_vocals.clear();
     m_deadline.stop();

@@ -15,6 +15,10 @@
 
 Cirrus 是一个非官方的网易云音乐桌面客户端，用 C++ 和 Qt Quick 编写，优先面向 Linux。
 
+本 fork 保留 Bilibili 辅助音源、实际播放源字幕和安全凭据存储；同步上游 0.5.0 的其他更新，
+有意不引入云盘页面、音乐上传、删除及纠错功能。应用内更新仅检查本 fork 的 Release，
+避免被上游安装包覆盖；尚未发布的版本从 GitHub Actions 下载测试产物。
+
 ![首页](packaging/screenshots/home-dark.png)
 
 | 侧边播放器 | 播放页（Material 风格） |
@@ -46,7 +50,7 @@ Cirrus 是一个非官方的网易云音乐桌面客户端，用 C++ 和 Qt Quic
 
 ## 安装
 
-从 [Releases](https://github.com/Guang233/CirrusMusic/releases) 下载：
+从本 fork 的 [Releases](https://github.com/wxmyyds/CirrusMusic/releases) 下载（尚未发布时使用 Actions 产物）：
 
 | 系统 | 文件 | 安装 |
 | --- | --- | --- |
@@ -105,12 +109,17 @@ cmake --build --preset linux-release --target appCirrusMusic
 
 ## 给其他程序读取播放状态
 
-在 Linux 上打开 设置 › 窗口与系统 › 向其他程序提供播放状态 后，同一用户的其他程序可以通过本机的 Unix 套接字读取：
+在 Linux 上打开 设置 › 窗口与系统 › 向其他程序提供播放状态 (私货) 后，同一用户的其他程序可以通过本机的 Unix 套接字读取：
 
 - 正在播放的歌（歌名、歌手、专辑）、进度和播放状态；
 - 歌词：原文、翻译、罗马音，各有逐行和逐字，还有当前唱到的行和字。
 
-这个接口只读，不能控制播放（控制请用 MPRIS），也不会因此多发任何网络请求。适合用来做桌面歌词、waybar/polybar 的状态栏模块、OBS 叠加层等。协议说明和一个只用 Python 标准库的示例客户端见 [tools/now-playing](tools/now-playing/README.md)：
+这个开关默认关闭，接口只读，不能控制播放（控制请用 MPRIS），也不会因此多发任何网络请求。
+这是本 fork 唯一的详细歌词导出接口：不再导出旧 `org.cirrus.Lyrics1` 或 MPRIS `xesam:asText`。
+Bilibili 字幕与界面读取同一个实际播放会话的歌词文档，不伪造逐字时间。
+发现清单写在私有运行时目录，歌词正文仅通过 socket 传输；关闭开关会断开客户端并删除自己的端点。
+升级后请打开这个新开关，旧的“向外部提供歌词”设置不再使用。
+适合用来做桌面歌词、waybar/polybar 的状态栏模块、OBS 叠加层等。协议说明和一个只用 Python 标准库的示例客户端见 [tools/now-playing](tools/now-playing/README.md)：
 
 ```bash
 python3 tools/now-playing/cirrus_now_playing.py          # 每首歌一行标题，每句歌词一行
