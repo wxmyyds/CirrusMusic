@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import Cirrus.Theme
+import Cirrus.Controls
 import Cirrus.Window
 import Cirrus.Presentation
 import Cirrus.Player
