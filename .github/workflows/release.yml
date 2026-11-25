@@ -1,5 +1,5 @@
-# Manually select the source ref and version tag. Test and build the same SHA
-# in parallel; publish only after every test, build and asset check succeeds.
+# Check the release metadata, then test the locked source SHA before starting
+# parallel native builds. Publish only after every build and asset check succeeds.
 name: Release
 
 on:
@@ -61,8 +61,13 @@ jobs:
           import os
           from pathlib import Path
           heading = f"## [{os.environ['VERSION']}]"
-          if not any(line.startswith(heading) for line in Path('CHANGELOG.md').read_text().splitlines()):
+          lines = Path('CHANGELOG.md').read_text().splitlines()
+          start = next((i for i, line in enumerate(lines) if line.startswith(heading)), None)
+          if start is None:
               raise SystemExit('CHANGELOG.md has no section for the release version')
+          end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith('## [')), len(lines))
+          if not any(line.strip() for line in lines[start + 1:end]):
+              raise SystemExit('Release notes must not be empty')
           PY
           {
             echo "version=$version"
@@ -79,21 +84,21 @@ jobs:
 
   linux:
     name: Linux packages
-    needs: check
+    needs: [check, ci]
     uses: ./.github/workflows/linux-build.yml
     with:
       ref: ${{ needs.check.outputs.commit }}
 
   windows:
     name: Windows packages
-    needs: check
+    needs: [check, ci]
     uses: ./.github/workflows/windows-build.yml
     with:
       ref: ${{ needs.check.outputs.commit }}
 
   macos:
     name: macOS packages
-    needs: check
+    needs: [check, ci]
     uses: ./.github/workflows/macos-build.yml
     with:
       ref: ${{ needs.check.outputs.commit }}
@@ -161,8 +166,6 @@ jobs:
           start = next(i for i, line in enumerate(lines) if line.startswith(f'## [{version}]')) + 1
           end = next((i for i in range(start, len(lines)) if lines[i].startswith('## [')), len(lines))
           notes = '\n'.join(lines[start:end]).strip()
-          if not notes:
-              raise SystemExit('Release notes must not be empty')
           Path('notes.md').write_text(notes + '\n')
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
               summary.write(f"Source: `{os.environ['SOURCE_COMMIT']}`\n\nTag: `{os.environ['TAG']}`\n\n10 platform/CPU groups, 12 binary packages and the bundled-library source archive verified.\n")
