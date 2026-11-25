@@ -1,11 +1,10 @@
 # CI renders this template from git archive of the checked-out HEAD and its SHA-256.
-# This is separate from packaging/aur/PKGBUILD, which tracks release-tag sources.
 pkgname=cirrus
 pkgver=@PKGVER@
 pkgrel=1
 pkgdesc='Third-party NetEase Cloud Music client'
-arch=('x86_64')
-url='https://github.com/Guang233/CirrusMusic'
+arch=('x86_64' 'aarch64')
+url='https://github.com/wxmyyds/CirrusMusic'
 license=('MIT')
 depends=('gcc-libs' 'glibc' 'qt6-base>=6.10' 'qt6-declarative>=6.10'
          'qt6-multimedia>=6.10' 'qt6-multimedia-ffmpeg' 'qt6-wayland>=6.10'

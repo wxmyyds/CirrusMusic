@@ -11,7 +11,7 @@
 #   notices in licenses/.
 # macOS: <CIRRUS_EXECUTABLE>.app in the prefix, notices in its Contents/Resources/doc/.
 # CIRRUS_DEPLOY_QT also copies the Qt runtime and the non-system libraries (FFmpeg,
-# QtKeychain, OpenSSL on Windows and macOS) next to it: deb, AppImage, the Windows
+# QtKeychain, OpenSSL on Windows and macOS) next to it: deb, RPM, the Windows
 # installer and the macOS dmg (macdeployqt puts them into the bundle).
 # Without it (AUR, distro builds) the system's libraries are used.
 
@@ -35,10 +35,10 @@ install(FILES
         "${PROJECT_SOURCE_DIR}/packaging/THIRD-PARTY-NOTICES.md"
     DESTINATION "${cirrus_doc_dir}")
 install(FILES
-        "${PROJECT_SOURCE_DIR}/packaging/licenses/Apache-2.0.txt"
-        "${PROJECT_SOURCE_DIR}/packaging/licenses/GPL-3.0-only.txt"
-        "${PROJECT_SOURCE_DIR}/packaging/licenses/LGPL-2.1-or-later.txt"
-        "${PROJECT_SOURCE_DIR}/packaging/licenses/LGPL-3.0-only.txt"
+        "${PROJECT_SOURCE_DIR}/third_party/licenses/Apache-2.0.txt"
+        "${PROJECT_SOURCE_DIR}/third_party/licenses/GPL-3.0-only.txt"
+        "${PROJECT_SOURCE_DIR}/third_party/licenses/LGPL-2.1-or-later.txt"
+        "${PROJECT_SOURCE_DIR}/third_party/licenses/LGPL-3.0-only.txt"
         "${PROJECT_SOURCE_DIR}/ui/theme/fonts/MiSans-LICENSE.txt"
     DESTINATION "${cirrus_doc_dir}/licenses")
 install(FILES "${PROJECT_SOURCE_DIR}/third_party/qrcodegen/LICENSE"
@@ -47,8 +47,8 @@ install(FILES "${PROJECT_SOURCE_DIR}/third_party/api-enhanced/LICENSE"
     DESTINATION "${cirrus_doc_dir}/licenses" RENAME api-enhanced-MIT.txt)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    # The desktop file starts the installed executable through PATH (the deb links
-    # /usr/bin/cirrus to /opt/cirrus/bin/cirrus; the AppImage runs its own copy).
+    # The desktop file starts the installed executable through PATH; deb/RPM link
+    # /usr/bin/cirrus to /opt/cirrus/bin/cirrus, while Arch installs into /usr.
     set(CIRRUS_DESKTOP_EXEC "${CIRRUS_EXECUTABLE}")
     string(TIMESTAMP CIRRUS_RELEASE_DATE "%Y-%m-%d" UTC)
     configure_file("${PROJECT_SOURCE_DIR}/packaging/linux/${CIRRUS_APP_ID}.desktop.in"
@@ -84,7 +84,7 @@ if(CIRRUS_DEPLOY_QT)
     elseif(WIN32)
         # windeployqt aborts on plugins Windows does not have (qwayland), so the Linux
         # list stays out. Verbose: a failure then says where it stopped. The MSVC runtime
-        # goes next to the exe (InstallRequiredSystemLibraries below), not vc_redist.exe.
+        # is deployed app-locally from the native toolset by the Windows package step.
         list(APPEND cirrus_deploy_options
             NO_COMPILER_RUNTIME
             EXCLUDE_PLUGIN_TYPES designer qmltooling
@@ -124,8 +124,17 @@ if(CIRRUS_DEPLOY_QT)
             if(cirrus_missing)
                 message(WARNING \"Unresolved DLLs: \${cirrus_missing}\")
             endif()")
-        # The MSVC runtime next to the executable (app-local; no vc_redist step).
-        set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION "${CMAKE_INSTALL_BINDIR}")
-        include(InstallRequiredSystemLibraries)
+        # Bind app-local CRT deployment to the active compiler and native redist.
+        # The package step selects actual imports and validates every PE; copying
+        # a whole discovered CRT directory can include unused foreign-ABI files.
+        if(NOT MSVC OR NOT MSVC_TOOLSET_VERSION OR NOT MSVC_CXX_ARCHITECTURE_ID
+                OR NOT DEFINED ENV{VCToolsRedistDir})
+            message(FATAL_ERROR "Windows deployment requires the native MSVC toolset environment")
+        endif()
+        file(TO_CMAKE_PATH "$ENV{VCToolsRedistDir}" cirrus_msvc_redist)
+        file(GENERATE
+            OUTPUT "${CMAKE_BINARY_DIR}/cirrus-msvc-runtime.txt"
+            CONTENT "${cirrus_msvc_redist}/${MSVC_CXX_ARCHITECTURE_ID}/Microsoft.VC${MSVC_TOOLSET_VERSION}.CRT\n"
+            NEWLINE_STYLE UNIX)
     endif()
 endif()

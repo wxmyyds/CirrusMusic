@@ -6,7 +6,7 @@
 # Its sonames (libavcodec.so.63 …) differ from the FFmpeg 7.1 that Qt Multimedia ships
 # (libavcodec.so.61), so both live in the bundle's lib/.
 #
-#   packaging/deps/build-ffmpeg.sh <prefix>
+#   packaging/build-ffmpeg.sh <prefix>
 #
 # Needs a C compiler and make; on Linux also nasm and patchelf. On macOS the libraries keep
 # their absolute install names, which macdeployqt follows and rewrites when it copies them

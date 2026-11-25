@@ -23,9 +23,11 @@ namespace cirrus::storage
 // `path` does not exist, or is a private regular file.
 [[nodiscard]] bool isPrivateFileOrAbsent(const QString& path);
 // Opens `path` read-write, creating it owner-only, never through a link; null unless the
-// opened file is private. On Windows others may read, write and delete it meanwhile, as
-// on POSIX (readers use their own handles).
-[[nodiscard]] std::unique_ptr<QFile> openPrivateFile(const QString& path);
+// opened file is private. Read-only opens require an existing file. Either access mode may
+// include Unbuffered. Handles share read/write/delete with other authorized handles, as
+// on POSIX; a cache reader must not block invalidation or eviction.
+[[nodiscard]] std::unique_ptr<QFile>
+openPrivateFile(const QString& path, QIODevice::OpenMode mode = QIODevice::ReadWrite);
 
 // Why the last check on this thread said no: a short fixed id ("mode", "owner",
 // "ancestor_writable", "acl", "open" …) and the system's error number when a call failed

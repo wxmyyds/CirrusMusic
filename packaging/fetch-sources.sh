@@ -2,7 +2,7 @@
 # Downloads the exact sources of the LGPL/BSD libraries the packages bundle, for the
 # release's source offer (packaging/THIRD-PARTY-NOTICES.md).
 #
-#   packaging/deps/fetch-sources.sh <dir>
+#   packaging/fetch-sources.sh <dir>
 set -euo pipefail
 source "$(dirname "$0")/versions.sh"
 dir=${1:?usage: fetch-sources.sh <dir>}

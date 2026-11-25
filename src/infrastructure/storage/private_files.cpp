@@ -40,6 +40,15 @@ bool absoluteAndClean(const QString& path)
     return true;
 }
 
+bool validOpenMode(QIODevice::OpenMode mode)
+{
+    constexpr auto allowed = QIODevice::ReadWrite | QIODevice::Unbuffered;
+    const auto access = mode & QIODevice::ReadWrite;
+    if ((mode & ~allowed) || (access != QIODevice::ReadOnly && access != QIODevice::ReadWrite))
+        return refuse("open_mode");
+    return true;
+}
+
 #if defined(Q_OS_WIN)
 std::wstring native(const QString& path) { return QDir::toNativeSeparators(path).toStdWString(); }
 
@@ -186,12 +195,17 @@ bool isPrivateFileOrAbsent(const QString& path)
     return good;
 }
 
-std::unique_ptr<QFile> openPrivateFile(const QString& path)
+std::unique_ptr<QFile> openPrivateFile(const QString& path, QIODevice::OpenMode mode)
 {
     t_refusal = {};
+    if (!validOpenMode(mode))
+        return {};
+    const bool readOnly = !mode.testFlag(QIODevice::WriteOnly);
     const HANDLE handle =
-        CreateFileW(native(path).c_str(), GENERIC_READ | GENERIC_WRITE | READ_CONTROL,
-                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_ALWAYS,
+        CreateFileW(native(path).c_str(),
+                    (readOnly ? GENERIC_READ : GENERIC_READ | GENERIC_WRITE) | READ_CONTROL,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                    readOnly ? OPEN_EXISTING : OPEN_ALWAYS,
                     FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
     if (handle == INVALID_HANDLE_VALUE) {
         refuse("open", long(GetLastError()));
@@ -201,14 +215,15 @@ std::unique_ptr<QFile> openPrivateFile(const QString& path)
         CloseHandle(handle);
         return {};
     }
-    const int fd = _open_osfhandle(reinterpret_cast<intptr_t>(handle), _O_RDWR | _O_BINARY);
+    const int fd = _open_osfhandle(reinterpret_cast<intptr_t>(handle),
+                                   (readOnly ? _O_RDONLY : _O_RDWR) | _O_BINARY);
     if (fd < 0) {
         CloseHandle(handle);
         refuse("descriptor");
         return {};
     }
     auto file = std::make_unique<QFile>(path);
-    if (!file->open(fd, QIODevice::ReadWrite, QFileDevice::AutoCloseHandle)) {
+    if (!file->open(fd, mode, QFileDevice::AutoCloseHandle)) {
         _close(fd);
         refuse("qfile_open");
         return {};
@@ -272,11 +287,16 @@ bool isPrivateFileOrAbsent(const QString& path)
     return errno == ENOENT || refuse("stat", errno);
 }
 
-std::unique_ptr<QFile> openPrivateFile(const QString& path)
+std::unique_ptr<QFile> openPrivateFile(const QString& path, QIODevice::OpenMode mode)
 {
     t_refusal = {};
+    if (!validOpenMode(mode))
+        return {};
+    const bool readOnly = !mode.testFlag(QIODevice::WriteOnly);
     const auto bytes = QFile::encodeName(path);
-    const int fd = ::open(bytes.constData(), O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
+    const int flags =
+        (readOnly ? O_RDONLY : O_RDWR) | (readOnly ? 0 : O_CREAT) | O_NOFOLLOW | O_CLOEXEC;
+    const int fd = ::open(bytes.constData(), flags, 0600);
     if (fd < 0) {
         refuse("open", errno);
         return {};
@@ -288,7 +308,7 @@ std::unique_ptr<QFile> openPrivateFile(const QString& path)
         return {};
     }
     auto file = std::make_unique<QFile>(path);
-    if (!file->open(fd, QIODevice::ReadWrite, QFileDevice::AutoCloseHandle)) {
+    if (!file->open(fd, mode, QFileDevice::AutoCloseHandle)) {
         ::close(fd);
         refuse("qfile_open");
         return {};
@@ -301,7 +321,7 @@ std::unique_ptr<QFile> openPrivateFile(const QString& path)
 bool isPrivateDirectory(const QString&) { return refuse("unsupported_system"); }
 bool makePrivateDirectory(const QString&) { return false; }
 bool isPrivateFileOrAbsent(const QString&) { return false; }
-std::unique_ptr<QFile> openPrivateFile(const QString&) { return {}; }
+std::unique_ptr<QFile> openPrivateFile(const QString&, QIODevice::OpenMode) { return {}; }
 
 #endif
 

@@ -1,8 +1,4 @@
-# Builds and tests every push to master and every pull request (packaging/README.md).
-# Linux always; Windows (build) and macOS (build and tests) only when asked (Run workflow),
-# as they take longest. "Build packages" also makes the deb, AppImage, Windows
-# installer/zip and macOS dmg as artifacts. Native Arch packaging is selected
-# separately in linux-packages.yml, not in this workflow.
+# Tests only. Production packages are built by the three *-build workflows.
 name: CI
 
 on:
@@ -11,149 +7,120 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
-      windows:
-        description: Also build on Windows
-        type: boolean
-        default: false
-      macos:
-        description: Also build and test on macOS
-        type: boolean
-        default: false
-      package:
-        description: Build deb/AppImage, Windows and macOS packages as artifacts, no release
-        type: boolean
-        default: false
+      ref:
+        description: Source ref to test (empty uses the selected workflow commit)
+        type: string
+        default: ''
   workflow_call:
     inputs:
-      windows:
-        type: boolean
-        default: false
-      package:
-        type: boolean
-        default: false
-
-# A newer push replaces a running check of the same branch. (Called from the release
-# workflow, github.workflow is "Release", so a release never cancels a branch's CI.)
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+      ref:
+        type: string
+        default: ''
 
 permissions:
   contents: read
 
-env:
-  QT_VERSION: 6.11.2
-  QT_MODULES: qtmultimedia qtshadertools qtimageformats
+concurrency:
+  group: ci-${{ github.workflow }}-${{ inputs.ref || github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  linux:
-    name: Linux build and tests
-    runs-on: ubuntu-22.04
-    env:
-      DEPS: ${{ github.workspace }}/build-deps
-      CCACHE_DIR: ${{ github.workspace }}/build-ccache
-      CCACHE_MAXSIZE: 800M
-      # Qt's generated sources embed absolute paths; compare them relative to the checkout.
-      CCACHE_BASEDIR: ${{ github.workspace }}
+  tests:
+    name: ${{ matrix.platform }} tests (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux
+            runner: ubuntu-22.04
+            arch: x86_64
+          - platform: Windows
+            runner: windows-2022
+            arch: x86_64
+          - platform: macOS
+            runner: macos-15
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v7
-
-      - name: System packages
-        run: packaging/linux/install-build-deps.sh
-
-      - uses: jurplel/install-qt-action@v4
         with:
-          version: ${{ env.QT_VERSION }}
-          host: linux
-          target: desktop
-          arch: linux_gcc_64
-          modules: ${{ env.QT_MODULES }}
-          cache: true
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
 
-      # Restore and save separately: a cache is then kept even when a later step fails.
-      - name: Restore FFmpeg and QtKeychain
-        id: deps
-        uses: actions/cache/restore@v6
+      - name: Set up Linux test dependencies
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/setup-linux
         with:
-          path: ${{ env.DEPS }}
-          key: deps-linux-ubuntu22.04-${{ hashFiles('packaging/deps/*.sh') }}
+          distribution: ubuntu
+          arch: ${{ matrix.arch }}
+          cache-scope: tests
 
-      - name: Build FFmpeg and QtKeychain
-        if: steps.deps.outputs.cache-hit != 'true'
+      - name: Set up Windows test dependencies
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/setup-windows
+        with:
+          arch: ${{ matrix.arch }}
+
+      - name: Set up macOS test dependencies
+        if: runner.os == 'macOS'
+        uses: ./.github/actions/setup-macos
+        with:
+          arch: ${{ matrix.arch }}
+          cache-scope: tests
+
+      - name: Configure test build
         run: |
-          packaging/deps/build-ffmpeg.sh "$DEPS"
-          packaging/deps/build-qtkeychain.sh "$DEPS" "$QT_ROOT_DIR"
+          set -euo pipefail
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON \
+            -DCIRRUS_DEPLOY_QT=OFF \
+            -DCMAKE_PREFIX_PATH="$CIRRUS_CMAKE_PREFIX_PATH" \
+            -DPKG_CONFIG_EXECUTABLE="$CIRRUS_PKG_CONFIG_EXECUTABLE" \
+            -DOPENSSL_ROOT_DIR="$CIRRUS_OPENSSL_ROOT" \
+            -DCMAKE_C_COMPILER_LAUNCHER="$CIRRUS_COMPILER_LAUNCHER" \
+            -DCMAKE_CXX_COMPILER_LAUNCHER="$CIRRUS_COMPILER_LAUNCHER"
 
-      - name: Save FFmpeg and QtKeychain
-        if: steps.deps.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
-        with:
-          path: ${{ env.DEPS }}
-          key: ${{ steps.deps.outputs.cache-primary-key }}
-
-      # Compiler cache: a push rebuilds only what changed. Each run saves a new entry;
-      # the newest one of this branch (or master) is restored.
-      - name: Restore compiler cache
-        uses: actions/cache/restore@v6
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-linux-${{ github.ref_name }}-${{ github.sha }}
-          restore-keys: |
-            ccache-linux-${{ github.ref_name }}-
-            ccache-linux-master-
-
-      - name: Configure
-        run: >
-          PKG_CONFIG_PATH="$DEPS/lib/pkgconfig"
-          cmake -S . -B build -G Ninja
-          -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR;$DEPS"
-          -DCMAKE_C_COMPILER_LAUNCHER=ccache
-          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-
-      # -k 0: report every compile error of a run, not only the first few.
-      - name: Build (app, gallery, tests)
-        run: |
-          ccache --zero-stats
-          cmake --build build --parallel 4 -- -k 0
-          ccache --show-stats
-
-      - name: Save compiler cache
-        if: always()
-        uses: actions/cache/save@v6
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-linux-${{ github.ref_name }}-${{ github.sha }}
+      - name: Compile test dependencies
+        run: cmake --build build --parallel 4 -- -k 0
 
       - name: QML lint
         run: cmake --build build --target all_qmllint
 
-      - name: Tests
+      - name: Run tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: >
-          dbus-run-session --
-          ctest --test-dir build --output-on-failure --no-tests=error --parallel 4
+          QT_FORCE_STDERR_LOGGING: '1'
+        run: |
+          set -euo pipefail
+          command=(ctest --test-dir build --output-on-failure --no-tests=error --parallel 4
+            --output-junit "$PWD/build/junit.xml")
+          if [[ $RUNNER_OS == Linux ]]; then
+            dbus-run-session -- "${command[@]}"
+          else
+            "${command[@]}"
+          fi
 
-  windows:
-    name: Windows build
-    if: inputs.windows || inputs.package
-    uses: ./.github/workflows/windows.yml
-    with:
-      package: ${{ inputs.package == true }}
+      - name: Save compiler cache
+        if: always() && env.CIRRUS_CCACHE_KEY != '' && env.CIRRUS_CCACHE_HIT != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ env.CIRRUS_CCACHE_KEY }}
 
-  # With "Build packages" the macOS job makes the dmg instead of running the tests.
-  macos:
-    name: macOS
-    if: inputs.macos || inputs.package
-    uses: ./.github/workflows/macos.yml
-    with:
-      package: ${{ inputs.package == true }}
-
-  linux-packages:
-    name: Linux packages
-    needs: linux
-    if: inputs.package
-    uses: ./.github/workflows/linux-packages.yml
-    with:
-      format: portable
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-${{ matrix.platform }}-${{ matrix.arch }}
+          retention-days: 3
+          overwrite: ${{ github.run_attempt > 1 }}
+          path: |
+            build/junit.xml
+            build/Testing/Temporary/LastTest.log
+            build/Testing/Temporary/LastTestsFailed.log
+          if-no-files-found: warn

@@ -16,6 +16,7 @@
 #include <QProcess>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QSysInfo>
 
 #include <algorithm>
 
@@ -28,6 +29,17 @@ constexpr qint64 kIntervalMs = 24 * 60 * 60 * 1000; // between checks of its own
 constexpr int kTimeoutMs = 15 * 1000;
 // The installer's download is aborted after this long without a byte.
 constexpr int kDownloadStallMs = 30 * 1000;
+
+updates::WindowsArchitecture buildWindowsArchitecture()
+{
+    // Select for this executable's build, including x64 apps under ARM emulation.
+    const QString cpu = QSysInfo::buildCpuArchitecture();
+    if (cpu == QLatin1String("x86_64"))
+        return updates::WindowsArchitecture::X86_64;
+    if (cpu == QLatin1String("arm64"))
+        return updates::WindowsArchitecture::Arm64;
+    return updates::WindowsArchitecture::Unknown;
+}
 
 const char* outcomeName(UpdateCheck::Status status)
 {
@@ -133,7 +145,8 @@ void UpdateCheck::finish(QNetworkReply* reply, bool manual)
     Status status = Failed;
     Failure failure = NoFailure;
     if (httpStatus == 200) {
-        if (const auto release = updates::parseRelease(reply->readAll())) {
+        if (const auto release =
+                updates::parseRelease(reply->readAll(), buildWindowsArchitecture())) {
             // A download of another version is no longer wanted.
             if (release->version != m_release.version && m_download != NoDownload) {
                 cancelDownload();

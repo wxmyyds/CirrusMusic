@@ -37,10 +37,12 @@ body:
       label: 安装方式
       options:
         - deb 包
-        - AppImage
+        - RPM 包
+        - Arch 原生 pacman 包
         - AUR / PKGBUILD
         - Windows 安装程序
         - Windows 免安装 zip
+        - macOS DMG
         - 自己从源码构建
         - 其他
     validations:

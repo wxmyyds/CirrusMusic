@@ -366,6 +366,9 @@ set_tests_properties(cloud_history PROPERTIES TIMEOUT 20)
 
 qt_add_executable(tst_logging unit/logging_test.cpp)
 target_link_libraries(tst_logging PRIVATE cirrus_logging Qt6::Test)
+if(WIN32)
+    target_link_libraries(tst_logging PRIVATE cirrus_storage) # Native file ownership/DACL checks
+endif()
 add_test(NAME logging COMMAND tst_logging)
 set_tests_properties(logging PROPERTIES TIMEOUT 30)
 

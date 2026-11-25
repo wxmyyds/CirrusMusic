@@ -1,0 +1,142 @@
+name: Set up Windows dependencies
+description: Native MSVC, vcpkg, Qt, and QtKeychain shared by tests and production packages
+inputs:
+  arch:
+    description: x86_64 or arm64 (must match the runner CPU)
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Set up native MSVC
+      id: compiler
+      shell: pwsh
+      env:
+        CIRRUS_WINDOWS_ARCH: ${{ inputs.arch }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $cpu = switch ($env:CIRRUS_WINDOWS_ARCH) {
+          'x86_64' { 'x64' }
+          'arm64' { 'arm64' }
+          default { throw "Unsupported Windows architecture: $env:CIRRUS_WINDOWS_ARCH" }
+        }
+        if ($env:RUNNER_ARCH.ToLowerInvariant() -ne $cpu) {
+          throw "A native $cpu runner is required (got $env:RUNNER_ARCH)"
+        }
+        # vswhere discovers VS 2022 on windows-2022 and VS 2026 on windows-11-arm.
+        # Explicit host/target CPUs avoid x64 emulation or cross compilation on ARM.
+        $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+        $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.ARM64 -property installationPath
+        if ($cpu -eq 'x64') {
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+        }
+        if (!$vs) { throw 'Native MSVC installation was not found' }
+        $devcmd = Join-Path $vs 'Common7\Tools\VsDevCmd.bat'
+        $lines = & $env:ComSpec /d /s /c "call `"$devcmd`" -no_logo -arch=$cpu -host_arch=$cpu && set"
+        if ($LASTEXITCODE -ne 0) { throw 'VsDevCmd failed' }
+        foreach ($line in $lines) {
+          if ($line -match '^([^=]+)=(.*)$') {
+            $name = $Matches[1]; $value = $Matches[2]
+            if ($name -notmatch '^(GITHUB_|RUNNER_|NODE_OPTIONS$)') {
+              [Environment]::SetEnvironmentVariable($name, $value, 'Process')
+              "$name=$value" >> $env:GITHUB_ENV
+            }
+          }
+        }
+        if ($env:VSCMD_ARG_TGT_ARCH -ne $cpu -or $env:VSCMD_ARG_HOST_ARCH -ne $cpu) {
+          throw 'MSVC did not select the requested native architecture'
+        }
+        if (!(Get-Command cl.exe) -or !(Get-Command ninja.exe)) { throw 'MSVC/Ninja missing' }
+        "version=$($env:VCToolsVersion.TrimEnd('\'))" >> $env:GITHUB_OUTPUT
+
+    - uses: ./.github/actions/setup-qt
+      with:
+        platform: windows
+        arch: ${{ inputs.arch }}
+
+    - name: Dependency paths
+      shell: bash
+      env:
+        CIRRUS_WINDOWS_ARCH: ${{ inputs.arch }}
+      run: |
+        set -euo pipefail
+        temp=$(cygpath -m "$RUNNER_TEMP")
+        case "$CIRRUS_WINDOWS_ARCH" in
+          x86_64) triplet=x64-windows ;;
+          arm64) triplet=arm64-windows ;;
+          *) exit 1 ;;
+        esac
+        {
+          echo "DEPS=$temp/cirrus-deps-$CIRRUS_WINDOWS_ARCH"
+          echo "VCPKG_ROOT=$temp/cirrus-vcpkg-$CIRRUS_WINDOWS_ARCH"
+          echo "VCPKG_INSTALLED=$temp/cirrus-vcpkg-installed-$CIRRUS_WINDOWS_ARCH"
+          echo "VCPKG_DEFAULT_BINARY_CACHE=$temp/cirrus-vcpkg-cache-$CIRRUS_WINDOWS_ARCH"
+          echo "VCPKG_TRIPLET=$triplet"
+          echo "VCPKG_DEFAULT_HOST_TRIPLET=$triplet"
+        } >> "$GITHUB_ENV"
+
+    - name: Restore vcpkg packages
+      id: vcpkg
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ runner.temp }}/cirrus-vcpkg-cache-${{ inputs.arch }}
+        key: cirrus-vcpkg-windows-${{ inputs.arch }}-msvc-${{ steps.compiler.outputs.version }}-${{ hashFiles('packaging/windows/vcpkg.json') }}
+
+    - name: Install FFmpeg, OpenSSL, zlib, zstd, and native pkgconf
+      shell: bash
+      run: |
+        set -euo pipefail
+        baseline=$(python -c 'import json; print(json.load(open("packaging/windows/vcpkg.json"))["builtin-baseline"])')
+        git clone --quiet https://github.com/microsoft/vcpkg "$VCPKG_ROOT"
+        git -C "$VCPKG_ROOT" checkout --quiet "$baseline"
+        "$VCPKG_ROOT/bootstrap-vcpkg.bat" -disableMetrics
+        mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+        "$VCPKG_ROOT/vcpkg.exe" install --triplet "$VCPKG_TRIPLET" \
+          --host-triplet "$VCPKG_TRIPLET" \
+          --x-manifest-root=packaging/windows --x-install-root="$VCPKG_INSTALLED"
+
+    - name: Save vcpkg binary cache
+      if: steps.vcpkg.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ runner.temp }}/cirrus-vcpkg-cache-${{ inputs.arch }}
+        key: ${{ steps.vcpkg.outputs.cache-primary-key }}
+
+    - name: Restore QtKeychain
+      id: keychain
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ env.DEPS }}
+        key: cirrus-qtkeychain-windows-${{ inputs.arch }}-msvc-${{ steps.compiler.outputs.version }}-qt-${{ env.QT_VERSION }}-${{ hashFiles('packaging/*.sh', 'packaging/windows/vcpkg.json') }}
+
+    - name: Build QtKeychain
+      if: steps.keychain.outputs.cache-hit != 'true'
+      shell: bash
+      run: packaging/build-qtkeychain.sh "$DEPS" "$QT_ROOT_DIR"
+
+    - name: Save QtKeychain cache
+      if: steps.keychain.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ env.DEPS }}
+        key: ${{ steps.keychain.outputs.cache-primary-key }}
+
+    - name: Export common configure environment
+      shell: bash
+      run: |
+        set -euo pipefail
+        qt=$(cygpath -m "$QT_ROOT_DIR")
+        native="$VCPKG_INSTALLED/$VCPKG_TRIPLET"
+        pkgconf="$native/tools/pkgconf/pkgconf.exe"
+        [[ -f "$pkgconf" && -f "$DEPS/lib/cmake/Qt6Keychain/Qt6KeychainConfig.cmake" ]]
+        {
+          echo "QT_ROOT_DIR=$qt"
+          echo "CIRRUS_CMAKE_PREFIX_PATH=$qt;$DEPS;$native"
+          echo "CIRRUS_PKG_CONFIG_EXECUTABLE=$pkgconf"
+          echo "CIRRUS_OPENSSL_ROOT=$native"
+          echo "CIRRUS_COMPILER_LAUNCHER="
+          echo "PKG_CONFIG_PATH=$native/lib/pkgconfig;$native/share/pkgconfig"
+        } >> "$GITHUB_ENV"
+        # GITHUB_PATH uses native paths; the runner translates them for Git Bash.
+        echo "$qt/bin" >> "$GITHUB_PATH"
+        echo "$DEPS/bin" >> "$GITHUB_PATH"
+        echo "$native/bin" >> "$GITHUB_PATH"

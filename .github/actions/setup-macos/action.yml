@@ -1,0 +1,127 @@
+name: Set up macOS build dependencies
+description: Native macOS 15 Qt, FFmpeg, QtKeychain and common CI build environment
+
+inputs:
+  arch:
+    description: Native architecture (arm64 or x86_64)
+    required: true
+  cache-scope:
+    description: Compiler-cache scope (production builds or CI tests)
+    required: false
+    default: build
+
+runs:
+  using: composite
+  steps:
+    - name: Verify native macOS runner
+      shell: bash
+      env:
+        REQUESTED_ARCH: ${{ inputs.arch }}
+      run: |
+        set -euo pipefail
+        case "$REQUESTED_ARCH" in
+          arm64 | x86_64) ;;
+          *) echo "::error::Unsupported macOS architecture: $REQUESTED_ARCH"; exit 1 ;;
+        esac
+        [[ "$(uname -s)" == Darwin && "$(uname -m)" == "$REQUESTED_ARCH" ]] ||
+          { echo "::error::A native $REQUESTED_ARCH macOS runner is required"; exit 1; }
+        [[ "$(sysctl -in sysctl.proc_translated)" != 1 ]] ||
+          { echo "::error::Rosetta builds are not supported"; exit 1; }
+        [[ "$(sw_vers -productVersion)" == 15.* ]] ||
+          { echo "::error::The macOS build requires a macOS 15 runner"; exit 1; }
+        {
+          echo "MACOSX_DEPLOYMENT_TARGET=15.0"
+          echo "CIRRUS_MACOS_ARCH=$REQUESTED_ARCH"
+          echo "DEPS=$GITHUB_WORKSPACE/build-deps"
+          echo "CCACHE_DIR=$GITHUB_WORKSPACE/build-ccache"
+          echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE"
+          echo "CCACHE_COMPILERCHECK=content"
+          echo "CCACHE_NOHASHDIR=true"
+          echo "CCACHE_MAXSIZE=1G"
+        } >> "$GITHUB_ENV"
+
+    - name: Install native Homebrew tools
+      shell: bash
+      run: |
+        set -euo pipefail
+        # nasm is also required by the native x86_64 FFmpeg build.
+        brew install --quiet ninja pkgconf coreutils openssl@3 zstd ccache nasm
+
+    - name: Set up pinned Qt
+      uses: ./.github/actions/setup-qt
+      with:
+        platform: macos
+        arch: ${{ inputs.arch }}
+
+    - name: Export common build environment
+      shell: bash
+      run: |
+        set -euo pipefail
+        openssl=$(brew --prefix openssl@3)
+        zstd=$(brew --prefix zstd)
+        pkg_config="$(brew --prefix pkgconf)/bin/pkg-config"
+        [[ -x "$pkg_config" ]]
+        command -v ccache
+        lipo "$QT_ROOT_DIR/lib/QtCore.framework/QtCore" -verify_arch "$CIRRUS_MACOS_ARCH"
+        {
+          echo "CIRRUS_CMAKE_PREFIX_PATH=$QT_ROOT_DIR;$DEPS;$openssl;$zstd"
+          echo "CIRRUS_PKG_CONFIG_EXECUTABLE=$pkg_config"
+          echo "CIRRUS_OPENSSL_ROOT=$openssl"
+          echo "CIRRUS_COMPILER_LAUNCHER=ccache"
+          echo "PKG_CONFIG_PATH=$DEPS/lib/pkgconfig"
+        } >> "$GITHUB_ENV"
+
+    - name: Restore native FFmpeg and QtKeychain
+      id: deps
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ env.DEPS }}
+        key: deps-macos15-${{ runner.arch }}-${{ inputs.arch }}-target${{ env.MACOSX_DEPLOYMENT_TARGET }}-qt${{ env.QT_VERSION }}-${{ hashFiles('packaging/*.sh', '.github/actions/setup-macos/action.yml', '.github/actions/setup-qt/action.yml') }}
+
+    - name: Restore native compiler output
+      id: compiler
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ env.CCACHE_DIR }}
+        key: ccache-macos15-${{ runner.arch }}-${{ inputs.arch }}-target${{ env.MACOSX_DEPLOYMENT_TARGET }}-qt${{ env.QT_VERSION }}-${{ inputs.cache-scope }}-${{ hashFiles('packaging/*.sh', '.github/actions/setup-macos/action.yml', '.github/actions/setup-qt/action.yml', '**/CMakeLists.txt', 'cmake/**') }}-${{ github.sha }}
+        restore-keys: |
+          ccache-macos15-${{ runner.arch }}-${{ inputs.arch }}-target${{ env.MACOSX_DEPLOYMENT_TARGET }}-qt${{ env.QT_VERSION }}-${{ inputs.cache-scope }}-
+
+    - name: Export compiler cache state
+      shell: bash
+      env:
+        CACHE_PRIMARY_KEY: ${{ steps.compiler.outputs.cache-primary-key }}
+        CACHE_HIT: ${{ steps.compiler.outputs.cache-hit }}
+      run: |
+        set -euo pipefail
+        {
+          echo "CIRRUS_CCACHE_KEY=$CACHE_PRIMARY_KEY"
+          echo "CIRRUS_CCACHE_HIT=$CACHE_HIT"
+        } >> "$GITHUB_ENV"
+
+    - name: Build native FFmpeg and QtKeychain
+      if: steps.deps.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        packaging/build-ffmpeg.sh "$DEPS"
+        packaging/build-qtkeychain.sh "$DEPS" "$QT_ROOT_DIR"
+
+    - name: Save native FFmpeg and QtKeychain
+      if: success() && steps.deps.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ env.DEPS }}
+        key: ${{ steps.deps.outputs.cache-primary-key }}
+
+    - name: Verify native dependency libraries
+      shell: bash
+      run: |
+        set -euo pipefail
+        for library in libavcodec.63.dylib libavformat.63.dylib libqt6keychain.dylib; do
+          [[ -f "$DEPS/lib/$library" ]] ||
+            { echo "::error::$library is missing from $DEPS/lib"; exit 1; }
+        done
+        for library in "$DEPS"/lib/*.dylib; do
+          lipo "$library" -verify_arch "$CIRRUS_MACOS_ARCH"
+        done

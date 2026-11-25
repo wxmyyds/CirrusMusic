@@ -1,0 +1,54 @@
+name: Set up Qt
+description: Install the pinned native Qt SDK for a platform and CPU
+inputs:
+  platform:
+    description: linux, windows, or macos
+    required: true
+  arch:
+    description: x86_64 or arm64
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Resolve Qt SDK
+      id: sdk
+      shell: bash
+      env:
+        CIRRUS_QT_PLATFORM: ${{ inputs.platform }}
+        CIRRUS_QT_ARCH: ${{ inputs.arch }}
+      run: |
+        set -euo pipefail
+        source packaging/versions.sh
+        case "$CIRRUS_QT_PLATFORM/$CIRRUS_QT_ARCH" in
+          linux/x86_64) host=linux; sdk=linux_gcc_64 ;;
+          linux/arm64) host=linux_arm64; sdk=linux_gcc_arm64 ;;
+          windows/x86_64) host=windows; sdk=win64_msvc2022_64 ;;
+          windows/arm64) host=windows_arm64; sdk=win64_msvc2022_arm64 ;;
+          macos/x86_64 | macos/arm64) host=mac; sdk=clang_64 ;;
+          *) echo "::error::Unsupported Qt platform/architecture"; exit 1 ;;
+        esac
+        # Qt's macOS clang_64 archives contain both x86_64 and arm64. Windows ARM
+        # uses the native windows_arm64 repository, not the x64 cross SDK.
+        echo "host=$host" >> "$GITHUB_OUTPUT"
+        echo "sdk=$sdk" >> "$GITHUB_OUTPUT"
+        echo "version=$QT_VERSION" >> "$GITHUB_OUTPUT"
+        echo "QT_VERSION=$QT_VERSION" >> "$GITHUB_ENV"
+
+    - name: Install Qt
+      uses: jurplel/install-qt-action@v4
+      with:
+        version: ${{ steps.sdk.outputs.version }}
+        host: ${{ steps.sdk.outputs.host }}
+        target: desktop
+        arch: ${{ steps.sdk.outputs.sdk }}
+        modules: qtmultimedia qtshadertools qtimageformats
+        cache: true
+        # Each native setup action installs its own distribution dependencies.
+        # Debian/Fedora containers use their isolated system-Python environment.
+        install-deps: false
+        setup-python: ${{ inputs.platform != 'linux' }}
+        cache-key-prefix: cirrus-qt-${{ inputs.platform }}-${{ inputs.arch }}-native-v1
+        # Qt 6.11 moved Windows SDKs into per-architecture repository folders.
+        # This pinned aqt revision supports that layout and native ARM64 hosts,
+        # and checks the 7z signature before Python <3.14's permissive ZIP probe.
+        aqtsource: git+https://github.com/miurahr/aqtinstall.git@4c759852b1108cc801d8e24979136b895b5155d4

@@ -1,10 +1,24 @@
 ; The Windows installer (packaging/README.md). Built by the release workflow:
-;   iscc /DAppVersion=0.1.0 /DStageDir=<installed tree> /DOutputDir=<dir> packaging\windows\cirrus.iss
+;   iscc /DAppVersion=0.1.0 /DTargetArch=arm64 /DStageDir=<installed tree> /DOutputDir=<dir> packaging\windows\cirrus.iss
 ; Installs for the current user by default (no administrator rights); the first page
 ; offers installing for all users instead.
 
 #ifndef AppVersion
   #error Pass /DAppVersion=x.y.z
+#endif
+#ifndef TargetArch
+  #error Pass /DTargetArch=x86_64 or /DTargetArch=arm64
+#endif
+#if TargetArch == "x86_64"
+  #define AllowedArch "x64compatible"
+  #define AssetArch "x64"
+  #define MinimumWindows "10.0.17763"
+#elif TargetArch == "arm64"
+  #define AllowedArch "arm64"
+  #define AssetArch "arm64"
+  #define MinimumWindows "10.0.22621"
+#else
+  #error Unsupported TargetArch
 #endif
 #ifndef StageDir
   #error Pass /DStageDir=<the cmake --install tree>
@@ -26,11 +40,11 @@ DefaultGroupName=Cirrus
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
-ArchitecturesAllowed=x64compatible
-ArchitecturesInstallIn64BitMode=x64compatible
-MinVersion=10.0.17763
+ArchitecturesAllowed={#AllowedArch}
+ArchitecturesInstallIn64BitMode={#AllowedArch}
+MinVersion={#MinimumWindows}
 OutputDir={#OutputDir}
-OutputBaseFilename=Cirrus-{#AppVersion}-windows-x64-setup
+OutputBaseFilename=Cirrus-{#AppVersion}-windows-{#AssetArch}-setup
 SetupIconFile={#SourcePath}\..\..\ui\app\icons\cirrus.ico
 UninstallDisplayIcon={app}\Cirrus.exe
 UninstallDisplayName=Cirrus

@@ -1,5 +1,6 @@
 #include "infrastructure/storage/database_worker.h"
 #include "infrastructure/storage/installation_store.h"
+#include "infrastructure/storage/private_files.h"
 
 #include <QSignalSpy>
 #include <QSqlQuery>
@@ -13,6 +14,7 @@ class StorageTest : public QObject
     Q_OBJECT
   private slots:
     void freshDatabase();
+    void privateFileReadModesAndDeleteSharing();
     void lockedByAnotherWorker();
     void rejectsEditedMigration();
     void rejectsNewerSchema();
@@ -69,10 +71,18 @@ void StorageTest::freshDatabase()
     {
         DatabaseWorker worker(path, {V1});
         QCOMPARE(openWorker(worker), StorageError::None);
+#ifdef Q_OS_WIN
+        // Check ownership and the native DACL policy; Windows permission bits
+        // are not POSIX mode bits (and Qt disables NTFS ACL lookup by default).
+        QVERIFY(QFileInfo::exists(path));
+        QVERIFY2(isPrivateFileOrAbsent(path), lastRefusal().reason);
+        QVERIFY2(isPrivateDirectory(dir.filePath(QStringLiteral("nested"))), lastRefusal().reason);
+#else
         // Unix mode bits (user/group/other) as seen by the file owner: 0600 and 0700.
         QCOMPARE(QFile::permissions(path) & 0x0FFF, QFileDevice::ReadUser | QFileDevice::WriteUser);
         QCOMPARE(QFile::permissions(dir.filePath(QStringLiteral("nested"))) & 0x0FFF,
                  QFileDevice::ReadUser | QFileDevice::WriteUser | QFileDevice::ExeUser);
+#endif
         QCOMPARE(query(worker, QStringLiteral("PRAGMA foreign_keys")).value, QStringLiteral("1"));
         QCOMPARE(query(worker, QStringLiteral("PRAGMA synchronous")).value, QStringLiteral("2"));
         QCOMPARE(query(worker, QStringLiteral("PRAGMA journal_mode")).value, QStringLiteral("wal"));
@@ -85,6 +95,44 @@ void StorageTest::freshDatabase()
     QCOMPARE(openWorker(reopened), StorageError::None);
     QCOMPARE(query(reopened, QStringLiteral("SELECT count(*) FROM schema_migrations")).value,
              QStringLiteral("1"));
+}
+
+void StorageTest::privateFileReadModesAndDeleteSharing()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("shared.audio"));
+    QVERIFY(!openPrivateFile(path, QIODevice::ReadOnly));
+    QVERIFY(!QFileInfo::exists(path)); // A reader must never create an empty cache entry.
+    for (const auto mode :
+         QList<QIODevice::OpenMode>{QIODevice::WriteOnly, QIODevice::ReadWrite | QIODevice::Append,
+                                    QIODevice::ReadWrite | QIODevice::Truncate}) {
+        QVERIFY(!openPrivateFile(path, mode));
+        QVERIFY(!QFileInfo::exists(path));
+    }
+    auto writer = openPrivateFile(path);
+    QVERIFY(writer != nullptr);
+    QCOMPARE(writer->write("data"), qint64(4));
+    QVERIFY(writer->flush());
+    auto reader = openPrivateFile(path, QIODevice::ReadOnly | QIODevice::Unbuffered);
+    QVERIFY(reader != nullptr);
+    QVERIFY(reader->isReadable());
+    QVERIFY(!reader->isWritable());
+    QVERIFY(reader->openMode().testFlag(QIODevice::Unbuffered));
+    QCOMPARE(reader->readAll(), QByteArray("data"));
+    QVERIFY(writer->seek(0));
+    QCOMPARE(writer->write("next"), qint64(4));
+    QVERIFY(writer->flush());
+    QVERIFY(reader->seek(0));
+    QCOMPARE(reader->readAll(), QByteArray("next"));
+    // Invalidation can unlink while readers/writers retain their own handles,
+    // including Windows: neither handle may deny delete sharing.
+    QVERIFY(QFile::remove(path));
+    QVERIFY(reader->seek(0));
+    QCOMPARE(reader->readAll(), QByteArray("next"));
+    reader.reset();
+    writer.reset();
+    QVERIFY(!QFileInfo::exists(path));
 }
 
 void StorageTest::lockedByAnotherWorker()

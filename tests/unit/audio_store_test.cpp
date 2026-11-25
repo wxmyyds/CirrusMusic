@@ -5,6 +5,7 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QRandomGenerator>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QtTest>
@@ -33,7 +34,8 @@ MediaSource source(const QByteArray& body, bool withMd5 = true, const char* name
     return s;
 }
 // A Bilibili stream-addressed source: no digest, a stream name, its CDN, its headers.
-MediaSource biliSource(const QByteArray& body, const QString& key = QStringLiteral("bili-auto-BV1-1-id-30280"))
+MediaSource biliSource(const QByteArray& body,
+                       const QString& key = QStringLiteral("bili-auto-BV1-1-id-30280"))
 {
     MediaSource s{QUrl(QStringLiteral("https://upos-sz-mirrorcos.bilivideo.com/a.m4s")), "hires",
                   "aac", body.size(), QDeadlineTimer(60000)};
@@ -421,8 +423,12 @@ class AudioStoreTest : public QObject
         server.blockBytes = 1024;
         auto s = store(server);
         auto stream = s->open(source(server.body));
-        auto read = readAsync(stream, Chunk * 2, 100);
-        QTest::qWait(100);
+        // The downloader may start directly at the seek position. Request more
+        // than the first block so the read must still wait for further bytes.
+        auto read = readAsync(stream, Chunk * 2, 4 * 1024);
+        const auto cancelOnExit = qScopeGuard([stream] { stream->cancel(); });
+        // Both a continuing head request and a request at the seek are valid.
+        QTRY_VERIFY_WITH_TIMEOUT(!server.ranges.isEmpty(), 1000);
         QVERIFY(!ready(read));
         stream->cancel();
         QTRY_VERIFY_WITH_TIMEOUT(ready(read), 1000);

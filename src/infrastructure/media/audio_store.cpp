@@ -218,13 +218,11 @@ qint64 AudioStream::read(qint64 position, char* out, qint64 maximum)
             end = std::max(end, s.activeEnd);
     }
     if (!m_file) {
-        m_file = std::make_unique<QFile>(s.path);
         // Unbuffered: a buffered handle reads ahead past the download head into the
         // file's unwritten (zero) bytes and later serves them from its buffer.
-        if (!m_file->open(QIODevice::ReadOnly | QIODevice::Unbuffered)) {
-            m_file.reset();
+        m_file = openPrivateFile(s.path, QIODevice::ReadOnly | QIODevice::Unbuffered);
+        if (!m_file)
             return -1;
-        }
     }
     if (!m_file->seek(position))
         return -1;
@@ -794,18 +792,19 @@ void AudioStore::completed(Download& d)
     const auto md5 = contentMd5(d.source);
     // Hash off the owner thread; up to the file limit.
     QThreadPool::globalInstance()->start([self = QPointer<AudioStore>(this), base = d.base,
-                                          path = d.state->path, size = d.state->size,
-                                          md5] {
-        QFile file(path);
+                                          path = d.state->path, size = d.state->size, md5] {
+        auto file = openPrivateFile(path, QIODevice::ReadOnly);
         QCryptographicHash hash(QCryptographicHash::Md5);
-        bool good = file.open(QIODevice::ReadOnly) && file.size() == size;
-        while (good && !file.atEnd()) {
-            const auto block = file.read(1024 * 1024);
+        bool good = file && file->size() == size;
+        while (good && !file->atEnd()) {
+            const auto block = file->read(1024 * 1024);
             if (block.isEmpty())
                 good = false;
             hash.addData(block);
         }
         good = good && hash.result().toHex() == md5;
+        // Verification may unlink an invalid file on the owner thread immediately.
+        file.reset();
         QMetaObject::invokeMethod(
             self.data(),
             [self, base, size, md5, good] {

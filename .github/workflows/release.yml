@@ -1,80 +1,221 @@
-# Pushing a tag vX.Y.Z builds the packages and puts them in a draft GitHub release
-# (packaging/README.md). The maintainer reviews the draft and publishes it.
-# The tag must match project(VERSION) in CMakeLists.txt and have a CHANGELOG.md section.
+# Manually select the source ref and version tag. Test and build the same SHA
+# in parallel; publish only after every test, build and asset check succeeds.
 name: Release
 
 on:
-  push:
-    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Source branch, tag, or commit to release
+        type: string
+        required: true
+        default: master
+      tag:
+        description: Release tag matching the source version (vX.Y.Z)
+        type: string
+        required: true
+      cpkg_ref:
+        description: arch-cloud-pkgs source ref (non-main is validation only)
+        type: string
+        default: main
+      publish:
+        description: Publish GitHub Release and cpkg (disable for complete validation)
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ inputs.publish && inputs.tag || format('validation-{0}', github.sha) }}
+  cancel-in-progress: false
+
 jobs:
   check:
-    name: Version check
-    runs-on: ubuntu-latest
+    name: Resolve release source and version
+    runs-on: ubuntu-24.04
     outputs:
-      version: ${{ steps.version.outputs.version }}
+      version: ${{ steps.source.outputs.version }}
+      commit: ${{ steps.source.outputs.commit }}
+      tag: ${{ steps.source.outputs.tag }}
     steps:
       - uses: actions/checkout@v7
-      - id: version
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - id: source
+        env:
+          TAG: ${{ inputs.tag }}
+          PUBLISH: ${{ inputs.publish }}
+          CPKG_REF: ${{ inputs.cpkg_ref }}
         run: |
-          version=$(sed -nE 's/^project\(CirrusMusic VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)
-          if [[ "v$version" != "$GITHUB_REF_NAME" ]]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match project version $version"
+          set -euo pipefail
+          if [[ $PUBLISH == true && $CPKG_REF != main ]]; then
+            echo '::error::Publishing requires arch-cloud-pkgs main'
             exit 1
           fi
-          if ! grep -q "^## \[$version\]" CHANGELOG.md; then
-            echo "::error::CHANGELOG.md has no section for $version"
-            exit 1
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          version=$(sed -nE 's/^project\(CirrusMusic VERSION ([0-9]+\.[0-9]+\.[0-9]+)([[:space:]]|\)).*/\1/p' CMakeLists.txt)
+          [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && $TAG == "v$version" ]] ||
+            { echo '::error::Release tag must equal v plus project(VERSION)'; exit 1; }
+          VERSION="$version" python3 - <<'PY'
+          import os
+          from pathlib import Path
+          heading = f"## [{os.environ['VERSION']}]"
+          if not any(line.startswith(heading) for line in Path('CHANGELOG.md').read_text().splitlines()):
+              raise SystemExit('CHANGELOG.md has no section for the release version')
+          PY
+          {
+            echo "version=$version"
+            echo "commit=$(git rev-parse HEAD)"
+            echo "tag=$TAG"
+          } >> "$GITHUB_OUTPUT"
 
-  # Tests run on the tagged commit before anything is packaged.
   ci:
+    name: Test release source
     needs: check
     uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.check.outputs.commit }}
 
   linux:
-    needs: ci
-    uses: ./.github/workflows/linux-packages.yml
+    name: Linux packages
+    needs: check
+    uses: ./.github/workflows/linux-build.yml
+    with:
+      ref: ${{ needs.check.outputs.commit }}
 
   windows:
-    needs: ci
-    uses: ./.github/workflows/windows.yml
+    name: Windows packages
+    needs: check
+    uses: ./.github/workflows/windows-build.yml
     with:
-      package: true
+      ref: ${{ needs.check.outputs.commit }}
 
   macos:
-    needs: ci
-    uses: ./.github/workflows/macos.yml
+    name: macOS packages
+    needs: check
+    uses: ./.github/workflows/macos-build.yml
     with:
-      package: true
+      ref: ${{ needs.check.outputs.commit }}
 
   release:
-    name: Draft release
-    needs: [check, linux, windows, macos]
-    runs-on: ubuntu-latest
+    name: Verify assets and publish
+    needs: [check, ci, linux, windows, macos]
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
+      packages: write
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      SOURCE_COMMIT: ${{ needs.check.outputs.commit }}
+      TAG: ${{ needs.check.outputs.tag }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.check.outputs.commit }}
+          persist-credentials: false
+
       - uses: actions/download-artifact@v8
         with:
+          pattern: cirrus-*
           path: artifacts
-      - name: Draft release
+
+      - name: Verify complete platform inventory and checksums
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, shutil
+          from pathlib import Path
+          version = os.environ['VERSION']
+          expected = {}
+          for cpu, native, deb, win in [('x86_64', 'x86_64', 'amd64', 'x64'), ('arm64', 'aarch64', 'arm64', 'arm64')]:
+              expected[f'cirrus-linux-arch-{cpu}'] = {f'cirrus-{version}-1-{native}.pkg.tar.zst'}
+              expected[f'cirrus-linux-debian-{cpu}'] = {f'cirrus_{version}_{deb}.deb'}
+              expected[f'cirrus-linux-fedora-{cpu}'] = {f'cirrus-{version}-1.fc44.{native}.rpm'}
+              expected[f'cirrus-windows-{cpu}'] = {f'Cirrus-{version}-windows-{win}.zip', f'Cirrus-{version}-windows-{win}-setup.exe'}
+              expected[f'cirrus-macos-{cpu}'] = {f'Cirrus-{version}-macos-{cpu}.dmg'}
+          expected['cirrus-linux-debian-x86_64'].add(f'Cirrus-{version}-library-sources.tar.xz')
+          artifacts = Path('artifacts')
+          actual = {path.name for path in artifacts.iterdir()}
+          if actual != expected.keys():
+              raise SystemExit(f'Unexpected artifact inventory: missing={expected.keys() - actual}, extra={actual - expected.keys()}')
+          output = Path('dist')
+          output.mkdir()
+          hashes = {}
+          for artifact, names in expected.items():
+              directory = artifacts / artifact
+              children = list(directory.iterdir())
+              if {path.name for path in children} != names:
+                  raise SystemExit(f'{artifact}: wrong package inventory')
+              for path in children:
+                  if path.is_symlink() or not path.is_file() or path.stat().st_size == 0 or path.name in hashes:
+                      raise SystemExit(f'Invalid or duplicate release asset: {path}')
+                  target = output / path.name
+                  shutil.copyfile(path, target)
+                  hashes[target.name] = hashlib.file_digest(target.open('rb'), 'sha256').hexdigest()
+          metadata = {'schema': 1, 'version': version, 'tag': os.environ['TAG'], 'commit': os.environ['SOURCE_COMMIT'], 'sha256': dict(sorted(hashes.items()))}
+          manifest = output / 'BUILD-METADATA.json'
+          manifest.write_text(json.dumps(metadata, indent=2) + '\n')
+          hashes[manifest.name] = hashlib.file_digest(manifest.open('rb'), 'sha256').hexdigest()
+          (output / 'SHA256SUMS.txt').write_text(''.join(f'{digest}  {name}\n' for name, digest in sorted(hashes.items())))
+          lines = Path('CHANGELOG.md').read_text().splitlines()
+          start = next(i for i, line in enumerate(lines) if line.startswith(f'## [{version}]')) + 1
+          end = next((i for i in range(start, len(lines)) if lines[i].startswith('## [')), len(lines))
+          notes = '\n'.join(lines[start:end]).strip()
+          if not notes:
+              raise SystemExit('Release notes must not be empty')
+          Path('notes.md').write_text(notes + '\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write(f"Source: `{os.environ['SOURCE_COMMIT']}`\n\nTag: `{os.environ['TAG']}`\n\n10 platform/CPU groups, 12 binary packages and the bundled-library source archive verified.\n")
+          PY
+
+      - name: Upload release inventory
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-manifest
+          retention-days: 7
+          overwrite: ${{ github.run_attempt > 1 }}
+          path: |
+            dist/BUILD-METADATA.json
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+
+      - name: Verify the release tag before publishing packages
+        if: inputs.publish
+        run: |
+          set -euo pipefail
+          remote_tag=$(git ls-remote --tags origin "refs/tags/$TAG")
+          if [[ -n $remote_tag ]]; then
+            git fetch --no-tags origin "refs/tags/$TAG"
+            [[ $(git rev-parse 'FETCH_HEAD^{commit}') == "$SOURCE_COMMIT" ]] ||
+              { echo '::error::Release tag points to a different source commit'; exit 1; }
+          fi
+
+      - name: Install Arch package metadata tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libarchive-tools jq zstd
+
+      - name: Check out the canonical cpkg publisher
+        uses: actions/checkout@v7
+        with:
+          repository: wxmyyds/arch-cloud-pkgs
+          ref: ${{ inputs.cpkg_ref }}
+          path: build/cpkg-repository
+          persist-credentials: false
+
+      - name: Validate or publish the same Arch packages to cpkg
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PUBLISH: ${{ inputs.publish }}
+        run: bash packaging/linux/arch/cpkg/publish.sh build/cpkg-repository dist "$PUBLISH"
+
+      - name: Publish complete GitHub Release
+        if: inputs.publish
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.check.outputs.version }}
         run: |
-          mkdir -p dist
-          find artifacts -maxdepth 2 -type f -exec mv {} dist/ \;
-          tar -C artifacts/linux -cf dist/Cirrus-$VERSION-library-sources.tar sources
-          (cd dist && sha256sum * > SHA256SUMS.txt)
-          awk -v v="$VERSION" '
-            $0 ~ "^## \\[" v "\\]" { on = 1; next }
-            on && /^## \[/ { exit }
-            on { print }' CHANGELOG.md > notes.md
-          gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+          set -euo pipefail
+          # Upload everything as a draft, then publish the completed release.
+          gh release create "$TAG" --target "$SOURCE_COMMIT" --draft \
             --title "Cirrus $VERSION" --notes-file notes.md dist/*
+          gh release edit "$TAG" --draft=false
