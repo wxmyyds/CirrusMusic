@@ -85,7 +85,7 @@ runs:
         path: ${{ env.CCACHE_DIR }}
         key: ccache-macos15-${{ runner.arch }}-${{ inputs.arch }}-target${{ env.MACOSX_DEPLOYMENT_TARGET }}-qt${{ env.QT_VERSION }}-${{ inputs.cache-scope }}-${{ hashFiles('packaging/*.sh', '.github/actions/setup-macos/action.yml', '.github/actions/setup-qt/action.yml', '**/CMakeLists.txt', 'cmake/**') }}-${{ github.sha }}
         restore-keys: |
-          ccache-macos15-${{ runner.arch }}-${{ inputs.arch }}-target${{ env.MACOSX_DEPLOYMENT_TARGET }}-qt${{ env.QT_VERSION }}-${{ inputs.cache-scope }}-${{ hashFiles('packaging/*.sh', '.github/actions/setup-macos/action.yml', '.github/actions/setup-qt/action.yml', '**/CMakeLists.txt', 'cmake/**') }}-
+          ccache-macos15-${{ runner.arch }}-${{ inputs.arch }}-target${{ env.MACOSX_DEPLOYMENT_TARGET }}-qt${{ env.QT_VERSION }}-${{ inputs.cache-scope }}-
 
     - name: Export compiler cache state
       shell: bash

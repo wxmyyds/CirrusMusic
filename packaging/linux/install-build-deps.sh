@@ -28,7 +28,8 @@ case "$distribution" in
         else
             [[ $VERSION_ID == 13 ]]
             compiler=(g++)
-            runtime=(libgtk-3-0t64 libcups2t64)
+            runtime=(libgtk-3-0t64 libcups2t64
+                libgstreamer-plugins-base1.0-0 libgstreamer-plugins-bad1.0-0 libgstreamer-gl1.0-0)
             cc=gcc cxx=g++
         fi
         "${privilege[@]}" apt-get update
@@ -52,6 +53,7 @@ case "$distribution" in
             mesa-libGL-devel mesa-libEGL-devel mesa-libgbm libxkbcommon-devel libxkbcommon-x11 wayland-devel \
             libxcb xcb-util-cursor xcb-util-wm xcb-util-image xcb-util-keysyms xcb-util-renderutil \
             fontconfig dbus-libs dbus-daemon pulseaudio-libs gtk3 libXrandr libSM libICE cups-libs libxcrypt-compat \
+            gstreamer1-plugins-bad-free-libs \
             desktop-file-utils appstream hicolor-icon-theme rpm-build redhat-rpm-config \
             shadow-utils util-linux findutils diffutils which
         cc=gcc cxx=g++

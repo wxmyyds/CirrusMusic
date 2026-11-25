@@ -86,7 +86,7 @@ Arch 只保留 `packaging/linux/arch/` 的当前源码构建链路，旧上游 A
 
 Qt Multimedia 与 Cirrus 解码器可能各有不同 SONAME 的 FFmpeg，部署检查按实际 ELF/DLL/Mach-O 依赖验证。Linux/Windows/macOS 的依赖准备分别只有一个 setup action，由 CI 和生产构建共同调用；测试和生产的 CMake 配置分开。
 
-缓存区分发行版、CPU、Qt/工具链和依赖脚本；编译缓存还区分测试与生产。依赖构建完成后立即保存，编译缓存即使后续检查失败也会保存。缓存缺失只重新执行同一来源的依赖构建，不改变源码或编译目标。
+依赖缓存严格区分发行版、CPU、Qt/工具链和依赖脚本。编译缓存按原生环境与测试/生产用途隔离，恢复后由 ccache 核验编译器内容、参数和头文件；运行依赖或准备脚本调整不会清空仍有效的编译输出。依赖构建完成后立即保存，编译缓存即使后续检查失败也会保存。缓存缺失只重新执行同一来源的依赖构建，不改变源码或编译目标。
 
 安装规则位于 `cmake/CirrusInstall.cmake`。`CIRRUS_DEPLOY_QT=ON` 用于 Debian、Fedora、Windows、macOS；Arch 关闭。`CIRRUS_RUNTIME_DIRS` 仅用于 Windows 的额外运行库搜索。许可证和第三方声明随应用安装；登录状态持久保存需要可用且已解锁的系统钥匙串。
 

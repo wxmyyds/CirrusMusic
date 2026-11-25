@@ -117,7 +117,7 @@ runs:
         path: ${{ env.CCACHE_DIR }}
         key: ccache-linux-${{ inputs.distribution }}-${{ inputs.arch }}-qt${{ env.QT_VERSION }}-${{ inputs.cache-scope }}-${{ hashFiles('packaging/*.sh', 'packaging/linux/install-build-deps.sh', '.github/actions/setup-linux/action.yml', '.github/actions/setup-qt/action.yml', '**/CMakeLists.txt', 'cmake/**') }}-${{ github.sha }}
         restore-keys: |
-          ccache-linux-${{ inputs.distribution }}-${{ inputs.arch }}-qt${{ env.QT_VERSION }}-${{ inputs.cache-scope }}-${{ hashFiles('packaging/*.sh', 'packaging/linux/install-build-deps.sh', '.github/actions/setup-linux/action.yml', '.github/actions/setup-qt/action.yml', '**/CMakeLists.txt', 'cmake/**') }}-
+          ccache-linux-${{ inputs.distribution }}-${{ inputs.arch }}-qt${{ env.QT_VERSION }}-${{ inputs.cache-scope }}-
 
     - name: Export compiler-cache identity
       shell: bash
