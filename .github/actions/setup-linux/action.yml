@@ -1,0 +1,128 @@
+name: Set up Linux build dependencies
+description: Native distribution dependencies, Qt and the shared CI build environment
+inputs:
+  distribution:
+    description: arch, debian, fedora, or ubuntu
+    required: true
+  arch:
+    description: Native CPU (x86_64 or arm64)
+    required: true
+  cache-scope:
+    description: Compiler-cache scope (build or tests)
+    default: build
+runs:
+  using: composite
+  steps:
+    - name: Verify native Linux CPU
+      shell: bash
+      env:
+        REQUESTED_ARCH: ${{ inputs.arch }}
+      run: |
+        set -euo pipefail
+        case "$REQUESTED_ARCH" in
+          x86_64) native=x86_64 ;;
+          arm64) native=aarch64 ;;
+          *) echo "::error::Unsupported Linux architecture"; exit 1 ;;
+        esac
+        [[ $(uname -s) == Linux && $(uname -m) == "$native" ]]
+        {
+          echo "DEPS=$GITHUB_WORKSPACE/build-deps"
+          echo "CCACHE_DIR=$GITHUB_WORKSPACE/build-ccache"
+          echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE"
+          echo "CCACHE_COMPILERCHECK=content"
+          echo "CCACHE_MAXSIZE=800M"
+        } >> "$GITHUB_ENV"
+
+    - name: Install native distribution packages
+      shell: bash
+      env:
+        DISTRIBUTION: ${{ inputs.distribution }}
+      run: packaging/linux/install-build-deps.sh "$DISTRIBUTION"
+
+    - name: Prepare native Python environment for Qt installer
+      if: inputs.distribution != 'arch'
+      shell: bash
+      run: |
+        set -euo pipefail
+        # System Python belongs to the distribution, including Debian's PEP 668
+        # protection. aqt installs only into this isolated environment.
+        python3 -m venv "$RUNNER_TEMP/cirrus-qt-python"
+        echo "$RUNNER_TEMP/cirrus-qt-python/bin" >> "$GITHUB_PATH"
+
+    - name: Install pinned Qt SDK
+      if: inputs.distribution != 'arch'
+      uses: ./.github/actions/setup-qt
+      with:
+        platform: linux
+        arch: ${{ inputs.arch }}
+
+    - name: Export native Arch Qt environment
+      if: inputs.distribution == 'arch'
+      shell: bash
+      run: |
+        set -euo pipefail
+        {
+          echo "QT_ROOT_DIR=/usr"
+          echo "QT_VERSION=$(pkg-config --modversion Qt6Core)"
+        } >> "$GITHUB_ENV"
+
+    - name: Restore bundled FFmpeg and QtKeychain
+      if: inputs.distribution != 'arch'
+      id: deps
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ env.DEPS }}
+        key: deps-linux-${{ inputs.distribution }}-${{ inputs.arch }}-qt${{ env.QT_VERSION }}-${{ hashFiles('packaging/*.sh', 'packaging/linux/install-build-deps.sh', '.github/actions/setup-linux/action.yml', '.github/actions/setup-qt/action.yml') }}
+
+    - name: Build bundled FFmpeg and QtKeychain
+      if: inputs.distribution != 'arch' && steps.deps.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        packaging/build-ffmpeg.sh "$DEPS"
+        packaging/build-qtkeychain.sh "$DEPS" "$QT_ROOT_DIR"
+
+    - name: Save bundled dependency cache
+      if: inputs.distribution != 'arch' && steps.deps.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ env.DEPS }}
+        key: ${{ steps.deps.outputs.cache-primary-key }}
+
+    - name: Export common build environment
+      shell: bash
+      env:
+        DISTRIBUTION: ${{ inputs.distribution }}
+      run: |
+        set -euo pipefail
+        prefix="$QT_ROOT_DIR"
+        if [[ $DISTRIBUTION != arch ]]; then
+          prefix+=";$DEPS"
+          echo "PKG_CONFIG_PATH=$DEPS/lib/pkgconfig" >> "$GITHUB_ENV"
+        fi
+        {
+          echo "CIRRUS_CMAKE_PREFIX_PATH=$prefix"
+          echo "CIRRUS_PKG_CONFIG_EXECUTABLE=$(command -v pkg-config)"
+          echo "CIRRUS_OPENSSL_ROOT=/usr"
+          echo "CIRRUS_COMPILER_LAUNCHER=ccache"
+          echo "CMAKE_C_COMPILER_LAUNCHER=ccache"
+          echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache"
+        } >> "$GITHUB_ENV"
+        mkdir -p "$CCACHE_DIR"
+
+    - name: Restore native compiler output
+      id: compiler
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ env.CCACHE_DIR }}
+        key: ccache-linux-${{ inputs.distribution }}-${{ inputs.arch }}-qt${{ env.QT_VERSION }}-${{ inputs.cache-scope }}-${{ hashFiles('packaging/*.sh', 'packaging/linux/install-build-deps.sh', '.github/actions/setup-linux/action.yml', '.github/actions/setup-qt/action.yml', '**/CMakeLists.txt', 'cmake/**') }}-${{ github.sha }}
+        restore-keys: |
+          ccache-linux-${{ inputs.distribution }}-${{ inputs.arch }}-qt${{ env.QT_VERSION }}-${{ inputs.cache-scope }}-${{ hashFiles('packaging/*.sh', 'packaging/linux/install-build-deps.sh', '.github/actions/setup-linux/action.yml', '.github/actions/setup-qt/action.yml', '**/CMakeLists.txt', 'cmake/**') }}-
+
+    - name: Export compiler-cache identity
+      shell: bash
+      env:
+        CACHE_KEY: ${{ steps.compiler.outputs.cache-primary-key }}
+        CACHE_HIT: ${{ steps.compiler.outputs.cache-hit }}
+      run: |
+        printf 'CIRRUS_CCACHE_KEY=%s\nCIRRUS_CCACHE_HIT=%s\n' "$CACHE_KEY" "$CACHE_HIT" >> "$GITHUB_ENV"

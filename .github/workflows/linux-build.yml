@@ -1,0 +1,121 @@
+# Six native distribution/CPU builds. No tests and no publication here.
+name: Linux build
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Source ref to build (empty uses the selected workflow commit)
+        type: string
+        default: ''
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.distribution }} ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distribution: arch
+            arch: x86_64
+            runner: ubuntu-24.04
+            image: archlinux:base-devel
+          - distribution: arch
+            arch: arm64
+            runner: ubuntu-24.04-arm
+            # Menci/docker-archlinuxarm, base-devel-20261124.45339717499.
+            # Community-maintained Arch Linux ARM; pinned ARM64 manifest.
+            image: menci/archlinuxarm@sha256:89dd0b1da3cab11ef9a0f12481794cf31fd2cb7377ced80aa2041d3a5cae757d
+          - distribution: debian
+            arch: x86_64
+            runner: ubuntu-24.04
+            image: debian:13
+          - distribution: debian
+            arch: arm64
+            runner: ubuntu-24.04-arm
+            image: debian:13
+          - distribution: fedora
+            arch: x86_64
+            runner: ubuntu-24.04
+            image: registry.fedoraproject.org/fedora:44
+          - distribution: fedora
+            arch: arm64
+            runner: ubuntu-24.04-arm
+            image: registry.fedoraproject.org/fedora:44
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ${{ matrix.image }}
+      options: --user 0
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    env:
+      DISTRIBUTION: ${{ matrix.distribution }}
+      TARGET_ARCH: ${{ matrix.arch }}
+    steps:
+      - name: Bootstrap native distribution tools
+        run: |
+          set -euo pipefail
+          case "$DISTRIBUTION" in
+            arch) pacman -Syu --noconfirm --needed git ca-certificates tar gzip ;;
+            debian)
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git ca-certificates tar gzip
+              ;;
+            fedora) dnf install -y git ca-certificates tar gzip ;;
+            *) echo "::error::Unsupported build distribution: $DISTRIBUTION"; exit 2 ;;
+          esac
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-linux
+        with:
+          distribution: ${{ matrix.distribution }}
+          arch: ${{ matrix.arch }}
+
+      - name: Build native package as unprivileged user
+        run: |
+          set -euo pipefail
+          useradd --create-home cirrus-builder
+          chown -R cirrus-builder:cirrus-builder "$GITHUB_WORKSPACE"
+          if [[ $DISTRIBUTION == arch ]]; then
+            runuser -u cirrus-builder -- packaging/linux/arch/build-package.sh "$TARGET_ARCH" "$GITHUB_WORKSPACE/dist"
+          else
+            runuser -u cirrus-builder -- "packaging/linux/$DISTRIBUTION/build-package.sh" \
+              "$TARGET_ARCH" "$QT_ROOT_DIR" "$DEPS" "$GITHUB_WORKSPACE/dist"
+          fi
+
+      - name: Collect corresponding bundled-library sources once
+        if: matrix.distribution == 'debian' && matrix.arch == 'x86_64'
+        run: |
+          set -euo pipefail
+          version=$(sed -nE 's/^project\(CirrusMusic VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)
+          [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          packaging/fetch-sources.sh "$GITHUB_WORKSPACE/build/library-sources"
+          tar -C "$GITHUB_WORKSPACE/build" -cJf "dist/Cirrus-$version-library-sources.tar.xz" library-sources
+
+      - name: Save compiler cache
+        if: always() && env.CIRRUS_CCACHE_KEY != '' && env.CIRRUS_CCACHE_HIT != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ env.CIRRUS_CCACHE_KEY }}
+
+      - name: Upload native package
+        uses: actions/upload-artifact@v7
+        with:
+          name: cirrus-linux-${{ matrix.distribution }}-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error

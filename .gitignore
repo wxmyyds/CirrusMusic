@@ -99,8 +99,6 @@ CMakeLists.txt.user*
 /docs/
 /AGENTS.md
 
-# makepkg leaves these next to the PKGBUILD.
-/packaging/aur/src/
-/packaging/aur/pkg/
-/packaging/aur/*.tar.gz
-/packaging/aur/*.pkg.tar.*
+# Native package outputs are build artifacts.
+/dist/
+*.pkg.tar.zst

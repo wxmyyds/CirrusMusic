@@ -2,7 +2,7 @@
 # Builds QtKeychain against the Qt the package bundles (packaging/README.md); a
 # distribution's QtKeychain is built against its own, older Qt.
 #
-#   packaging/deps/build-qtkeychain.sh <prefix> <qt prefix>
+#   packaging/build-qtkeychain.sh <prefix> <qt prefix>
 #
 # Linux needs libsecret's headers (libsecret-1-dev) and patchelf; Windows runs this in
 # Git Bash inside an MSVC developer environment and builds a static library; on macOS the

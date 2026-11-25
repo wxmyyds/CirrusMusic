@@ -13,6 +13,8 @@ namespace cirrus::ui::updates
 // The pure parts of the update check (docs/tasks/update-check.md): no network, so they
 // are tested on their own.
 
+enum class WindowsArchitecture { Unknown, X86_64, Arm64 };
+
 // A file of a release that the app downloads itself: the Windows installer.
 struct Asset {
     QString name;      // "Cirrus-0.5.0-windows-x64-setup.exe"
@@ -39,15 +41,16 @@ std::optional<std::array<int, 3>> parseVersion(QStringView text);
 bool isNewer(QStringView latest, QStringView current);
 // GitHub's latest-release JSON; nullopt when it is malformed, a draft, a pre-release,
 // has no usable version or its page is not the project's (isReleasePage).
-std::optional<Release> parseRelease(const QByteArray& json);
+std::optional<Release> parseRelease(const QByteArray& json, WindowsArchitecture architecture);
 // A release page of the project on GitHub (https only): the only page the app opens
 // for an update.
 bool isReleasePage(const QUrl& url);
 // The address of a release file of the project on GitHub (https only, the tag's own):
 // the only place the app downloads an update from.
 bool isDownloadUrl(const QUrl& url, QStringView version, QStringView name);
-// The Windows installer's file name for a version.
-QString installerName(QStringView version);
+// The Windows installer's file name for a version and application build architecture.
+// Unknown architectures have no installer name and never select an asset.
+QString installerName(QStringView version, WindowsArchitecture architecture);
 // The release notes (GitHub Markdown, the CHANGELOG's style) as plain text for a
 // selectable text block: headings as their text, list items as "• ", links as their
 // text, emphasis and code marks dropped; no HTML ever reaches the UI.

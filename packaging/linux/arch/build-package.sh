@@ -12,10 +12,19 @@ if (( EUID == 0 )); then
     exit 1
 fi
 
-root=$(cd "$(dirname "$0")/../.." && pwd)
-build="$root/build/package-arch"
-mkdir -p "$build" "${1:-$root/dist/pacman}"
-out=$(cd "${1:-$root/dist/pacman}" && pwd)
+root=$(cd "$(dirname "$0")/../../.." && pwd)
+arch=${1:?usage: build-package.sh <x86_64|arm64> <out dir>}
+case "$arch" in
+    x86_64) native=x86_64 ;;
+    arm64) native=aarch64 ;;
+    *) printf 'Unsupported Arch package architecture: %s\n' "$arch" >&2; exit 2 ;;
+esac
+[[ $(uname -m) == "$native" ]]
+source /etc/os-release
+[[ $ID == arch || $ID == archarm ]]
+build="$root/build/package-arch-$arch"
+mkdir -p "$build" "${2:?missing output directory}"
+out=$(cd "$2" && pwd)
 
 # Use the actual checked-out commit (including a PR merge commit when applicable),
 # not github.sha, a release tag URL, or uncommitted files in the workspace.
@@ -36,7 +45,7 @@ printf 'Source commit: %s\nPackage version: %s\nSource SHA-256: %s\n' "$commit" 
 sed -e "s/@PKGVER@/$version/g" \
     -e "s/@SOURCE_DIR@/$source_dir/g" \
     -e "s/@SHA256@/$source_sha/g" \
-    "$root/packaging/arch/PKGBUILD.in" > "$build/PKGBUILD"
+    "$root/packaging/linux/arch/PKGBUILD.in" > "$build/PKGBUILD"
 
 # All dependencies are already installed; no --syncdeps, sudo, or root makepkg.
 export PKGDEST="$out" SRCDEST="$build" BUILDDIR="$build" PKGEXT='.pkg.tar.zst'
@@ -56,6 +65,7 @@ package=${packages[0]}
 export LC_ALL=C
 pacman -Qip -- "$package"
 [[ $(pacman -Qp -- "$package") == "cirrus $version-1" ]]
+bsdtar -xOf "$package" .PKGINFO | grep -Fx "arch = $native"
 files=$(pacman -Qlp -- "$package")
 printf '%s\n' "$files"
 for path in \

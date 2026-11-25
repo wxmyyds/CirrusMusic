@@ -1,0 +1,52 @@
+name: Windows build
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to build (empty uses the workflow commit)
+        type: string
+        default: ''
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to build (empty uses the caller commit)
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows ${{ matrix.arch }} packages
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: windows-2022
+          - arch: arm64
+            runner: windows-11-arm
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-windows
+        with:
+          arch: ${{ matrix.arch }}
+      - name: Build ZIP and Inno Setup installer
+        env:
+          PACKAGE_ARCH: ${{ matrix.arch }}
+        run: bash packaging/windows/build-package.sh "$PACKAGE_ARCH"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cirrus-windows-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error

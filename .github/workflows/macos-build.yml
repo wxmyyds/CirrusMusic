@@ -1,0 +1,72 @@
+# Production DMGs only. Root CI owns application builds, lint and tests.
+name: macOS build
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Source ref or SHA (empty uses the workflow commit)
+        type: string
+        required: false
+        default: ""
+  workflow_call:
+    inputs:
+      ref:
+        description: Source SHA supplied by the release workflow
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: macOS ${{ matrix.arch }} DMG
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Standard native runner labels; no cross-compilation or Rosetta.
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "15.0"
+      JOBS: "4"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out package source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      - name: Set up native macOS dependencies
+        uses: ./.github/actions/setup-macos
+        with:
+          arch: ${{ matrix.arch }}
+
+      - name: Build and validate DMG
+        env:
+          PACKAGE_ARCH: ${{ matrix.arch }}
+        run: packaging/macos/build-package.sh "$PACKAGE_ARCH" "$QT_ROOT_DIR" "$DEPS" dist
+
+      - name: Save native compiler output
+        if: ${{ always() && env.CIRRUS_CCACHE_KEY != '' && env.CIRRUS_CCACHE_HIT != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ env.CIRRUS_CCACHE_KEY }}
+
+      - name: Upload native DMG
+        uses: actions/upload-artifact@v7
+        with:
+          name: cirrus-macos-${{ matrix.arch }}
+          path: dist/Cirrus-*-macos-${{ matrix.arch }}.dmg
+          if-no-files-found: error

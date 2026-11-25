@@ -19,15 +19,15 @@ Cirrus 是一个非官方的网易云音乐桌面客户端，用 C++ 和 Qt Quic
 有意不引入云盘页面、音乐上传、删除及纠错功能。应用内更新仅检查本 fork 的 Release，
 避免被上游安装包覆盖；尚未发布的版本从 GitHub Actions 下载测试产物。
 
-![首页](packaging/screenshots/home-dark.png)
+![首页](resources/screenshots/home-dark.png)
 
 | 侧边播放器 | 播放页（Material 风格） |
 | --- | --- |
-| ![侧边播放器](packaging/screenshots/side-player.png) | ![播放页（Material 风格）](packaging/screenshots/player-material.png) |
+| ![侧边播放器](resources/screenshots/side-player.png) | ![播放页（Material 风格）](resources/screenshots/player-material.png) |
 
 | 播放页（亮色） | 播放页（暗色） |
 | --- | --- |
-| ![播放页（亮色）](packaging/screenshots/player-light.png) | ![播放页（暗色）](packaging/screenshots/player-dark.png) |
+| ![播放页（亮色）](resources/screenshots/player-light.png) | ![播放页（暗色）](resources/screenshots/player-dark.png) |
 
 ## 功能
 
@@ -54,46 +54,26 @@ Cirrus 是一个非官方的网易云音乐桌面客户端，用 C++ 和 Qt Quic
 
 | 系统 | 文件 | 安装 |
 | --- | --- | --- |
-| Ubuntu 22.04 / Debian 12 及更新 | `cirrus_<版本>_amd64.deb` | `sudo apt install ./cirrus_<版本>_amd64.deb` |
-| 其他 Linux（x86_64，glibc ≥ 2.35） | `Cirrus-<版本>-x86_64.AppImage` | `chmod +x Cirrus-*.AppImage`，然后直接运行 |
-| Windows 10 / 11 | `Cirrus-<版本>-windows-x64-setup.exe` | 运行安装程序；或用免安装的 `Cirrus-<版本>-windows-x64.zip`，解压即用 |
-| macOS 15 及更新（Apple Silicon，预览） | `Cirrus-<版本>-macos-arm64.dmg` | 打开 dmg，把 Cirrus 拖进“应用程序” |
+| Arch Linux / Arch Linux ARM | `cirrus-<版本>-1-<x86_64或aarch64>.pkg.tar.zst` | 用 pacman 安装对应架构的包 |
+| Debian 13 | `cirrus_<版本>_<amd64或arm64>.deb` | 用 apt 安装对应架构的包 |
+| Fedora 44 | `cirrus-<版本>-1.fc44.<x86_64或aarch64>.rpm` | 用 dnf 安装对应架构的包 |
+| Windows 10 / 11 x64 | `Cirrus-<版本>-windows-x64-setup.exe` 或 `…-x64.zip` | 运行安装程序，或解压免安装版 |
+| Windows 11 22H2 及更新 ARM64 | `Cirrus-<版本>-windows-arm64-setup.exe` 或 `…-arm64.zip` | 运行安装程序，或解压免安装版 |
+| macOS 15 及更新（ARM64 / Intel，预览） | `Cirrus-<版本>-macos-<arm64或x86_64>.dmg` | 打开 dmg，把 Cirrus 拖进“应用程序” |
 
-- deb 和 AppImage 自带 Qt 和 FFmpeg，不依赖系统里的版本。
+- deb、RPM、Windows 和 macOS 包自带 Qt 和 FFmpeg；Arch 包使用对应发行版的系统库。
 - 登录状态保存在系统钥匙串里（GNOME Keyring、KWallet 等）。没有钥匙串服务时也能用，但每次启动都要重新登录。
 - Windows 安装包没有签名，第一次运行时 SmartScreen 可能会拦下：点“更多信息 → 仍要运行”。
-- macOS 版是预览版，还没有在真机上充分测试，只支持 Apple Silicon。它没有经过 Apple 公证，第一次打开会被系统拦下：到 系统设置 › 隐私与安全性 里点“仍要打开”，或在终端执行 `xattr -dr com.apple.quarantine /Applications/Cirrus.app`。
-- Arch Linux：还没有上传到 AUR，可以用仓库里的 [PKGBUILD](packaging/aur/PKGBUILD) 打包安装（用系统的 Qt 从源码编译）：
-
-  ```bash
-  git clone https://github.com/Guang233/CirrusMusic.git
-  cd CirrusMusic/packaging/aur && makepkg -si
-  ```
+- macOS 两种架构都是预览版，还没有在真机上充分测试。它没有经过 Apple 公证，第一次打开会被系统拦下：到 系统设置 › 隐私与安全性 里点“仍要打开”，或在终端执行 `xattr -dr com.apple.quarantine /Applications/Cirrus.app`。
+- 本 fork 的 Arch 包来自 Actions，并在正式发布时同步到 `arch-cloud-pkgs` 的 cpkg 目录；支持标准 `.pkg.tar.zst` 产物。
 
 ## 从源码构建
 
-需要：
+**该操作需要通过 GitHub Actions 执行。** 在 Actions 选择待构建分支，再运行 `Linux build`、`Windows build` 或 `macOS build`，填写需要构建的源码 `ref`，完成后下载对应架构 artifact。
 
-- CMake 3.24+、Ninja、支持 C++20 的编译器（GCC 12 及更新，或较新的 Clang）
-- Qt 6.10+：Core、Gui、Qml、Quick、Multimedia、Network、Sql、DBus、ShaderTools，以及 Wayland 和 Image Formats 模块
-- OpenSSL 3、zlib、zstd、FFmpeg（libavcodec、libavformat、libswresample）、[QtKeychain](https://github.com/frankosterfeld/qtkeychain)（Qt 6 版）
+Linux 构建包含 Arch、Debian、Fedora 的 ARM64 与 x86_64 六个原生发行版 job；Windows 和 macOS 各两个原生架构 job。`CI` 独立执行 Linux、Windows、macOS 测试，不生成安装包。
 
-Arch Linux 上：
-
-```bash
-sudo pacman -S --needed cmake ninja qt6-base qt6-declarative qt6-multimedia qt6-wayland \
-    qt6-imageformats qt6-shadertools qtkeychain-qt6 ffmpeg openssl zlib zstd
-```
-
-构建并运行：
-
-```bash
-cmake --preset linux-release
-cmake --build --preset linux-release --target appCirrusMusic
-./build/linux-release/appCirrusMusic
-```
-
-用 Qt 官方安装器装的 Qt：复制 `CMakeUserPresets.json.example` 为 `CMakeUserPresets.json`，填上 Qt 的路径，改用 `linux-release-local` 预设。开发、测试和代码结构见 [CONTRIBUTING.md](CONTRIBUTING.md)，打包见 [packaging/README.md](packaging/README.md)。
+发布使用 `Release` 工作流：指定源码 `ref` 和版本 `tag`，通过测试后并行调用三个构建工作流，全部成功后统一校验和发布。`publish=false` 可验证完整流程而不发行。细节见 [打包与发布](packaging/README.md)，代码结构见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 数据存放位置
 

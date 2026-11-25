@@ -52,18 +52,29 @@ bool isDownloadUrl(const QUrl& url, QStringView version, QStringView name)
                QStringLiteral("/wxmyyds/CirrusMusic/releases/download/v%1/%2").arg(version, name);
 }
 
-QString installerName(QStringView version)
+QString installerName(QStringView version, WindowsArchitecture architecture)
 {
-    return QStringLiteral("Cirrus-%1-windows-x64-setup.exe").arg(version);
+    switch (architecture) {
+    case WindowsArchitecture::X86_64:
+        return QStringLiteral("Cirrus-%1-windows-x64-setup.exe").arg(version);
+    case WindowsArchitecture::Arm64:
+        return QStringLiteral("Cirrus-%1-windows-arm64-setup.exe").arg(version);
+    case WindowsArchitecture::Unknown:
+        return {};
+    }
+    return {};
 }
 
 namespace
 {
 constexpr qint64 kMaximumInstallerBytes = 512LL * 1024 * 1024;
 
-std::optional<Asset> installerOf(const QJsonArray& assets, const QString& version)
+std::optional<Asset> installerOf(const QJsonArray& assets, const QString& version,
+                                 WindowsArchitecture architecture)
 {
-    const QString name = installerName(version);
+    const QString name = installerName(version, architecture);
+    if (name.isEmpty())
+        return std::nullopt;
     for (const auto& value : assets) {
         const QJsonObject object = value.toObject();
         if (object.value(QLatin1String("name")).toString() != name)
@@ -112,7 +123,7 @@ QString notesToPlainText(const QString& markdown)
     return text.trimmed();
 }
 
-std::optional<Release> parseRelease(const QByteArray& json)
+std::optional<Release> parseRelease(const QByteArray& json, WindowsArchitecture architecture)
 {
     QJsonParseError error;
     const QJsonDocument document = QJsonDocument::fromJson(json, &error);
@@ -137,7 +148,7 @@ std::optional<Release> parseRelease(const QByteArray& json)
     if (!isReleasePage(release.page))
         return std::nullopt;
     release.installer =
-        installerOf(object.value(QLatin1String("assets")).toArray(), release.version);
+        installerOf(object.value(QLatin1String("assets")).toArray(), release.version, architecture);
     return release;
 }
 } // namespace cirrus::ui::updates
