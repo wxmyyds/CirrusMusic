@@ -30,7 +30,6 @@
 #include "app_settings.h"
 #include "infrastructure/ipc/linux_observation_client.h"
 #include "now_playing_export.h"
-#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QScopeGuard>
@@ -40,6 +39,7 @@
 #include "infrastructure/storage/listening_state_store.h"
 #include <QSettings>
 
+#include <QDir>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -339,7 +339,9 @@ void BackendRuntimeTest::biliLyricsAndCookieThroughThread()
 {
     QFETCH(int, subtitleCase);
     QTemporaryDir directory;
-    QTemporaryDir cacheDirectory;
+    // Match the resource-cache tests: the store rejects shared ancestors such as /tmp.
+    QTemporaryDir cacheDirectory{QDir::currentPath() + QStringLiteral("/runtime-cache-XXXXXX")};
+    QVERIFY(cacheDirectory.isValid());
     auto state = std::make_shared<SharedState>();
     Gate gate;
     const BackendConfig config{directory.filePath("state.sqlite"), "synthetic", false,
