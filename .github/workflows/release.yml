@@ -61,12 +61,12 @@ jobs:
           import os
           from pathlib import Path
           heading = f"## [{os.environ['VERSION']}]"
-          lines = Path('CHANGELOG.md').read_text().splitlines()
-          start = next((i for i, line in enumerate(lines) if line.startswith(heading)), None)
-          if start is None:
-              raise SystemExit('CHANGELOG.md has no section for the release version')
-          end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith('## [')), len(lines))
-          if not any(line.strip() for line in lines[start + 1:end]):
+          lines = Path('resources/CHANGELOG.md').read_text().splitlines()
+          sections = [(i, line) for i, line in enumerate(lines) if line.startswith('## ')]
+          if len(sections) != 1 or not (sections[0][1] == heading or sections[0][1].startswith(heading + ' - ')):
+              raise SystemExit('resources/CHANGELOG.md must contain only the release version section')
+          start = sections[0][0] + 1
+          if not any(line.strip() for line in lines[start:]):
               raise SystemExit('Release notes must not be empty')
           PY
           {
@@ -162,10 +162,9 @@ jobs:
           manifest.write_text(json.dumps(metadata, indent=2) + '\n')
           hashes[manifest.name] = hashlib.file_digest(manifest.open('rb'), 'sha256').hexdigest()
           (output / 'SHA256SUMS.txt').write_text(''.join(f'{digest}  {name}\n' for name, digest in sorted(hashes.items())))
-          lines = Path('CHANGELOG.md').read_text().splitlines()
+          lines = Path('resources/CHANGELOG.md').read_text().splitlines()
           start = next(i for i, line in enumerate(lines) if line.startswith(f'## [{version}]')) + 1
-          end = next((i for i in range(start, len(lines)) if lines[i].startswith('## [')), len(lines))
-          notes = '\n'.join(lines[start:end]).strip()
+          notes = '\n'.join(lines[start:]).strip()
           Path('notes.md').write_text(notes + '\n')
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
               summary.write(f"Source: `{os.environ['SOURCE_COMMIT']}`\n\nTag: `{os.environ['TAG']}`\n\n10 platform/CPU groups, 12 binary packages and the bundled-library source archive verified.\n")

@@ -48,7 +48,7 @@ Linux 通用编译、部署、桌面资源和依赖安装直接放在 `packaging
 
 十组目标共十二个二进制安装包。Debian x86_64 job 还收集一份 `Cirrus-<版本>-library-sources.tar.xz`，包含固定版本的 FFmpeg、QtKeychain 原始源码，供全部随包部署目标共用。
 
-版本唯一来源为 `CMakeLists.txt` 中的 `project(CirrusMusic VERSION x.y.z)`；Release 标签必须为 `vx.y.z`，说明来自 `CHANGELOG.md` 的对应章节。版本号相同的分支包可能包含不同提交，下载时核对运行来源和提交 SHA。
+版本唯一来源为 `CMakeLists.txt` 中的 `project(CirrusMusic VERSION x.y.z)`；Release 标签必须为 `vx.y.z`，说明来自 [resources/CHANGELOG.md](../resources/CHANGELOG.md) 的唯一版本章节；该文件只保留当前待发布版本。版本号相同的分支包可能包含不同提交，下载时核对运行来源和提交 SHA。
 
 ## Linux 原生环境
 
@@ -101,9 +101,9 @@ macOS ARM64 使用 `macos-15`，x86_64 使用 `macos-15-intel`，均原生编译
 ## 发布与整体验证
 
 1. 先合入配套 `arch-cloud-pkgs` 更新（标准后缀、Cirrus 目录、双架构 OCI 读取和统一发布器），再发布 Cirrus。其 `main` 是正式 cpkg 发布器来源。
-2. 在待发布源码中更新版本和对应 CHANGELOG 章节，提交并推送；来源必须包含本套构建工作流和脚本。
+2. 在待发布源码中更新版本，并重写 `resources/CHANGELOG.md`，仅保留这个版本的非空发布说明，不保留 Unreleased 或旧版本章节，然后提交并推送；来源必须包含本套构建工作流和脚本。
 3. 在 Actions 运行 **Release**，填写来源 `ref`、匹配的 `tag` 和 `cpkg_ref`（默认 `main`）。`publish=false` 可用包仓库验证分支/提交，验证同一批真实包及 OCI 元数据，不写入 GHCR 或 GitHub Release。验证运行按工作流提交隔离；正式发布始终按 tag 串行。
-4. `publish=true` 仅接受 `cpkg_ref=main`。`check` 检查发布版本、Tag 和非空 Changelog 后，CI 按锁定的完整源码 SHA 运行三平台测试；只有 CI 全部通过，才并行启动六个 Linux、两个 Windows、两个 macOS 构建目标。最终发布 job 等待三个平台全部构建成功；任一检查、测试或构建失败，发布 job 不运行。
+4. `publish=true` 仅接受 `cpkg_ref=main`。`check` 检查发布版本、Tag，以及 `resources/CHANGELOG.md` 只有当前版本且说明非空后，CI 按锁定的完整源码 SHA 运行三平台测试；只有 CI 全部通过，才并行启动六个 Linux、两个 Windows、两个 macOS 构建目标。最终发布 job 等待三个平台全部构建成功；任一检查、测试或构建失败，发布 job 不运行。
 5. 发布 job 精确核对十组 artifact、十二个二进制包和一份库源码，不接受遗漏、额外文件、空文件或重名；生成 `BUILD-METADATA.json` 与 `SHA256SUMS.txt`。
 6. 同一批 Arch 包由 `packaging/linux/arch/cpkg/publish.sh` 交给包仓库的统一发布器，形成 `ghcr.io/wxmyyds/cirrus` 双架构 OCI index；cpkg 按本机架构取包。
 7. 若目标标签已经存在，必须仍指向选定的源码提交；正式发布包前保留一次指向校验，避免构建期间的 Tag 变化影响发布。所有资产先上传到草稿，完整上传成功后才正式发布；新标签指向锁定的源码提交。标签 push 不再自动触发 Release。

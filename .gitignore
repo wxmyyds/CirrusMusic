@@ -88,12 +88,8 @@ CMakeLists.txt.user*
 # Machine-local CMake configuration (commit the .example instead)
 /CMakeUserPresets.json
 
-# Share only reviewed VS Code workspace configuration
-/.vscode/*
-!/.vscode/settings.json
-!/.vscode/extensions.json
-!/.vscode/tasks.json
-!/.vscode/launch.json
+# Editor workspace settings are local-only.
+/.vscode/
 
 # The internal notes (a private repository, cloned here) and the agent notes in it.
 /docs/

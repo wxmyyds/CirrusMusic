@@ -1,23 +1,34 @@
 <p align="center"><img src="ui/app/icons/cirrus-256.png" width="128" alt="Cirrus"></p>
 
 <p align="center">
-  <a href="https://github.com/Guang233/CirrusMusic/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/Guang233/CirrusMusic?style=flat-square&logo=github" /></a>
-  <a href="https://github.com/Guang233/CirrusMusic/releases"><img alt="Release" src="https://img.shields.io/github/v/release/Guang233/CirrusMusic?style=flat-square" /></a>
-  <a href="https://github.com/Guang233/CirrusMusic/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/Guang233/CirrusMusic/total?style=flat-square" /></a>
+  <a href="https://github.com/wxmyyds/CirrusMusic/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/wxmyyds/CirrusMusic?style=flat-square&logo=github" /></a>
+  <a href="https://github.com/wxmyyds/CirrusMusic/releases"><img alt="Release" src="https://img.shields.io/github/v/release/wxmyyds/CirrusMusic?style=flat-square" /></a>
+  <a href="https://github.com/wxmyyds/CirrusMusic/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/wxmyyds/CirrusMusic/total?style=flat-square" /></a>
   <a href="https://www.qt.io/"><img alt="Qt" src="https://img.shields.io/badge/Qt-6.10%2B-41CD52?style=flat-square&logo=qt&logoColor=white" /></a>
 </p>
 
 # Cirrus
 
-**Cirrus is an unofficial desktop client for NetEase Cloud Music, built with C++ and Qt Quick, made for Linux first.** It streams, caches and plays music with its own gapless audio engine, shows word-by-word lyrics, and keeps your playlists, likes and listening history in sync with your NetEase account. The interface follows Material 3 Expressive and works fully from the keyboard. The app is in Chinese.
+本项目基于上游 [Guang233/CirrusMusic](https://github.com/Guang233/CirrusMusic) 的 **v0.5.0** 修改，是一个使用 C++ 和 Qt Quick 编写的非官方网易云音乐桌面客户端。保留上游的音乐浏览、播放引擎和界面，主要围绕 Bilibili 辅助音源、实际播放源字幕、桌面集成和多平台原生构建进行调整。
 
----
+以下差异以已同步的[上游 v0.5.0](https://github.com/Guang233/CirrusMusic/releases/tag/v0.5.0) 为对照；上游后续变化以其仓库为准。本项目的当前发布说明见 [resources/CHANGELOG.md](resources/CHANGELOG.md)。
 
-Cirrus 是一个非官方的网易云音乐桌面客户端，用 C++ 和 Qt Quick 编写，优先面向 Linux。
+## 相比上游的改动
 
-本 fork 保留 Bilibili 辅助音源、实际播放源字幕和安全凭据存储；同步上游 0.5.0 的其他更新，
-有意不引入云盘页面、音乐上传、删除及纠错功能。应用内更新仅检查本 fork 的 Release，
-避免被上游安装包覆盖；尚未发布的版本从 GitHub Actions 下载测试产物。
+### 新增与调整
+
+- **Bilibili 辅助音源**：默认关闭，可在播放设置中启用。网易云歌曲因权限限制无法完整播放，或只返回试听流时，尝试按歌名、歌手和时长匹配 B 站视频及分 P；普通网络错误不会触发切源。播放页会标明实际音源。
+- **实际播放源字幕**：使用 Bilibili 音源时，读取选中视频及分 P 的字幕；字幕缺失或为空时使用网易云歌词。B 站字幕保留逐行时间，不伪造逐字时间。沿用上游 Linux Unix socket 接口，并适配实际音源的歌词与时序，让桌面歌词和应用显示一致。
+- **Bilibili 凭据管理**：支持粘贴、校验和清除 Bilibili Cookie，通过系统钥匙串保存，不写入普通设置文件；需要可用的系统钥匙串服务。
+- **独立更新来源**：应用内更新只查询本仓库的 GitHub Releases；Windows 安装版按当前 CPU 选择安装器并校验 SHA-256，避免被上游或其他架构的安装包覆盖。
+- **原生多平台构建**：Linux 提供 Arch、Debian、Fedora 的 x86_64 / ARM64 原生包；Windows 提供 x64 / ARM64 的安装器和 ZIP；macOS 提供 Apple Silicon / Intel 的 DMG。构建与发布统一通过 GitHub Actions 执行。
+
+### 未引入的功能与当前限制
+
+- **不提供上游云盘管理功能**：没有云盘页面、本地音乐上传、云盘歌曲删除、纠错或取消关联入口。
+- **Bilibili 音源存在使用边界**：匹配结果与音质取决于实际资源，不保证与网易云原曲完全一致；播放 B 站音源时不向网易云上报听歌记录，也不支持“一起听”。
+- **详细播放状态与歌词导出目前仅支持 Linux**，默认关闭；Windows / macOS 没有对应的导出接口。
+- **不再提供 AppImage 和旧 AUR 打包入口**，Linux 使用当前的原生发行版打包链路。
 
 ![首页](resources/screenshots/home-dark.png)
 
@@ -29,7 +40,7 @@ Cirrus 是一个非官方的网易云音乐桌面客户端，用 C++ 和 Qt Quic
 | --- | --- |
 | ![播放页（亮色）](resources/screenshots/player-light.png) | ![播放页（暗色）](resources/screenshots/player-dark.png) |
 
-## 功能
+## 保留的上游功能
 
 - **发现与搜索**：推荐歌单、歌单分类、排行榜、歌手、新碟，每日推荐与私人 FM；搜索歌曲、歌手、专辑、歌单、播客和声音。
 - **音乐库**：创建和收藏的歌单、我喜欢的音乐、收藏的专辑和歌手、最近播放、听歌排行；红心、收藏歌单、关注、新建歌单。
@@ -47,25 +58,6 @@ Cirrus 是一个非官方的网易云音乐桌面客户端，用 C++ 和 Qt Quic
   - 配色跟随封面或自选主题色，亮色和暗色；
   - 有新版本时提示（向 GitHub 查询，可关闭）。
 - **登录**：扫码、手机号（验证码或密码）、邮箱；登录状态保存在系统钥匙串里。
-
-## 安装
-
-从本 fork 的 [Releases](https://github.com/wxmyyds/CirrusMusic/releases) 下载（尚未发布时使用 Actions 产物）：
-
-| 系统 | 文件 | 安装 |
-| --- | --- | --- |
-| Arch Linux / Arch Linux ARM | `cirrus-<版本>-1-<x86_64或aarch64>.pkg.tar.zst` | 用 pacman 安装对应架构的包 |
-| Debian 13 | `cirrus_<版本>_<amd64或arm64>.deb` | 用 apt 安装对应架构的包 |
-| Fedora 44 | `cirrus-<版本>-1.fc44.<x86_64或aarch64>.rpm` | 用 dnf 安装对应架构的包 |
-| Windows 10 / 11 x64 | `Cirrus-<版本>-windows-x64-setup.exe` 或 `…-x64.zip` | 运行安装程序，或解压免安装版 |
-| Windows 11 22H2 及更新 ARM64 | `Cirrus-<版本>-windows-arm64-setup.exe` 或 `…-arm64.zip` | 运行安装程序，或解压免安装版 |
-| macOS 15 及更新（ARM64 / Intel，预览） | `Cirrus-<版本>-macos-<arm64或x86_64>.dmg` | 打开 dmg，把 Cirrus 拖进“应用程序” |
-
-- deb、RPM、Windows 和 macOS 包自带 Qt 和 FFmpeg；Arch 包使用对应发行版的系统库。
-- 登录状态保存在系统钥匙串里（GNOME Keyring、KWallet 等）。没有钥匙串服务时也能用，但每次启动都要重新登录。
-- Windows 安装包没有签名，第一次运行时 SmartScreen 可能会拦下：点“更多信息 → 仍要运行”。
-- macOS 两种架构都是预览版，还没有在真机上充分测试。它没有经过 Apple 公证，第一次打开会被系统拦下：到 系统设置 › 隐私与安全性 里点“仍要打开”，或在终端执行 `xattr -dr com.apple.quarantine /Applications/Cirrus.app`。
-- 本 fork 的 Arch 包来自 Actions，并在正式发布时同步到 `arch-cloud-pkgs` 的 cpkg 目录；支持标准 `.pkg.tar.zst` 产物。
 
 ## 从源码构建
 
@@ -110,7 +102,7 @@ python3 tools/now-playing/cirrus_now_playing.py --once   # 打印一份快照（
 
 ## 反馈问题
 
-欢迎在 [Issues](https://github.com/Guang233/CirrusMusic/issues) 报告问题。遇到播放失败、加载不出来之类的情况，请在 **设置 › 诊断** 里生成一个诊断包附上：里面有日志和系统信息，不含账号凭据。
+本项目的问题请在 [Issues](https://github.com/wxmyyds/CirrusMusic/issues) 报告。遇到播放失败、加载不出来之类的情况，请在 **设置 › 诊断** 里生成一个诊断包附上：里面有日志和系统信息，不含账号凭据。
 
 ## 声明
 
@@ -120,17 +112,10 @@ python3 tools/now-playing/cirrus_now_playing.py --once   # 打印一份快照（
 
 ## 致谢
 
+- [Guang233/CirrusMusic](https://github.com/Guang233/CirrusMusic)：本项目的上游，提供客户端主体、播放引擎和界面基础。
 - [end-4/dots-hyprland](https://github.com/end-4/dots-hyprland)（illogical-impulse）：界面里的许多控件借鉴了它的设计。
 - [NeteaseCloudMusicApiEnhanced/api-enhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced)：本项目的大部分接口来源于此。
 
 ## 许可证
 
 [MIT](LICENSE)。安装包附带的第三方软件（Qt、FFmpeg、QtKeychain、MiSans 字体、Material Symbols 等）及其许可证见 [packaging/THIRD-PARTY-NOTICES.md](packaging/THIRD-PARTY-NOTICES.md)。
-
-## Star History
-
-<p align="center">
-  <a href="https://star-history.com/#Guang233/CirrusMusic&Date">
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Guang233/CirrusMusic&type=Date" />
-  </a>
-</p>
