@@ -540,7 +540,10 @@ void BackendRuntimeTest::biliLyricsAndCookieThroughThread()
         manifest.close();
         QCOMPARE(discovery["schema"].toInt(), 1);
         QCOMPARE(discovery.size(), 4); // Discovery only, never a lyric-file transport.
-        QCOMPARE(QDir(leaf).entryList(QDir::AllEntries | QDir::NoDotAndDotDot, QDir::Name),
+        // Include Unix sockets and hidden entries in the exact transport-file check.
+        QCOMPARE(QDir(leaf).entryList(QDir::AllEntries | QDir::System | QDir::Hidden |
+                                          QDir::NoDotAndDotDot,
+                                      QDir::Name),
                  (QStringList{"observation-v1.json", "s"}));
         LinuxObservationClientError error;
         auto client = LinuxObservationClient::connect(
