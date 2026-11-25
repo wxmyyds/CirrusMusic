@@ -163,8 +163,11 @@ bool PlaybackObservationPublisher::contextValid() const
 }
 bool PlaybackObservationPublisher::cacheCurrent() const
 {
-    return contextValid() && m_fingerprint == m_backend->snapshot() &&
-           m_load == m_owner->playback().token;
+    // Revoke an active cached document/cursor as soon as its owner invalidates
+    // lyrics, before the queued coherent capture. An empty view has no content
+    // to retire and must remain available even while its document is not ready.
+    return (!m_contentDirty || !m_value.song) && contextValid() &&
+           m_fingerprint == m_backend->snapshot() && m_load == m_owner->playback().token;
 }
 PlaybackObservation PlaybackObservationPublisher::empty() const
 {
