@@ -27,7 +27,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ inputs.tag }}
+  group: release-${{ inputs.publish && inputs.tag || format('validation-{0}', github.sha) }}
   cancel-in-progress: false
 
 jobs:
