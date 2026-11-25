@@ -50,8 +50,8 @@ jobs:
     name: Linux build and tests
     runs-on: ubuntu-22.04
     env:
-      DEPS: ${{ runner.temp }}/cirrus-deps
-      CCACHE_DIR: ${{ runner.temp }}/cirrus-ccache
+      DEPS: ${{ github.workspace }}/build-deps
+      CCACHE_DIR: ${{ github.workspace }}/build-ccache
       CCACHE_MAXSIZE: 800M
       # Qt's generated sources embed absolute paths; compare them relative to the checkout.
       CCACHE_BASEDIR: ${{ github.workspace }}
