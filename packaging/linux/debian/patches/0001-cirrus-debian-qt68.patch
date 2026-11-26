@@ -269,6 +269,18 @@ diff --git a/src/infrastructure/netease/api/session_api_client.cpp b/src/infrast
      QList<ClientLogFile> files;
      QStringList actions;
      QHash<QString, qsizetype> fileOf;
+diff --git a/src/infrastructure/netease/protocol/xeapi_crypto.cpp b/src/infrastructure/netease/protocol/xeapi_crypto.cpp
+--- a/src/infrastructure/netease/protocol/xeapi_crypto.cpp
++++ b/src/infrastructure/netease/protocol/xeapi_crypto.cpp
+@@ -230,7 +230,7 @@
+ QByteArray xeapiSignature(QByteArrayView timestamp, QByteArrayView nonce)
+ {
+     // The key is the Base64 TEXT itself, as in the reference; it is not decoded.
+-    const auto digest = hmacSha256(QByteArrayView(SignKey), QByteArray(timestamp) + nonce);
++    const auto digest = hmacSha256(QByteArrayView(SignKey), QByteArray(timestamp) + QByteArray(nonce));
+     return digest ? digest->toBase64() : QByteArray();
+ }
+ 
 diff --git a/src/logging/logger.cpp b/src/logging/logger.cpp
 --- a/src/logging/logger.cpp
 +++ b/src/logging/logger.cpp
@@ -444,6 +456,46 @@ diff --git a/ui/CMakeLists.txt b/ui/CMakeLists.txt
      file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/cirrus-qmlimportscanner.txt"
          CONTENT "$<TARGET_FILE:Qt6::qmlimportscanner>\n")
  else()
+diff --git a/ui/controls/TextField.qml b/ui/controls/TextField.qml
+--- a/ui/controls/TextField.qml
++++ b/ui/controls/TextField.qml
+@@ -51,7 +51,7 @@
+     Accessible.description: supportingText
+ 
+     Spring {
+-        id: float
++        id: labelFloat
+         target: control.floated ? 1 : 0
+         spec: Theme.motion.standardFastSpatial
+         threshold: 0.002
+@@ -150,10 +150,10 @@
+ 
+             // Outlined: the floated label sits on the border over a gap in it.
+             Rectangle {
+-                visible: control.outlined && control.label !== "" && float.value > 0.01
++                visible: control.outlined && control.label !== "" && labelFloat.value > 0.01
+                 x: floatingLabel.x - 4
+                 y: -1
+-                width: (floatingLabel.implicitWidth * floatingLabel.scale + 8) * float.value
++                width: (floatingLabel.implicitWidth * floatingLabel.scale + 8) * labelFloat.value
+                 height: 3
+                 color: control.gapColor
+             }
+@@ -164,11 +164,11 @@
+                 readonly property real floatY: control.outlined ? -implicitHeight * 0.75 / 2
+                                                                 : 7
+                 visible: control.label !== ""
+-                x: control.outlined ? 16 + (control.leftPadding - 16) * (1 - float.value)
++                x: control.outlined ? 16 + (control.leftPadding - 16) * (1 - labelFloat.value)
+                                     : control.leftPadding
+-                y: restY + (floatY - restY) * float.value
++                y: restY + (floatY - restY) * labelFloat.value
+                 transformOrigin: Item.TopLeft
+-                scale: 1 - 0.25 * float.value
++                scale: 1 - 0.25 * labelFloat.value
+                 text: control.label
+                 font: Theme.type.bodyLarge.font
+                 color: !control.enabled ? control.mutedColor
 diff --git a/ui/presentation/backend/backend_host.cpp b/ui/presentation/backend/backend_host.cpp
 --- a/ui/presentation/backend/backend_host.cpp
 +++ b/ui/presentation/backend/backend_host.cpp
