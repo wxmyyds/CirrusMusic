@@ -4,6 +4,8 @@
 import argparse
 import json
 import os
+import re
+import sys
 from pathlib import Path
 import subprocess
 
@@ -49,22 +51,51 @@ def main():
     imports = json.loads(output(str(scanner), "-rootPath", str(args.source / "ui"),
                                 "-importPath", str(args.build / "qml"),
                                 "-importPath", str(qml)))
+    # Qt 6.8's scanner reports unavailable optional styles without carrying their
+    # optional flag. Read the authoritative qmldir declarations instead. An app's
+    # explicit import, or any mandatory qmldir edge, always remains required.
+    required = set()
+    for source in (args.source / "ui").rglob("*.qml"):
+        required.update(re.findall(r"^\s*import\s+([\w.]+)", source.read_text(), re.MULTILINE))
+    optional = set()
+    optional_origins = {}
     for module in imports:
-        if module.get("type") != "module":
+        if module.get("type") != "module" or not module.get("path"):
             continue
-        path = module.get("path")
-        if not path:
-            if module["name"].startswith("Qt") and not module.get("optional", False):
-                raise SystemExit(f"Unresolved system QML import: {module['name']}")
-            continue
-        directory = Path(path).resolve(strict=True)
+        directory = Path(module["path"]).resolve(strict=True)
         if directory.is_relative_to(qml):
-            owner(directory / "qmldir")
+            metadata = directory / "qmldir"
+            owner(metadata)
+            for line in metadata.read_text().splitlines():
+                words = line.split()
+                flags = set()
+                while words and words[0] in ("optional", "default"):
+                    flags.add(words.pop(0))
+                if len(words) < 2 or words[0] not in ("import", "depends"):
+                    continue
+                name = words[1]
+                if "optional" in flags and "default" not in flags:
+                    optional.add(name)
+                    optional_origins.setdefault(name, []).append(str(metadata))
+                else:
+                    required.add(name)
         elif not directory.is_relative_to(args.build.resolve()):
             raise SystemExit(f"QML import outside system/build trees: {module['name']}: {directory}")
+    unavailable_optional = []
+    for module in imports:
+        if module.get("type") != "module" or module.get("path"):
+            continue
+        name = module["name"]
+        if not name.startswith("Qt"):
+            continue
+        if name in required or name not in optional:
+            raise SystemExit(f"Unresolved required system QML import: {name}")
+        unavailable_optional.append({"name": name, "declared_by": optional_origins[name]})
+        print(f"Qt optional import unavailable on this platform: {name}; "
+              f"declared optional by {optional_origins[name]}", file=sys.stderr)
 
     # dlopen-loaded integrations are invisible to ELF dependency scanners.
-    for pattern in ("sqldrivers/libqsqlite.so", "imageformats/libqwebp.so",
+    for pattern in ("tls/libqopensslbackend.so", "sqldrivers/libqsqlite.so", "imageformats/libqwebp.so",
                     "imageformats/libqsvg.so", "iconengines/libqsvgicon.so",
                     "platforms/libqxcb.so", "platforms/*wayland*.so", "multimedia/*.so"):
         matches = sorted(plugins.glob(pattern))
@@ -75,7 +106,8 @@ def main():
     if not packages:
         raise SystemExit("No native Qt runtime dependencies found")
     (args.build / "system-qt-runtime-evidence.json").write_text(
-        json.dumps({"imports": imports, "files": evidence}, indent=2) + "\n")
+        json.dumps({"imports": imports, "files": evidence,
+                    "unavailable_optional_imports": unavailable_optional}, indent=2) + "\n")
     (args.build / "system-qt-runtime-packages.txt").write_text("\n".join(sorted(packages)) + "\n")
     print("\n".join(sorted(packages)))
 

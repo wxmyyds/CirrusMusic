@@ -331,6 +331,22 @@ diff --git a/tests/unit/log_canary_test.cpp b/tests/unit/log_canary_test.cpp
      }
  };
  QTEST_GUILESS_MAIN(LogCanaryTest)
+diff --git a/tests/unit/logging_test.cpp b/tests/unit/logging_test.cpp
+--- a/tests/unit/logging_test.cpp
++++ b/tests/unit/logging_test.cpp
+@@ -32,10 +32,10 @@
+ 
+ using namespace cirrus;
+ 
+-Q_STATIC_LOGGING_CATEGORY(lcLibrary, "qt.demo")
+-
+ namespace
+ {
++Q_LOGGING_CATEGORY(lcLibrary, "qt.demo")
++
+ QString text(const log::Fields& fields) { return fields.text(); }
+ 
+ QString readAll(const QString& directory)
 diff --git a/tests/unit/qt68_audio_pull_test.cpp b/tests/unit/qt68_audio_pull_test.cpp
 new file mode 100644
 --- /dev/null

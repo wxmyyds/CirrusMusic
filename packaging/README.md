@@ -75,13 +75,13 @@ Arch ARM 镜像不是 Arch Linux ARM 官方发布镜像。当前固定 `base-dev
 
 公共播放代码、B 站 Dolby 请求与原有格式策略保持不变。Fedora 补丁按实际 codec ID 将 E-AC-3 交给 `libcirrus_eac3.so.1`，其余编码仍走原有系统 FFmpeg 路径，不进行失败重试或音源切换。该私有库由未修改的 FFmpeg 9.0.2 静态对象组成，配置仅启用 E-AC-3 及其上游强制的 AC-3/解析器依赖；应用入口只接受 E-AC-3，不把 AC-3 转给它。库以隐藏符号、版本脚本及本地绑定隔离内部 FFmpeg，边界仅传原始 packet 字节、时间戳及立体声 PCM，不交换 FFmpeg 对象。两个 Fedora 原生构建均运行应用补丁后的音频测试，正向验证 E-AC-3、seek/reset 和实际后端选择，同时核验普通 AAC/FLAC 仍走系统库。
 
-Debian/Fedora 不再下载或部署 Qt SDK、自编 QtKeychain、ICU、QML 模块及 Qt 插件。依赖准备核对系统 Qt/QtKeychain 的真实文件和发行版包所有权；打包检查包内没有这些共享库、插件/QML 目录、`qt.conf` 或独立 FFmpeg DSO。QML 导入由系统 `qmlimportscanner` 扫描，SQLite、WebP/SVG、XCB/Wayland 和多媒体插件按文件所有权转换为原生运行包依赖，补足共享库扫描看不到的动态加载。ICU 由系统 Qt 依赖管理，Cirrus 不手写 ICU 版本；保留原生工具生成的必要 ABI 约束。四个 FFmpeg ELF 导入必须解析到系统库且进入 DEB/RPM 元数据。Fedora 仍单独检查唯一私有 E-AC-3 库的 C ABI、FFmpeg 符号隔离、独立性及 TEXTREL。保留全部 ELF 架构、缺库、构建目录泄漏、桌面文件与 AppStream 校验，只 strip 尚未去符号的文件。
+Debian/Fedora 不再下载或部署 Qt SDK、自编 QtKeychain、ICU、QML 模块及 Qt 插件。依赖准备核对系统 Qt/QtKeychain 的真实文件和发行版包所有权；打包检查包内没有这些共享库、插件/QML 目录、`qt.conf` 或独立 FFmpeg DSO。QML 导入由系统 `qmlimportscanner` 扫描，并按 Qt 自身 `qmldir` 的可选声明处理平台样式；源码显式导入和模块必需导入缺失仍会失败。OpenSSL TLS、SQLite、WebP/SVG、XCB/Wayland 和多媒体插件按文件所有权转换为原生运行包依赖，补足共享库扫描看不到的动态加载。ICU 由系统 Qt 依赖管理，Cirrus 不手写 ICU 版本；保留原生工具生成的必要 ABI 约束。四个 FFmpeg ELF 导入必须解析到系统库且进入 DEB/RPM 元数据。Fedora 仍单独检查唯一私有 E-AC-3 库的 C ABI、FFmpeg 符号隔离、独立性及 TEXTREL。保留全部 ELF 架构、缺库、构建目录泄漏、桌面文件与 AppStream 校验，只 strip 尚未去符号的文件。
 
 Arch 只保留 `packaging/linux/arch/` 的当前源码构建链路，旧上游 AUR 配方已移除。`packaging/linux/arch/cpkg/` 负责将同一份二进制产物接入 `arch-cloud-pkgs` 的统一 OCI 发布器，不在包仓库重新构建 Cirrus。
 
 ## 共享依赖与缓存
 
-`.github/actions/setup-qt` 仅为 Windows/macOS 从 `packaging/versions.sh` 读取 Qt 版本并安装 qtmultimedia、qtshadertools、qtimageformats 原生 SDK。全部 Linux 目标使用系统 Qt/QtKeychain；Debian/Fedora 测试与生产构建共用同一份应用补丁准备脚本。
+`.github/actions/setup-qt` 仅为 Windows/macOS 从 `packaging/versions.sh` 读取 Qt 版本并安装 qtmultimedia、qtshadertools、qtimageformats 原生 SDK。全部 Linux 目标使用系统 Qt/QtKeychain；Debian/Fedora 测试与生产构建共用同一份应用补丁准备脚本。容器中的完整测试由非 root 用户运行，测试构建目录位于该用户 home，避免 GitHub 宿主挂载目录的异主祖先污染缓存安全测试；应用的所有者、权限和链接校验不变。
 
 | 库 | 随包目标的来源 |
 | --- | --- |

@@ -89,14 +89,16 @@ jobs:
           set -euo pipefail
           useradd --create-home cirrus-builder
           chown -R cirrus-builder:cirrus-builder "$GITHUB_WORKSPACE"
-          chown cirrus-builder:cirrus-builder "$GITHUB_WORKSPACE/.."
           source=$(runuser -u cirrus-builder -- packaging/linux/prepare-source.sh "$DISTRIBUTION" "$TARGET_ARCH")
           echo "CIRRUS_SOURCE_DIR=$source" >> "$GITHUB_ENV"
+          # Private-cache tests require root/current-user ownership on every ancestor.
+          # GitHub's /__w bind mount belongs to the host runner's different UID.
+          echo "CIRRUS_TEST_BUILD_DIR=/home/cirrus-builder/build/tests" >> "$GITHUB_ENV"
 
       - name: Configure native test build
         run: |
           set -euo pipefail
-          runuser -u cirrus-builder -- cmake -S "$CIRRUS_SOURCE_DIR" -B "$CIRRUS_SOURCE_DIR/build/tests" -G Ninja \
+          runuser -u cirrus-builder -- cmake -S "$CIRRUS_SOURCE_DIR" -B "$CIRRUS_TEST_BUILD_DIR" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DCIRRUS_DEPLOY_QT=OFF \
             -DCMAKE_PREFIX_PATH="$CIRRUS_CMAKE_PREFIX_PATH" \
             -DPKG_CONFIG_EXECUTABLE="$CIRRUS_PKG_CONFIG_EXECUTABLE" \
@@ -105,16 +107,16 @@ jobs:
             -DCMAKE_CXX_COMPILER_LAUNCHER="$CIRRUS_COMPILER_LAUNCHER"
 
       - name: Compile native test dependencies
-        run: runuser -u cirrus-builder -- cmake --build "$CIRRUS_SOURCE_DIR/build/tests" --parallel 4 -- -k 0
+        run: runuser -u cirrus-builder -- cmake --build "$CIRRUS_TEST_BUILD_DIR" --parallel 4 -- -k 0
 
       - name: QML lint
-        run: runuser -u cirrus-builder -- cmake --build "$CIRRUS_SOURCE_DIR/build/tests" --target all_qmllint
+        run: runuser -u cirrus-builder -- cmake --build "$CIRRUS_TEST_BUILD_DIR" --target all_qmllint
 
       - name: Run all native tests
         run: |
-          runuser -u cirrus-builder -- dbus-run-session -- ctest --test-dir "$CIRRUS_SOURCE_DIR/build/tests" \
+          runuser -u cirrus-builder -- dbus-run-session -- ctest --test-dir "$CIRRUS_TEST_BUILD_DIR" \
             --output-on-failure --no-tests=error --parallel 4 \
-            --output-junit "$CIRRUS_SOURCE_DIR/build/tests/junit.xml"
+            --output-junit "$CIRRUS_TEST_BUILD_DIR/junit.xml"
 
       - name: Save compiler cache
         if: always() && env.CIRRUS_CCACHE_KEY != '' && env.CIRRUS_CCACHE_HIT != 'true'
@@ -131,9 +133,9 @@ jobs:
           retention-days: 3
           overwrite: ${{ github.run_attempt > 1 }}
           path: |
-            ${{ env.CIRRUS_SOURCE_DIR }}/build/tests/junit.xml
-            ${{ env.CIRRUS_SOURCE_DIR }}/build/tests/Testing/Temporary/LastTest.log
-            ${{ env.CIRRUS_SOURCE_DIR }}/build/tests/Testing/Temporary/LastTestsFailed.log
+            ${{ env.CIRRUS_TEST_BUILD_DIR }}/junit.xml
+            ${{ env.CIRRUS_TEST_BUILD_DIR }}/Testing/Temporary/LastTest.log
+            ${{ env.CIRRUS_TEST_BUILD_DIR }}/Testing/Temporary/LastTestsFailed.log
           if-no-files-found: warn
 
   tests:

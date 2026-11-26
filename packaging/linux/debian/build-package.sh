@@ -33,7 +33,12 @@ make_deb() {
             exit 1
         }
     done
-    for package in "${qt_runtime_packages[@]}"; do depends+=", $package"; done
+    for package in "${qt_runtime_packages[@]}"; do
+        case ", $depends," in
+            *", $package,"* | *", $package ("*) ;;
+            *) depends+=", $package" ;;
+        esac
+    done
     depends+=", ca-certificates, libsecret-1-0, hicolor-icon-theme"
     {
         cat "$root/LICENSE"
