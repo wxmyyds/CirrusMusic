@@ -16,6 +16,7 @@
 - Bilibili 播放优先使用对应视频及分 P 的字幕；字幕缺失或为空时使用网易云歌词。字幕保留逐行时间，不伪造逐字时间。
 - 支持粘贴、校验和清除 Bilibili Cookie，并使用系统钥匙串保存凭据。
 - 更新检查指向本仓库的 GitHub Releases；Windows 安装器按 CPU 架构选择，下载后校验 SHA-256。
+- 完善 Windows、macOS 运行时缓存目录准备：创建时设置原生私有权限，统一核验所有者、权限和链接；歌曲、封面、歌曲信息和歌词缓存沿用同一链路，补充重启复用、账号隔离及播放中清理回归。
 - 统一原生多平台构建：Arch、Debian、Fedora 各支持 x86_64 / ARM64，Windows 支持 x64 / ARM64，macOS 支持 Apple Silicon / Intel。
 - Release 先检查版本、Tag 和发布说明，再运行 CI；CI 全部通过后并行构建三个平台，所有构建成功后统一校验产物并发布。
 - README 改为说明本项目与上游的关系和功能差异；移除安装、Star History 章节及 VS Code 工作区配置。

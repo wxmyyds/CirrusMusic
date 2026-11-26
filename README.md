@@ -81,6 +81,18 @@ Linux 构建包含 Arch、Debian、Fedora 的 ARM64 与 x86_64 六个原生发�
 | 日志 | `~/.local/state/Cirrus/logs/` |
 | 登录状态 | 系统钥匙串，名为 `com.guang233.Cirrus` |
 
+### 三平台运行时缓存
+
+Linux、Windows 和 macOS 使用同一套歌曲音频、封面、歌曲信息和歌词缓存；缓存可跨应用重启复用，并按账号隔离。默认根目录由 Qt 的系统缓存位置确定：
+
+| 系统 | 默认缓存根目录 |
+| --- | --- |
+| Linux | `~/.cache/Cirrus/`；设置 `XDG_CACHE_HOME` 时跟随该位置 |
+| Windows | `%LOCALAPPDATA%/cache/Cirrus/` |
+| macOS | `~/Library/Caches/Cirrus/` |
+
+根目录下的 `resources/` 保存资源缓存，`audio/` 保存歌曲缓存。在 设置 › 存储与隐私 中可分别清除；歌曲容量上限和淘汰规则在三平台一致，清理正在播放的歌曲时等读取句柄释放后再删除。目录创建时即设置私有权限，并通过原生所有者、权限及链接检查；不安全的现有目录会在启动时拒绝使用，不改存到另一个目录。
+
 ## 给其他程序读取播放状态
 
 在 Linux 上打开 设置 › 窗口与系统 › 向其他程序提供播放状态 (私货) 后，同一用户的其他程序可以通过本机的 Unix 套接字读取：

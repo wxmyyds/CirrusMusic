@@ -6,10 +6,11 @@
 #include "application/playback/listening_session.h"
 #include "application/playback/together_session.h"
 #include "infrastructure/runtime/backend_runtime.h"
+#include "infrastructure/storage/private_files.h"
 #include "now_playing_export.h"
 
 #include <QDir>
-#include <QFile>
+#include <QFileDevice>
 #include <QLoggingCategory>
 #include <QStandardPaths>
 #include <QTimer>
@@ -25,22 +26,39 @@ const QString kKeychainService = QStringLiteral("com.guang233.Cirrus");
 // How long to wait after the backend reported a delayed close before quitting anyway.
 constexpr int kGraceMs = 5000;
 
-// Makes `path` and leaves it readable by the owner only.
+// Set permissions at creation: native ACLs on Windows, owner-only mode on Unix.
+// Existing directories are checked, never chmodded through a symlink.
 bool makePrivateDirectory(const QString& path)
 {
-    if (!QDir().mkpath(path))
-        return false;
-    return QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+    return QDir().mkpath(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                   QFileDevice::ExeOwner) &&
+           storage::isPrivateDirectory(path);
 }
 
 } // namespace
 
 std::optional<BackendHost::Paths> BackendHost::preparePaths(QString* error)
 {
-    const QString data =
-        QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + u'/' + kDirectory;
-    const QString cacheBase =
-        QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + u'/' + kDirectory;
+    return preparePaths(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation),
+                        QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation),
+                        error);
+}
+
+std::optional<BackendHost::Paths>
+BackendHost::preparePaths(const QString& dataLocation, const QString& cacheLocation, QString* error)
+{
+    if (error)
+        error->clear();
+    for (const auto& location : {dataLocation, cacheLocation}) {
+        if (location.isEmpty() || !QDir::isAbsolutePath(location) ||
+            QDir::cleanPath(location) != location) {
+            if (error)
+                *error = location.isEmpty() ? QStringLiteral("<empty storage location>") : location;
+            return std::nullopt;
+        }
+    }
+    const QString data = dataLocation + u'/' + kDirectory;
+    const QString cacheBase = cacheLocation + u'/' + kDirectory;
     const QString cache = cacheBase + QStringLiteral("/resources");
     const QString audio = cacheBase + QStringLiteral("/audio");
     for (const QString& path : {data, cache, audio}) {

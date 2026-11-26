@@ -39,9 +39,12 @@ class BackendHost : public QObject
         // The audio cache (played songs, ADR-0008): a private directory.
         QString audioCache;
     };
-    // The app's directories (Cirrus, com.guang233.Cirrus), created private (0700);
-    // nullopt with `error` set when they cannot be made.
+    // Native data/cache locations, created private (0700 on Unix, a private ACL on
+    // Windows). Refuses unsafe existing directories; nullopt with `error` set.
     static std::optional<Paths> preparePaths(QString* error);
+    // Same preparation with caller-supplied native locations (also used by offline tests).
+    static std::optional<Paths> preparePaths(const QString& dataLocation,
+                                             const QString& cacheLocation, QString* error);
 
     explicit BackendHost(const Paths& paths, QObject* parent = nullptr);
     ~BackendHost() override;

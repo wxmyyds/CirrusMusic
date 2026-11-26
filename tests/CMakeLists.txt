@@ -392,6 +392,16 @@ target_link_libraries(tst_resource_cache_store PRIVATE cirrus_resource_cache Qt6
 add_test(NAME resource_cache_store COMMAND tst_resource_cache_store)
 set_tests_properties(resource_cache_store PROPERTIES TIMEOUT 30)
 
+# Native application paths and permissions, real cache stores, synthetic CDN only.
+qt_add_executable(tst_runtime_cache unit/runtime_cache_test.cpp)
+target_link_libraries(tst_runtime_cache PRIVATE
+    cirrus_presentation_backend cirrus_resource_cache cirrus_media Qt6::Test Qt6::Gui)
+if(WIN32)
+    target_compile_definitions(tst_runtime_cache PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
+add_test(NAME runtime_cache COMMAND tst_runtime_cache)
+set_tests_properties(runtime_cache PROPERTIES TIMEOUT 60)
+
 qt_add_executable(tst_user_profile unit/user_profile_test.cpp support/synthetic_user_profile.h)
 target_link_libraries(tst_user_profile PRIVATE cirrus_netease_music Qt6::Test)
 add_test(NAME user_profile COMMAND tst_user_profile)
