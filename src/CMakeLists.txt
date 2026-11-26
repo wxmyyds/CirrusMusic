@@ -424,10 +424,27 @@ add_library(cirrus_media STATIC
     infrastructure/media/automix/analyst.h
     infrastructure/media/automix/analyst.cpp
 )
-# The audio engine decodes with FFmpeg (ADR-0008): LGPL builds, linked dynamically.
+# The audio engine uses FFmpeg 5.1+ channel layouts (ADR-0008), linked dynamically.
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(CIRRUS_FFMPEG REQUIRED IMPORTED_TARGET
-    libavformat libavcodec libavutil libswresample)
+set(cirrus_ffmpeg_search_options)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # Qt SDK prefixes must never replace distribution FFmpeg development files.
+    set(cirrus_ffmpeg_search_options NO_CMAKE_PATH NO_CMAKE_ENVIRONMENT_PATH)
+    # Preserve -L/usr/lib... hints so FindPkgConfig cannot resolve a same-named
+    # SDK library through CMAKE_PREFIX_PATH after reading a system .pc file.
+    set(ENV{PKG_CONFIG_ALLOW_SYSTEM_LIBS} 1)
+endif()
+pkg_check_modules(CIRRUS_FFMPEG REQUIRED IMPORTED_TARGET ${cirrus_ffmpeg_search_options}
+    libavformat>=59 libavcodec>=59.24.100 libavutil>=57.24.100 libswresample>=4.5.100)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    foreach(library IN LISTS CIRRUS_FFMPEG_LINK_LIBRARIES)
+        file(REAL_PATH "${library}" cirrus_ffmpeg_library)
+        if(NOT IS_ABSOLUTE "${library}" OR
+                NOT cirrus_ffmpeg_library MATCHES "^/(usr/)?lib(64)?/")
+            message(FATAL_ERROR "Linux FFmpeg must come from the distribution: ${library}")
+        endif()
+    endforeach()
+endif()
 target_link_libraries(cirrus_media PUBLIC cirrus_application Qt6::Network Qt6::Multimedia
     PRIVATE PkgConfig::CIRRUS_FFMPEG cirrus_storage)
 

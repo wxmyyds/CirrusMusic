@@ -9,10 +9,7 @@ using namespace cirrus::bilibili;
 
 namespace
 {
-QJsonObject parse(const QByteArray& json)
-{
-    return QJsonDocument::fromJson(json).object();
-}
+QJsonObject parse(const QByteArray& json) { return QJsonDocument::fromJson(json).object(); }
 } // namespace
 
 class BiliQualityTest : public QObject
@@ -66,6 +63,27 @@ class BiliQualityTest : public QObject
         QCOMPARE(selectStream(streams, Quality::High)->id, 30280);
         // Empty input is no stream.
         QVERIFY(!selectStream({}, Quality::High).has_value());
+    }
+
+    void applicationQualitiesDoNotPreferDolby()
+    {
+        auto streams = mapPlayUrl(parse(cirrus::test::kDashDolbyFlac)).result.streams;
+        // The application maps its four quality choices to these values, never Dolby.
+        for (const auto quality :
+             {Quality::Medium, Quality::High, Quality::Lossless, Quality::HiRes}) {
+            const auto selected = selectStream(streams, quality);
+            QVERIFY(selected);
+            QVERIFY(selected->qualityTag != QStringLiteral("dolby"));
+        }
+        // The ordinary AAC remains selectable even when no FLAC/Hi-Res track exists.
+        streams.removeIf(
+            [](const AudioStream& stream) { return stream.qualityTag == QStringLiteral("hires"); });
+        for (const auto quality :
+             {Quality::Medium, Quality::High, Quality::Lossless, Quality::HiRes}) {
+            const auto selected = selectStream(streams, quality);
+            QVERIFY(selected);
+            QCOMPARE(selected->id, 30280);
+        }
     }
 
     void selectionDegradesDownTheLadder()

@@ -22,6 +22,12 @@ make_deb() {
     depends=$(cd "$temporary" && dpkg-shlibdeps -O -xcirrus \
         "${library_arguments[@]}" "${elf_arguments[@]}" | sed -n 's/^shlibs:Depends=//p')
     [[ -n $depends ]]
+    for component in avformat avcodec avutil swresample; do
+        grep -Eq "(^|, )lib${component}[0-9]+([[:space:](,]|$)" <<< "$depends" || {
+            printf 'Missing Debian FFmpeg runtime dependency: lib%s\n' "$component" >&2
+            exit 1
+        }
+    done
     depends+=", ca-certificates, libsecret-1-0, hicolor-icon-theme"
     {
         cat "$root/LICENSE"
@@ -40,7 +46,8 @@ Installed-Size: $(du -sk --exclude=DEBIAN "$stage" | cut -f1)
 Depends: $depends
 Recommends: gnome-keyring | kwalletmanager | keepassxc
 Description: Desktop NetEase Cloud Music client with Bilibili audio support
- Cirrus carries its private Qt and audio libraries in /opt/cirrus.
+ Cirrus carries private Qt and QtKeychain libraries in /opt/cirrus.
+ FFmpeg comes from Debian system packages.
  It is not affiliated with NetEase or Bilibili.
 EOF
     local package="$out/cirrus_${version}_$deb_arch.deb"

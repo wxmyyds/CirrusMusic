@@ -21,7 +21,7 @@ Linux 通用编译、部署、桌面资源和依赖安装直接放在 `packaging
 
 | 工作流 | 入口 | 职责 |
 | --- | --- | --- |
-| `ci.yml` | master push、PR、手动、可复用调用 | Linux x86_64、Windows x86_64、macOS ARM64 三个测试 job；编译测试所需目标、QML lint、CTest，仅上传测试报告 |
+| `ci.yml` | master push、PR、手动、可复用调用 | Ubuntu 24.04、Fedora 44 的 x86_64，以及 Windows x86_64、macOS ARM64 四个测试 job；编译测试所需目标、QML lint、CTest，仅上传测试报告 |
 | `linux-build.yml` | 手动、可复用调用 | Arch、Debian、Fedora × x86_64、ARM64，矩阵展开为六个独立构建 job |
 | `windows-build.yml` | 手动、可复用调用 | x86_64、ARM64 两个独立构建 job，各输出 ZIP 和安装器 |
 | `macos-build.yml` | 手动、可复用调用 | ARM64、x86_64 两个独立构建 job，各输出 DMG |
@@ -46,30 +46,34 @@ Linux 通用编译、部署、桌面资源和依赖安装直接放在 `packaging
 | macOS ARM64 | `Cirrus-<版本>-macos-arm64.dmg` | `cirrus-macos-arm64` |
 | macOS x86_64 | `Cirrus-<版本>-macos-x86_64.dmg` | `cirrus-macos-x86_64` |
 
-十组目标共十二个二进制安装包。Debian x86_64 job 还收集一份 `Cirrus-<版本>-library-sources.tar.xz`，包含固定版本的 FFmpeg、QtKeychain 原始源码，供全部随包部署目标共用。
+十组目标共十二个二进制安装包。Debian x86_64 job 还收集一份 `Cirrus-<版本>-library-sources.tar.xz`，包含固定版本的 FFmpeg、QtKeychain 原始源码，供全部随包部署目标共用；其中 FFmpeg 源码用于 macOS，Linux 不编译或随包部署 FFmpeg。
 
 版本唯一来源为 `CMakeLists.txt` 中的 `project(CirrusMusic VERSION x.y.z)`；Release 标签必须为 `vx.y.z`，说明来自 [resources/CHANGELOG.md](../resources/CHANGELOG.md) 的唯一版本章节；该文件只保留当前待发布版本。版本号相同的分支包可能包含不同提交，下载时核对运行来源和提交 SHA。
 
 ## Linux 原生环境
 
-所有 Linux 配置、编译和打包命令都在对应发行版容器中执行；Ubuntu runner 仅承载容器。x86_64 使用 `ubuntu-24.04` 宿主，ARM64 使用 `ubuntu-24.04-arm` 原生宿主，不使用 QEMU 或跨架构编译。
+Linux 生产包的配置、编译和打包命令都在对应发行版容器中执行；Ubuntu runner 仅承载这些容器。x86_64 使用 `ubuntu-24.04` 宿主，ARM64 使用 `ubuntu-24.04-arm` 原生宿主，不使用 QEMU 或跨架构编译。
 
 | 目标发行版 | 构建容器 | 应用依赖 |
 | --- | --- | --- |
 | Arch x86_64 | 官方 `archlinux:base-devel` | 原生 Arch Qt、FFmpeg、QtKeychain |
 | Arch Linux ARM | 社区 [Menci/docker-archlinuxarm](https://github.com/Menci/docker-archlinuxarm) 的 base-devel 镜像 | 原生 aarch64 Arch Linux ARM 仓库依赖 |
-| Debian 13 | 官方 `debian:13`，两个原生 CPU job | 固定 Qt SDK、自编 FFmpeg/QtKeychain、Debian 系统基础库 |
-| Fedora 44 | 官方 `registry.fedoraproject.org/fedora:44`，两个原生 CPU job | 固定 Qt SDK、自编 FFmpeg/QtKeychain、Fedora 系统基础库 |
+| Debian 13 | 官方 `debian:13`，两个原生 CPU job | 固定 Qt SDK、自编 QtKeychain、Debian 官方 FFmpeg 与系统基础库 |
+| Fedora 44 | 官方 `registry.fedoraproject.org/fedora:44`，两个原生 CPU job | 固定 Qt SDK、自编 QtKeychain、Fedora 官方 FFmpeg 与系统基础库 |
 
 Arch ARM 镜像不是 Arch Linux ARM 官方发布镜像。当前固定 `base-devel-20261124.45339717499` 的 ARM64 manifest：`sha256:89dd0b1da3cab11ef9a0f12481794cf31fd2cb7377ced80aa2041d3a5cae757d`。更新镜像时应重新核对维护来源和原生架构。
 
 依赖安装统一由 `packaging/linux/install-build-deps.sh` 按发行版执行。容器启动时设置 `no_new_privs`，使 pacman 能在没有 `CAP_SYS_ADMIN` 的容器中应用 Landlock。每个构建 job 检查 `/etc/os-release` 与 `uname -m`，安装依赖后以无特权的 `cirrus-builder` 用户构建。
 
 - **Arch**：对检出提交做 `git archive`，以 SHA-256 验证源码，渲染 `packaging/linux/arch/PKGBUILD.in` 后调用 `makepkg`。装到 `/usr`，不打包系统 Qt/FFmpeg。配方同时支持 `x86_64`、`aarch64`，检查包版本、实际架构、桌面资源和许可证。关闭 LTO 和额外 debug 包；依赖 Arch 滚动仓库，Qt 私有接口升级后需要重新构建。
-- **Debian**：装到 `/opt/cirrus`，自带 Qt/FFmpeg；桌面集成和文档放到 `/usr/share`，`/usr/bin/cirrus` 链接到主程序。`dpkg-shlibdeps` 从 Debian 包数据库生成外部 ABI 依赖，再添加证书、libsecret、图标主题依赖。目标是 Debian 13，不再声称兼容旧 Ubuntu 22.04 / Debian 12。
-- **Fedora**：同一应用安装布局，由 Fedora 的 `rpmbuild` 生成 RPM；保留外部库的自动 ABI 依赖，排除已随包部署的私有 SONAME 依赖，并禁止把私有库发布为全局 Provides。只产生一个对应原生架构的二进制 RPM。
+- **Debian**：装到 `/opt/cirrus`，自带 Qt/QtKeychain，FFmpeg 使用 Debian 官方共享库；桌面集成和文档放到 `/usr/share`，`/usr/bin/cirrus` 链接到主程序。`dpkg-shlibdeps` 从 Debian 包数据库生成外部 ABI 依赖，再添加证书、libsecret、图标主题依赖。目标是 Debian 13，不再声称兼容旧 Ubuntu 22.04 / Debian 12。
+- **Fedora**：同一应用安装布局，使用 Fedora 官方 `ffmpeg-free` 开发库，不启用 RPM Fusion。由 `rpmbuild` 生成 RPM；保留 FFmpeg 等外部库的自动 ABI 依赖，排除已随包部署的私有 SONAME 依赖，并禁止把私有库发布为全局 Provides。只产生一个对应原生架构的二进制 RPM。
 
-Debian/Fedora 部署后，从原生编译器定位系统 bzip2 库，核对架构和导出符号，将 Qt SDK 中的 bzip2 导入统一为该实际库的 SONAME，并验证最终解析路径。随后检查全部 ELF 架构和依赖，拒绝缺库以及指向 Qt SDK、依赖构建目录等路径的泄漏。只 strip 尚未去符号的文件。桌面文件与 AppStream 元数据在打包时验证。
+所有 Linux 目标通过系统 pkg-config 查找 FFmpeg，要求 5.1 起的新声道布局 API；不从 Qt SDK 或私有依赖前缀查找。依赖准备阶段核对四个开发模块的系统路径和包所有权，并用发行版 FFmpeg 实际解码 MP3、FLAC、MP4/AAC、fragmented MP4 和 MP4/FLAC 样本。Fedora 官方库不提供 E-AC-3 时执行并核验不支持该编码的结果，其余目标仍要求解码成功。
+
+网易云链路只接受 MP3/FLAC；B 站正常音质选择为 AAC/FLAC，不主动选择 Dolby。Fedora 不支持只有 E-AC-3 的音轨；解码器在读取数据前报告 `UnsupportedFormat`，不重试其他编码或切换音源。不存在歌曲覆盖率统计，不能据此承诺所有 B 站音轨可播放。CI 在 Ubuntu 24.04 执行完整正向解码测试，并在 Fedora 44 容器执行完整测试，核验官方库缺少 E-AC-3 时的明确拒绝行为，不跳过该样本。
+
+Debian/Fedora 部署排除未使用的 Qt FFmpeg 媒体播放插件及所有 FFmpeg 共享库；Qt 音频设备集成保留 GStreamer，实际歌曲解码仍只有 Cirrus 的 FFmpeg 解码器。部署后检查包内没有 FFmpeg，四个实际 ELF 导入均解析到系统库，生成的 DEB/RPM 元数据也必须包含四个运行库依赖。保留全部 ELF 架构、缺库与构建目录泄漏校验；删除旧 SDK FFmpeg 专用的 bzip2 SONAME 改写。只 strip 尚未去符号的文件。桌面文件与 AppStream 元数据在打包时验证。
 
 Arch 只保留 `packaging/linux/arch/` 的当前源码构建链路，旧上游 AUR 配方已移除。`packaging/linux/arch/cpkg/` 负责将同一份二进制产物接入 `arch-cloud-pkgs` 的统一 OCI 发布器，不在包仓库重新构建 Cirrus。
 
@@ -80,11 +84,11 @@ Arch 只保留 `packaging/linux/arch/` 的当前源码构建链路，旧上游 A
 | 库 | 随包目标的来源 |
 | --- | --- |
 | Qt 6.11.2 | Qt 官方二进制；macOS `clang_64` 是同时含两个 CPU slice 的框架 |
-| FFmpeg 9.0.2 | Linux/macOS 从固定 SHA-256 源码编译；支持 MP3、FLAC、MP4/MOV 中的 AAC/E-AC-3；Windows 由固定 baseline 的 vcpkg 构建 |
+| FFmpeg | Linux 使用各发行版官方共享库；macOS 从固定 SHA-256 的 9.0.2 源码编译；Windows 由固定 baseline 的 vcpkg 构建。支持 MP3、FLAC、MP4/MOV AAC；E-AC-3 取决于系统库，Fedora 官方包不保证支持 |
 | QtKeychain 0.17.0 | 同一源码脚本，针对选定 Qt 构建；Windows 静态链接 |
 | OpenSSL、zlib、zstd | Linux 用对应发行版；Windows 用 vcpkg；macOS 用 Homebrew 的 OpenSSL/zstd 和系统 zlib |
 
-Qt Multimedia 与 Cirrus 解码器可能各有不同 SONAME 的 FFmpeg，部署检查按实际 ELF/DLL/Mach-O 依赖验证。Linux/Windows/macOS 的依赖准备分别只有一个 setup action，由 CI 和生产构建共同调用；测试和生产的 CMake 配置分开。
+Windows/macOS 的 Qt Multimedia 与 Cirrus 解码器可能各有不同 SONAME 的 FFmpeg；Linux 不部署 SDK FFmpeg。部署检查按实际 ELF/DLL/Mach-O 依赖验证。Linux/Windows/macOS 的依赖准备分别只有一个 setup action，由 CI 和生产构建共同调用；测试和生产的 CMake 配置分开。
 
 依赖缓存严格区分发行版、CPU、Qt/工具链和依赖脚本。编译缓存按原生环境与测试/生产用途隔离，恢复后由 ccache 核验编译器内容、参数和头文件；运行依赖或准备脚本调整不会清空仍有效的编译输出。依赖构建完成后立即保存，编译缓存即使后续检查失败也会保存。缓存缺失只重新执行同一来源的依赖构建，不改变源码或编译目标。
 

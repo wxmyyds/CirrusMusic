@@ -40,7 +40,8 @@ Requires: ca-certificates, libsecret, hicolor-icon-theme
 Recommends: gnome-keyring
 
 %description
-Cirrus carries its private Qt and audio libraries in /opt/cirrus.
+Cirrus carries private Qt and QtKeychain libraries in /opt/cirrus.
+FFmpeg comes from official Fedora system packages; E-AC-3 is not required.
 It is not affiliated with NetEase or Bilibili.
 
 %install
@@ -68,7 +69,15 @@ EOF
     [[ $(rpm -qp --qf '%{ARCH}' "$package") == "$native" ]]
     rpm -qip "$package"
     rpm -qlp "$package"
-    rpm -qp --requires "$package"
+    local requirements
+    requirements=$(rpm -qp --requires "$package")
+    printf '%s\n' "$requirements"
+    for component in avformat avcodec avutil swresample; do
+        grep -F "lib$component.so." <<< "$requirements" >/dev/null || {
+            printf 'Missing RPM FFmpeg runtime dependency: lib%s\n' "$component" >&2
+            exit 1
+        }
+    done
     cp "$package" "$out/"
 }
 

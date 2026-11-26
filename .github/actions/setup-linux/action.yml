@@ -66,20 +66,19 @@ runs:
           echo "QT_VERSION=$(pkg-config --modversion Qt6Core)"
         } >> "$GITHUB_ENV"
 
-    - name: Restore bundled FFmpeg and QtKeychain
+    - name: Restore bundled QtKeychain
       if: inputs.distribution != 'arch'
       id: deps
       uses: actions/cache/restore@v6
       with:
         path: ${{ env.DEPS }}
-        key: deps-linux-${{ inputs.distribution }}-${{ inputs.arch }}-qt${{ env.QT_VERSION }}-${{ hashFiles('packaging/*.sh', 'packaging/linux/install-build-deps.sh', '.github/actions/setup-linux/action.yml', '.github/actions/setup-qt/action.yml') }}
+        key: qtkeychain-linux-${{ inputs.distribution }}-${{ inputs.arch }}-qt${{ env.QT_VERSION }}-${{ hashFiles('packaging/*.sh', 'packaging/linux/install-build-deps.sh', '.github/actions/setup-linux/action.yml', '.github/actions/setup-qt/action.yml') }}
 
-    - name: Build bundled FFmpeg and QtKeychain
+    - name: Build bundled QtKeychain
       if: inputs.distribution != 'arch' && steps.deps.outputs.cache-hit != 'true'
       shell: bash
       run: |
         set -euo pipefail
-        packaging/build-ffmpeg.sh "$DEPS"
         packaging/build-qtkeychain.sh "$DEPS" "$QT_ROOT_DIR"
 
     - name: Save bundled dependency cache
@@ -88,6 +87,10 @@ runs:
       with:
         path: ${{ env.DEPS }}
         key: ${{ steps.deps.outputs.cache-primary-key }}
+
+    - name: Verify distribution FFmpeg and supported audio formats
+      shell: bash
+      run: packaging/linux/verify-system-ffmpeg.sh
 
     - name: Export common build environment
       shell: bash

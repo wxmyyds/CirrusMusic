@@ -25,9 +25,9 @@ constexpr qint64 kPrerollMs = 300; // decode this much before a seek target
 // their own demuxers; AAC and E-AC-3 arrive in an MP4/fMP4 container (the Bilibili CDN's
 // audio/mp4), demuxed by "mov".
 struct FormatRule {
-    const char* input;          // av_find_input_format name, null when unsupported
-    const char* codecs;         // avcodec whitelist
-    const char* demuxer;        // avformat whitelist
+    const char* input;   // av_find_input_format name, null when unsupported
+    const char* codecs;  // avcodec whitelist
+    const char* demuxer; // avformat whitelist
     AVCodecID expected;
 };
 std::optional<FormatRule> ruleFor(const QString& format)
@@ -121,7 +121,8 @@ bool AudioDecoder::open(std::shared_ptr<ByteSource> stream, const QString& forma
     const auto rule = ruleFor(format);
     const AVInputFormat* input = rule ? av_find_input_format(rule->input) : nullptr;
     const AVCodecID expected = rule ? rule->expected : AV_CODEC_ID_NONE;
-    if (!rule || !input) {
+    const AVCodec* codec = rule ? avcodec_find_decoder(expected) : nullptr;
+    if (!rule || !input || !codec) {
         failWith(PlaybackError::UnsupportedFormat);
         return false;
     }
@@ -161,8 +162,7 @@ bool AudioDecoder::open(std::shared_ptr<ByteSource> stream, const QString& forma
         if (int(i) != m_streamIndex)
             m_format->streams[i]->discard = AVDISCARD_ALL;
     const AVStream* audio = m_format->streams[m_streamIndex];
-    const AVCodec* codec = avcodec_find_decoder(expected);
-    m_codec = codec ? avcodec_alloc_context3(codec) : nullptr;
+    m_codec = avcodec_alloc_context3(codec);
     if (!m_codec || avcodec_parameters_to_context(m_codec, audio->codecpar) < 0 ||
         avcodec_open2(m_codec, codec, nullptr) < 0 || m_codec->sample_rate <= 0 ||
         m_codec->sample_rate > 768000 || m_codec->ch_layout.nb_channels <= 0 ||

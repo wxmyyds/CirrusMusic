@@ -84,8 +84,7 @@ class AudioDecoderTest : public QObject
         QTest::addColumn<QString>("file");
         QTest::addColumn<QString>("format");
         QTest::newRow("aac") << QStringLiteral("tone_aac.m4a") << QStringLiteral("aac");
-        QTest::newRow("aac-fmp4")
-            << QStringLiteral("tone_fmp4.m4a") << QStringLiteral("aac");
+        QTest::newRow("aac-fmp4") << QStringLiteral("tone_fmp4.m4a") << QStringLiteral("aac");
         QTest::newRow("eac3") << QStringLiteral("tone_eac3.m4a") << QStringLiteral("eac3");
         QTest::newRow("flac-mp4") << QStringLiteral("tone_flac.m4a") << QStringLiteral("flac-mp4");
     }
@@ -98,13 +97,23 @@ class AudioDecoderTest : public QObject
         auto s = store(server);
         auto stream = s->open(source(server.body, format));
         QVERIFY(stream);
-        const auto [opened, rate, frames] = onThread([stream, format] {
+        const auto [opened, error, rate, frames] = onThread([stream, format] {
             AudioDecoder decoder;
             const bool ok = decoder.open(stream, format);
             const auto all = ok ? decodeAll(decoder) : std::vector<float>();
-            return std::tuple{ok, decoder.sampleRate(), qint64(all.size() / 2)};
+            return std::tuple{ok, decoder.error(), decoder.sampleRate(), qint64(all.size() / 2)};
         });
+        if (format == QStringLiteral("eac3") &&
+            qEnvironmentVariableIntValue("CIRRUS_TEST_OPTIONAL_EAC3") == 1 && !opened) {
+            // Official Fedora FFmpeg omits this optional Dolby decoder. Execute
+            // and verify rejection; never skip the fixture or retry another codec.
+            QCOMPARE(error, std::optional(PlaybackError::UnsupportedFormat));
+            QCOMPARE(rate, 0);
+            QCOMPARE(frames, 0);
+            return;
+        }
         QVERIFY(opened);
+        QVERIFY(!error);
         QCOMPARE(rate, 44100);
         // Lossy codecs pad: the count is near the source, not frame-exact.
         QVERIFY(std::abs(frames - ToneFrames) <= 2048);

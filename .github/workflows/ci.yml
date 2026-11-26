@@ -32,8 +32,14 @@ jobs:
       matrix:
         include:
           - platform: Linux
-            runner: ubuntu-22.04
+            runner: ubuntu-24.04
             arch: x86_64
+            distribution: ubuntu
+          - platform: Fedora
+            runner: ubuntu-24.04
+            arch: x86_64
+            distribution: fedora
+            image: registry.fedoraproject.org/fedora:44
           - platform: Windows
             runner: windows-2022
             arch: x86_64
@@ -41,11 +47,16 @@ jobs:
             runner: macos-15
             arch: arm64
     runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.image }}
     timeout-minutes: 120
     defaults:
       run:
         shell: bash
     steps:
+      - name: Bootstrap Fedora test container
+        if: matrix.distribution == 'fedora'
+        run: dnf install -y git ca-certificates tar gzip
+
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref || github.sha }}
@@ -55,7 +66,7 @@ jobs:
         if: runner.os == 'Linux'
         uses: ./.github/actions/setup-linux
         with:
-          distribution: ubuntu
+          distribution: ${{ matrix.distribution }}
           arch: ${{ matrix.arch }}
           cache-scope: tests
 
@@ -95,6 +106,10 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
           QT_FORCE_STDERR_LOGGING: '1'
+          # The Linux SDK's FFmpeg media-player backend is not used by Cirrus.
+          # Production Linux deployment excludes it; test the same backend choice.
+          QT_MEDIA_BACKEND: ${{ runner.os == 'Linux' && 'gstreamer' || '' }}
+          CIRRUS_TEST_OPTIONAL_EAC3: ${{ matrix.distribution == 'fedora' && '1' || '0' }}
         run: |
           set -euo pipefail
           command=(ctest --test-dir build --output-on-failure --no-tests=error --parallel 4
