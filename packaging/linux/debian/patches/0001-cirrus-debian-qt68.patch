@@ -814,10 +814,11 @@ diff --git a/tests/unit/qt68_touch_list_view_test.cpp b/tests/unit/qt68_touch_li
 new file mode 100644
 --- /dev/null
 +++ b/tests/unit/qt68_touch_list_view_test.cpp
-@@ -0,0 +1,175 @@
+@@ -0,0 +1,203 @@
 +#include "qt68_touch_list_view.h"
 +
 +#include <QtCore/QCoreApplication>
++#include <QtCore/QLoggingCategory>
 +#include <QtGui/QGuiApplication>
 +#include <QtGui/QStyleHints>
 +#include <QtGui/QWheelEvent>
@@ -837,14 +838,18 @@ new file mode 100644
 +
 +  private:
 +    std::unique_ptr<QQuickView> m_view;
-+    Qt68TouchListView* m_list = nullptr;
++    QQuickListView* m_list = nullptr;
++    bool m_native = false;
 +    QPointingDevice* m_touch = nullptr; // Qt owns createTouchDevice() devices.
 +
 +    void addInputRows()
 +    {
 +        QTest::addColumn<int>("x");
-+        QTest::newRow("bare-rectangle") << 50;
-+        QTest::newRow("child-mouse-area") << 150;
++        QTest::addColumn<bool>("native");
++        QTest::newRow("shim-bare-rectangle") << 50 << false;
++        QTest::newRow("shim-child-mouse-area") << 150 << false;
++        QTest::newRow("native-bare-rectangle") << 50 << true;
++        QTest::newRow("native-child-mouse-area") << 150 << true;
 +    }
 +
 +  private slots:
@@ -858,11 +863,13 @@ new file mode 100644
 +
 +    void init()
 +    {
++        QFETCH(bool, native);
++        m_native = native;
 +        m_view = std::make_unique<QQuickView>();
 +        m_view->setResizeMode(QQuickView::SizeViewToRootObject);
 +        auto* component = new QQmlComponent(m_view->engine(), m_view.get());
 +        const QUrl url(QStringLiteral("qrc:/qt68_touch_list_view_test.qml"));
-+        component->setData(R"QML(
++        QByteArray source = R"QML(
 +import QtQuick
 +import Cirrus.ShimTest 1.0
 +Qt68TouchListView {
@@ -870,6 +877,12 @@ new file mode 100644
 +    width: 200
 +    height: 200
 +    model: 100
++    clip: true
++    spacing: 2
++    bottomMargin: 24
++    keyNavigationEnabled: false
++    highlightFollowsCurrentItem: false
++    activeFocusOnTab: true
 +    property int mousePresses: 0
 +    property int mouseMoves: 0
 +    property int mouseReleases: 0
@@ -890,25 +903,30 @@ new file mode 100644
 +        }
 +    }
 +}
-+)QML",
-+                           url);
++)QML";
++        if (m_native)
++            source.replace("Qt68TouchListView {", "ListView {");
++        component->setData(source, url);
 +        QTRY_VERIFY_WITH_TIMEOUT(component->status() != QQmlComponent::Loading, 5000);
 +        QVERIFY2(component->isReady(), qPrintable(component->errorString()));
 +        QObject* root = component->create();
 +        QVERIFY2(root, qPrintable(component->errorString()));
 +        m_view->setContent(url, component, root);
-+        m_list = qobject_cast<Qt68TouchListView*>(m_view->rootObject());
++        m_list = qobject_cast<QQuickListView*>(m_view->rootObject());
 +        QVERIFY(m_list);
 +        m_view->show();
 +        QVERIFY(QTest::qWaitForWindowExposed(m_view.get()));
 +        m_list->forceLayout();
 +        QCOMPARE(m_list->count(), 100);
 +        QVERIFY(m_list->contentHeight() > m_list->height());
-+        QCOMPARE(m_list->acceptedMouseButtons(), Qt::MouseButtons(Qt::NoButton));
++        QCOMPARE(m_list->acceptedMouseButtons(),
++                 Qt::MouseButtons(m_native ? Qt::LeftButton : Qt::NoButton));
 +        QVERIFY(m_list->acceptTouchEvents());
 +        // Start away from both boundaries, so clamping cannot hide a drag.
++        QTest::qWait(50);
 +        m_list->setContentY(400);
 +        m_list->forceLayout();
++        QCoreApplication::processEvents();
 +        QCOMPARE(m_list->contentY(), qreal(400));
 +        QVERIFY(QGuiApplication::styleHints()->startDragDistance() < 60);
 +    }
@@ -927,8 +945,13 @@ new file mode 100644
 +        QTest::mousePress(m_view.get(), Qt::LeftButton, Qt::NoModifier, QPoint(x, 180));
 +        QTest::mouseMove(m_view.get(), QPoint(x, 120), 20);
 +        QTest::mouseMove(m_view.get(), QPoint(x, 60), 20);
++        QTest::mouseMove(m_view.get(), QPoint(x, 20), 20);
 +        const qreal duringDrag = m_list->contentY();
-+        QTest::mouseRelease(m_view.get(), Qt::LeftButton, Qt::NoModifier, QPoint(x, 60));
++        QTest::mouseRelease(m_view.get(), Qt::LeftButton, Qt::NoModifier, QPoint(x, 20));
++        if (m_native) {
++            QVERIFY2(duringDrag > start + 1, "Native control must scroll on mouse drag");
++            return;
++        }
 +        QCOMPARE(duringDrag, start);
 +        QTest::qWait(100);
 +        QCOMPARE(m_list->contentY(), start);
@@ -952,10 +975,13 @@ new file mode 100644
 +        QVERIFY(sequence.move(0, QPoint(x, 120), m_view.get()).commit());
 +        QTest::qWait(20);
 +        QVERIFY(sequence.move(0, QPoint(x, 60), m_view.get()).commit());
++        QTest::qWait(20);
++        QVERIFY(sequence.move(0, QPoint(x, 20), m_view.get()).commit());
 +        // Flush any compressed touch update before releasing the contact.
 +        QTest::qWait(50);
 +        const qreal duringDrag = m_list->contentY();
-+        QVERIFY(sequence.release(0, QPoint(x, 60), m_view.get()).commit());
++        QVERIFY(sequence.release(0, QPoint(x, 20), m_view.get()).commit());
++        qInfo() << "Touch position" << start << duringDrag << "native" << m_native;
 +        QVERIFY2(duringDrag > start + 1, "Native touch must move content while pressed");
 +    }
 +
@@ -982,6 +1008,8 @@ new file mode 100644
 +    qputenv("QT_QUICK_BACKEND", "software");
 +    qputenv("QSG_RENDER_LOOP", "basic");
 +    QGuiApplication app(argc, argv);
++    QLoggingCategory::setFilterRules(
++        QStringLiteral("qt.quick.flickable=true\nqt.quick.flickable.filter=true"));
 +    // Deterministic application preferences, independent of host configuration.
 +    app.styleHints()->setStartDragDistance(10);
 +    app.styleHints()->setWheelScrollLines(3);
