@@ -608,153 +608,46 @@ diff --git a/tests/unit/qt68_audio_sink_test.cpp b/tests/unit/qt68_audio_sink_te
 new file mode 100644
 --- /dev/null
 +++ b/tests/unit/qt68_audio_sink_test.cpp
-@@ -0,0 +1,208 @@
+@@ -0,0 +1,99 @@
++#include "../support/private_pulse_audio.h"
 +#include "infrastructure/media/qt68_audio_sink.h"
-+#include <QAudioDevice>
-+#include <QAudioFormat>
-+#include <QDir>
 +#include <QElapsedTimer>
-+#include <QFile>
-+#include <QLocalSocket>
-+#include <QMediaDevices>
-+#include <QProcess>
-+#include <QProcessEnvironment>
-+#include <QStringList>
-+#include <QTemporaryDir>
 +#include <QTest>
 +#include <algorithm>
 +#include <atomic>
 +#include <memory>
-+#include <sys/stat.h>
 +
 +using cirrus::media::Qt68AudioSink;
 +
-+// Debian / Qt 6.8 only. Link Core, Network, Multimedia and Test, with AUTOMOC.
-+// Register this executable with CTest TIMEOUT 20: a regressed blocking drain
-+// cannot be interrupted by QTRY or an elapsed-time assertion on this thread.
 +class Qt68AudioSinkTest : public QObject
 +{
 +    Q_OBJECT
-+  public:
-+    ~Qt68AudioSinkTest() override { stopServer(); }
 +
 +  private:
 +    static constexpr int kRate = 48000;
 +    static constexpr int kReadyTimeoutMs = 2000;
 +    static constexpr qint64 kCloseDeadlineMs = 2000;
-+
-+    QTemporaryDir m_directory{
-+        QDir(QDir::currentPath()).filePath(QStringLiteral("qt68pulse_XXXXXX"))};
-+    QProcess m_server; // destroyed before its private runtime/state directories
-+    QString m_socketPath;
-+    QString m_sinkName;
-+    QAudioDevice m_device;
-+    QAudioFormat m_format;
-+
-+    bool stopServer()
-+    {
-+        if (m_server.state() == QProcess::NotRunning)
-+            return true;
-+        // This is our foreground child, never the user's session daemon.
-+        m_server.kill();
-+        return m_server.waitForFinished(1000);
-+    }
-+
-+    QString serverDiagnostics()
-+    {
-+        return QStringLiteral("Private pulseaudio: %1\n%2")
-+            .arg(m_server.errorString(), QString::fromLocal8Bit(m_server.readAll()));
-+    }
-+
-+    bool acceptsConnection()
-+    {
-+        if (m_server.state() != QProcess::Running)
-+            return false;
-+        QLocalSocket socket;
-+        socket.connectToServer(m_socketPath);
-+        const bool connected = socket.waitForConnected(25);
-+        socket.abort();
-+        return connected;
-+    }
++    cirrus::test::PrivatePulseAudioServer m_pulse;
 +
 +    std::unique_ptr<Qt68AudioSink> openSink(std::atomic<quint64>& frames)
 +    {
-+        // One second of native buffering leaves queued PCM when we cork the
-+        // stream, so the old drain-on-suspend close path cannot pass by draining
-+        // an already empty stream. The counter outlives every callback.
++        // Queued PCM in a one-second buffer makes a corked drain observable.
++        // The counter outlives every callback, including on assertion failure.
 +        return std::make_unique<Qt68AudioSink>(
-+            m_device, m_format, qsizetype(kRate), [&frames](QSpan<float> out) {
++            m_pulse.device(), m_pulse.format(), qsizetype(kRate), [&frames](QSpan<float> out) {
 +                std::fill(out.begin(), out.end(), 0.125f);
 +                frames.fetch_add(quint64(out.size() / 2), std::memory_order_relaxed);
 +            });
 +    }
 +
 +  private slots:
-+    void initTestCase()
-+    {
-+        QVERIFY2(m_directory.isValid(), qPrintable(m_directory.errorString()));
-+        const QString runtimePath = m_directory.filePath(QStringLiteral("runtime"));
-+        const QString statePath = m_directory.filePath(QStringLiteral("state"));
-+        QVERIFY(::mkdir(QFile::encodeName(runtimePath).constData(), 0700) == 0);
-+        QVERIFY(::mkdir(QFile::encodeName(statePath).constData(), 0700) == 0);
-+        m_socketPath = m_directory.filePath(QStringLiteral("native"));
-+        m_sinkName = QDir(m_directory.path()).dirName();
-+
-+        // Freeze the child's environment before changing this test process's
-+        // server. Isolate PulseAudio's writable paths as well as its socket.
-+        QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
-+        environment.remove(QStringLiteral("PULSE_SERVER"));
-+        environment.remove(QStringLiteral("PULSE_SINK"));
-+        environment.remove(QStringLiteral("PULSE_SOURCE"));
-+        environment.insert(QStringLiteral("PULSE_RUNTIME_PATH"), runtimePath);
-+        environment.insert(QStringLiteral("PULSE_STATE_PATH"), statePath);
-+        m_server.setProcessEnvironment(environment);
-+        m_server.setProcessChannelMode(QProcess::MergedChannels);
-+
-+        QString escapedSocket = m_socketPath;
-+        escapedSocket.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
-+        escapedSocket.replace(QLatin1Char('"'), QStringLiteral("\\\""));
-+        const QStringList arguments{
-+            QStringLiteral("-n"),
-+            QStringLiteral("--daemonize=no"),
-+            QStringLiteral("--system=no"),
-+            QStringLiteral("--use-pid-file=no"),
-+            QStringLiteral("--exit-idle-time=-1"),
-+            QStringLiteral("--log-target=stderr"),
-+            QStringLiteral("--load=module-native-protocol-unix socket=\"%1\" auth-anonymous=1")
-+                .arg(escapedSocket),
-+            QStringLiteral("--load=module-null-sink sink_name=%1 rate=48000 channels=2 "
-+                           "format=float32le sink_properties=device.description=%1")
-+                .arg(m_sinkName),
-+        };
-+        m_server.start(QStringLiteral("pulseaudio"), arguments);
-+        QVERIFY2(m_server.waitForStarted(1500), qPrintable(serverDiagnostics()));
-+        QTRY_VERIFY2_WITH_TIMEOUT(acceptsConnection(), qPrintable(serverDiagnostics()), 3000);
-+
-+        // No QMediaDevices access occurs before this assignment. Keep it pinned
-+        // until process exit, including multimedia singleton teardown, so a
-+        // disconnect cannot redirect this executable to the host's server.
-+        QVERIFY(qputenv("PULSE_SERVER", QByteArray("unix:") + m_socketPath.toUtf8()));
-+        QTRY_VERIFY2_WITH_TIMEOUT(!QMediaDevices::defaultAudioOutput().isNull(),
-+                                  qPrintable(serverDiagnostics()), kReadyTimeoutMs);
-+        // A non-null host device must never accidentally satisfy this test.
-+        QTRY_COMPARE_WITH_TIMEOUT(QMediaDevices::defaultAudioOutput().description(), m_sinkName,
-+                                  kReadyTimeoutMs);
-+
-+        m_format.setSampleRate(kRate);
-+        m_format.setChannelCount(2);
-+        m_format.setSampleFormat(QAudioFormat::Float);
-+        QTRY_VERIFY_WITH_TIMEOUT(QMediaDevices::defaultAudioOutput().isFormatSupported(m_format),
-+                                 kReadyTimeoutMs);
-+        m_device = QMediaDevices::defaultAudioOutput();
-+    }
++    void initTestCase() { QVERIFY2(m_pulse.start(), qPrintable(m_pulse.errorString())); }
 +
 +    void suspendedStopReturnsPromptlyAndCanReopen()
 +    {
 +        std::atomic<quint64> frames{0};
 +        auto sink = openSink(frames);
 +        const quint64 initial = frames.load(std::memory_order_relaxed);
-+        // Require timer-driven progress beyond the synchronous initial pump.
 +        QTRY_VERIFY_WITH_TIMEOUT(frames.load(std::memory_order_relaxed) > initial, kReadyTimeoutMs);
 +        QTRY_COMPARE_WITH_TIMEOUT(sink->state(), QtAudio::ActiveState, kReadyTimeoutMs);
 +        sink->suspend();
@@ -778,8 +671,6 @@ new file mode 100644
 +        QTRY_VERIFY_WITH_TIMEOUT(frames.load(std::memory_order_relaxed) > reopenedInitial,
 +                                 kReadyTimeoutMs);
 +        QTRY_COMPARE_WITH_TIMEOUT(sink->state(), QtAudio::ActiveState, kReadyTimeoutMs);
-+        // Local sink is destroyed before frames, and before fixture/server cleanup,
-+        // even when a QVERIFY/QTRY assertion returns early.
 +    }
 +
 +    void suspendedDestructionReturnsPromptlyAndCanReopen()
@@ -794,7 +685,7 @@ new file mode 100644
 +
 +        QElapsedTimer closing;
 +        closing.start();
-+        sink.reset(); // no explicit stop(): exercise the destructor itself
++        sink.reset();
 +        const qint64 elapsed = closing.elapsed();
 +        QVERIFY2(elapsed < kCloseDeadlineMs, "Suspended destruction took at least 2 seconds");
 +
@@ -811,7 +702,7 @@ new file mode 100644
 +
 +    void cleanupTestCase()
 +    {
-+        QVERIFY2(stopServer(), "Could not reap this test's private pulseaudio child");
++        QVERIFY2(m_pulse.stop(), "Could not reap this test's private PulseAudio server");
 +    }
 +};
 +

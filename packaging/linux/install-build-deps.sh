@@ -50,7 +50,7 @@ case "$distribution" in
             qt6-qtmultimedia-devel qt6-qtshadertools-devel \
             qt6-qtimageformats qt6-qtsvg qtkeychain-qt6-devel \
             ffmpeg-free libavformat-free-devel libavcodec-free-devel libavutil-free-devel libswresample-free-devel \
-            mesa-libGL-devel mesa-libEGL-devel libxkbcommon-devel wayland-devel dbus-daemon \
+            mesa-libGL-devel mesa-libEGL-devel libxkbcommon-devel wayland-devel dbus-daemon pulseaudio \
             desktop-file-utils appstream hicolor-icon-theme rpm-build redhat-rpm-config \
             shadow-utils util-linux findutils diffutils which
         cc=gcc cxx=g++
@@ -62,7 +62,7 @@ case "$distribution" in
             qt6-base qt6-declarative qt6-multimedia qt6-multimedia-ffmpeg qt6-wayland \
             qt6-imageformats qt6-shadertools qt6-tools qtkeychain-qt6 \
             ffmpeg openssl zlib zstd libsecret hicolor-icon-theme ca-certificates \
-            desktop-file-utils appstream
+            desktop-file-utils appstream pulseaudio
         cc=gcc cxx=g++
         ;;
     *)

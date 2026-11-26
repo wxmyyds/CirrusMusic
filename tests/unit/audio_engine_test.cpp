@@ -10,6 +10,9 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QtTest>
+#ifdef Q_OS_LINUX
+#include "../support/private_pulse_audio.h"
+#endif
 using namespace cirrus;
 using namespace domain;
 using application::PlaybackEvent;
@@ -42,10 +45,14 @@ QList<Kind> kinds(const QList<PlaybackEvent>& events)
 }
 } // namespace
 
-// Plays on the real default output at volume 0; skipped without one.
+// Linux owns a private null sink; other platforms need a default output.
+// All cases play at volume 0.
 class AudioEngineTest : public QObject
 {
     Q_OBJECT
+#ifdef Q_OS_LINUX
+    test::PrivatePulseAudioServer m_pulse;
+#endif
     std::unique_ptr<QTemporaryDir> m_dir;
     test::RangeServer m_server;
     std::unique_ptr<AudioStore> m_store;
@@ -91,10 +98,29 @@ class AudioEngineTest : public QObject
     }
 
   private slots:
+    void initTestCase()
+    {
+#ifdef Q_OS_LINUX
+        QVERIFY2(m_pulse.start(), qPrintable(m_pulse.errorString()));
+#endif
+    }
+
+    void cleanupTestCase()
+    {
+#ifdef Q_OS_LINUX
+        QVERIFY2(m_pulse.stop(), "Could not reap this test's private PulseAudio server");
+#endif
+    }
+
     void init()
     {
-        if (QMediaDevices::defaultAudioOutput().isNull())
+        const bool hasOutput = !QMediaDevices::defaultAudioOutput().isNull();
+#ifdef Q_OS_LINUX
+        QVERIFY2(hasOutput, "Private PulseAudio output disappeared");
+#else
+        if (!hasOutput)
             QSKIP("no audio output device");
+#endif
         m_dir = std::make_unique<QTemporaryDir>(QCoreApplication::applicationDirPath() +
                                                 QStringLiteral("/audio-engine-XXXXXX"));
         AudioStore::Options options;
