@@ -4,8 +4,10 @@ Subject: [PATCH] Debian: adapt Qt 6.10/6.11 APIs to the system Qt 6.8
 Applied only to Debian's detached application build worktree. The original
 Qt >= 6.10 baseline and the Windows/macOS/Fedora/Arch implementations remain.
 Use the existing mkdir(0700) primitive for missing parents, Qt 6.8 row-filter
-invalidation, byte/frame conversion and an unbuffered QIODevice PCM pull
-adapter. Do not relax existing path/owner/mode/link checks or change decoding.
+invalidation, byte/frame conversion and a bounded PCM push transport on an
+independent audio event thread. Preserve short writes and reset without drain.
+Backport the two ListViews' mouse/touch/wheel policy without disabling touch.
+Do not relax existing path/owner/mode/link checks or change decoding.
 The build fails with an explicit removal request once Debian meets mainline's
 Qt 6.11 APIs, including QAudioSink callbacks. Remove this patch and its build
 integration together then.
@@ -33,18 +35,20 @@ diff --git a/src/infrastructure/media/audio_output.cpp b/src/infrastructure/medi
  #include <QMediaDevices>
  #include <QThread>
  #include <algorithm>
-@@ -118,9 +118,8 @@
+@@ -118,10 +118,9 @@
      }
      m_rate = format.sampleRate();
      m_device = device;
 -    m_sink = std::make_unique<QAudioSink>(device, format);
 -    m_sink->setBufferFrameCount(m_rate / 50); // 20 ms
 -    m_sink->start([this](QSpan<float> out) { consume(out); });
+-    return true;
 +    m_sink = std::make_unique<Qt68AudioSink>(
 +        device, format, m_rate / 50, [this](QSpan<float> out) { consume(out); }); // 20 ms
-     return true;
++    return m_sink->state() != QtAudio::StoppedState;
  }
  
+ void AudioOutput::close()
 @@ -134,7 +133,7 @@
      m_fading.store(false, std::memory_order_relaxed);
  }
@@ -76,8 +80,8 @@ diff --git a/src/infrastructure/media/audio_output.h b/src/infrastructure/media/
  
 -// The default output device through QAudioSink's real-time callback, which only copies
 -// out of the ring and applies short gain ramps (pause, seek) and the volume. Owner-thread
-+// The default output device through Qt 6.8's QIODevice pull interface, copying the
-+// same ring consumer's gain ramps and PCM into the sink. Owner-thread
++// The default output device through Qt 6.8's bounded QIODevice push transport,
++// preserving the ring consumer's gain ramps and PCM. Owner-thread
  // object; the ring and the flush handshake are for the producer thread.
  class AudioOutput final : public QObject
  {
@@ -90,110 +94,148 @@ diff --git a/src/infrastructure/media/audio_output.h b/src/infrastructure/media/
      QAudioDevice m_device;
      int m_rate = 0;
      std::unique_ptr<AudioRing> m_ring;
-diff --git a/src/infrastructure/media/qt68_audio_pull.h b/src/infrastructure/media/qt68_audio_pull.h
+diff --git a/src/infrastructure/media/qt68_audio_push.h b/src/infrastructure/media/qt68_audio_push.h
 new file mode 100644
 --- /dev/null
-+++ b/src/infrastructure/media/qt68_audio_pull.h
-@@ -0,0 +1,50 @@
++++ b/src/infrastructure/media/qt68_audio_push.h
+@@ -0,0 +1,59 @@
 +#pragma once
-+#include <QIODevice>
++
 +#include <QSpan>
++#include <QtGlobal>
 +#include <algorithm>
 +#include <array>
-+#include <cstring>
 +#include <functional>
 +#include <utility>
 +
 +namespace cirrus::media
 +{
-+// Debian-only Qt 6.8 adapter. No PCM prefetch or persistent sample buffer: seek/
-+// flush and consumed-frame accounting stay in AudioOutput's original consumer.
-+class Qt68AudioPull final : public QIODevice
++// Qt 6.8 output transport. Generate PCM only against reported writable capacity.
++// Keep at most one fixed-size block's unwritten tail when a backend writes less
++// than bytesFree(), rather than asking a consuming source to seek backwards.
++class Qt68AudioPush final
 +{
 +  public:
 +    using Consumer = std::function<void(QSpan<float>)>;
-+    Qt68AudioPull(qsizetype periodFrames, Consumer consume)
-+        : m_periodBytes(periodFrames * kFrameBytes), m_consume(std::move(consume))
-+    {
-+        open(QIODevice::ReadOnly | QIODevice::Unbuffered);
-+    }
-+    bool isSequential() const override { return true; }
-+    qint64 bytesAvailable() const override { return m_periodBytes + QIODevice::bytesAvailable(); }
++    explicit Qt68AudioPush(Consumer consume) : m_consume(std::move(consume)) {}
 +
-+  protected:
-+    qint64 readData(char* data, qint64 maximum) override
++    template <typename Write> qint64 push(qint64 capacity, Write write)
 +    {
-+        // Native sinks consume complete stereo frames. Returning only complete
-+        // frames also leaves a short trailing request unconsumed, without loss.
-+        const auto size = maximum - maximum % kFrameBytes;
-+        qint64 done = 0;
-+        std::array<float, 512> samples;
-+        while (done < size) {
-+            const auto bytes = std::min(size - done, qint64(sizeof(samples)));
-+            m_consume(QSpan<float>(samples.data(), qsizetype(bytes / sizeof(float))));
-+            // QIODevice supplies char buffers; their float alignment is not assumed.
-+            std::memcpy(data + done, samples.data(), size_t(bytes));
-+            done += bytes;
++        qint64 total = 0;
++        while (capacity > 0) {
++            if (m_at == m_size) {
++                const qint64 bytes =
++                    std::min(capacity - capacity % kFrameBytes, qint64(sizeof(m_samples)));
++                if (bytes == 0)
++                    break;
++                m_consume(QSpan<float>(m_samples.data(), qsizetype(bytes / sizeof(float))));
++                m_at = 0;
++                m_size = bytes;
++            }
++            const qint64 requested = std::min(capacity, m_size - m_at);
++            const qint64 written =
++                write(reinterpret_cast<const char*>(m_samples.data()) + m_at, requested);
++            if (written < 0)
++                return -1;
++            if (written == 0)
++                break;
++            Q_ASSERT(written <= requested);
++            m_at += written;
++            capacity -= written;
++            total += written;
 +        }
-+        return done;
++        return total;
 +    }
-+    qint64 writeData(const char*, qint64) override { return -1; }
++
++    qint64 pendingFrames() const { return (m_size - m_at + kFrameBytes - 1) / kFrameBytes; }
++    void clear() { m_at = m_size = 0; }
 +
 +  private:
 +    static constexpr qint64 kFrameBytes = 2 * sizeof(float);
-+    qint64 m_periodBytes;
++    std::array<float, 512> m_samples{};
 +    Consumer m_consume;
++    qint64 m_at = 0;
++    qint64 m_size = 0;
 +};
 +} // namespace cirrus::media
 diff --git a/src/infrastructure/media/qt68_audio_sink.h b/src/infrastructure/media/qt68_audio_sink.h
 new file mode 100644
 --- /dev/null
 +++ b/src/infrastructure/media/qt68_audio_sink.h
-@@ -0,0 +1,65 @@
+@@ -0,0 +1,118 @@
 +#pragma once
-+#include "qt68_audio_pull.h"
++
++#include "qt68_audio_push.h"
 +#include "qt68_audio_thread.h"
 +#include <QAudioDevice>
 +#include <QAudioFormat>
 +#include <QAudioSink>
++#include <QIODevice>
++#include <QTimer>
 +#include <memory>
 +
 +namespace cirrus::media
 +{
-+// Only control operations cross threads. PCM reads call the original consumer
-+// directly in the audio event thread, with no queued per-sample work or prefetch.
++// Only control operations cross threads; the original PCM consumer and native
++// writes run together in an independent audio event loop. Qt 6.8 push mode avoids
++// ALSA's pull-source read/seek rollback and preserves every short write's tail.
 +class Qt68AudioSink final
 +{
 +  public:
 +    Qt68AudioSink(const QAudioDevice& device, const QAudioFormat& format, qsizetype periodFrames,
-+                  Qt68AudioPull::Consumer consume)
++                  Qt68AudioPush::Consumer consume)
 +    {
 +        m_thread.invoke(
 +            [this, device, format, periodFrames, consume = std::move(consume)]() mutable {
 +                m_sink = std::make_unique<QAudioSink>(device, format);
 +                m_sink->setBufferSize(format.bytesForFrames(periodFrames));
-+                m_source = std::make_unique<Qt68AudioPull>(periodFrames, std::move(consume));
-+                m_sink->start(m_source.get());
++                m_push = std::make_unique<Qt68AudioPush>(std::move(consume));
++                m_output = m_sink->start();
++                m_timer = std::make_unique<QTimer>();
++                m_timer->setTimerType(Qt::PreciseTimer);
++                m_timer->setInterval(2);
++                QObject::connect(m_timer.get(), &QTimer::timeout, m_sink.get(), [this] { pump(); });
++                QObject::connect(m_sink.get(), &QAudioSink::stateChanged, m_timer.get(),
++                                 [this](QtAudio::State state) {
++                                     if (state == QtAudio::StoppedState ||
++                                         state == QtAudio::SuspendedState)
++                                         m_timer->stop();
++                                 });
++                if (m_output) {
++                    m_timer->start();
++                    pump();
++                }
 +            });
 +    }
 +    ~Qt68AudioSink()
 +    {
 +        m_thread.invoke([this] {
-+            m_sink.reset(); // stops the native consumer before its device is deleted
-+            m_source.reset();
++            resetOnAudioThread();
++            m_timer.reset();
++            m_push.reset();
++            m_sink.reset();
 +        });
 +    }
 +    void stop()
 +    {
-+        m_thread.invoke([this] { m_sink->stop(); });
++        m_thread.invoke([this] { resetOnAudioThread(); });
 +    }
 +    void suspend()
 +    {
-+        m_thread.invoke([this] { m_sink->suspend(); });
++        m_thread.invoke([this] {
++            m_timer->stop();
++            m_sink->suspend();
++        });
 +    }
 +    void resume()
 +    {
-+        m_thread.invoke([this] { m_sink->resume(); });
++        m_thread.invoke([this] {
++            m_sink->resume();
++            if (m_output && m_sink->state() != QtAudio::StoppedState) {
++                m_timer->start();
++                pump();
++            }
++        });
 +    }
 +    QtAudio::State state() const
 +    {
@@ -204,15 +246,39 @@ new file mode 100644
 +    qint64 bufferFrames() const
 +    {
 +        qint64 result = 0;
-+        m_thread.invoke(
-+            [this, &result] { result = m_sink->format().framesForBytes(m_sink->bufferSize()); });
++        m_thread.invoke([this, &result] {
++            result =
++                m_sink->format().framesForBytes(m_sink->bufferSize()) + m_push->pendingFrames();
++        });
 +        return result;
 +    }
 +
 +  private:
++    void pump()
++    {
++        const auto state = m_sink->state();
++        if (!m_output || (state != QtAudio::ActiveState && state != QtAudio::IdleState))
++            return;
++        if (m_push->push(m_sink->bytesFree(), [this](const char* bytes, qint64 size) {
++                return m_output->write(bytes, size);
++            }) < 0)
++            m_timer->stop();
++    }
++    void resetOnAudioThread()
++    {
++        m_timer->stop();
++        // stop() drains a corked Qt 6.8 PulseAudio stream and can wait ~30 s.
++        // Closing/reopening discards queued output, so reset() is the correct API.
++        m_sink->reset();
++        m_output = nullptr;
++        m_push->clear();
++    }
++
 +    Qt68AudioThread m_thread;
-+    std::unique_ptr<Qt68AudioPull> m_source;
 +    std::unique_ptr<QAudioSink> m_sink;
++    std::unique_ptr<Qt68AudioPush> m_push;
++    std::unique_ptr<QTimer> m_timer;
++    QIODevice* m_output = nullptr;
 +};
 +} // namespace cirrus::media
 diff --git a/src/infrastructure/media/qt68_audio_thread.h b/src/infrastructure/media/qt68_audio_thread.h
@@ -227,14 +293,14 @@ new file mode 100644
 +
 +namespace cirrus::media
 +{
-+// Qt 6.8 PulseAudio/ALSA pull sources use the sink owner's event loop. Keep it
-+// independent of the application/producer so beginFlush() never blocks the reader.
++// Keep native sink operations and the push timer independent of the application/
++// producer so beginFlush() can wait while the PCM consumer continues to run.
 +class Qt68AudioThread final
 +{
 +  public:
 +    Qt68AudioThread() : m_context(new QObject)
 +    {
-+        m_thread.setObjectName(QStringLiteral("audio-pull"));
++        m_thread.setObjectName(QStringLiteral("audio-output"));
 +        m_context->moveToThread(&m_thread);
 +        QObject::connect(&m_thread, &QThread::finished, m_context, &QObject::deleteLater);
 +        m_thread.start();
@@ -296,17 +362,33 @@ diff --git a/src/logging/logger.cpp b/src/logging/logger.cpp
 diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
 --- a/tests/CMakeLists.txt
 +++ b/tests/CMakeLists.txt
-@@ -480,3 +480,10 @@
+@@ -480,3 +480,26 @@
  target_include_directories(tst_app_link PRIVATE ${PROJECT_SOURCE_DIR}/ui/presentation)
  target_link_libraries(tst_app_link PRIVATE Qt6::Test Qt6::Core)
  add_test(NAME app_link COMMAND tst_app_link)
 +
-+# Debian Qt 6.8 pull adapter is tested without needing an audio device.
-+qt_add_executable(tst_qt68_audio_pull unit/qt68_audio_pull_test.cpp)
-+target_include_directories(tst_qt68_audio_pull PRIVATE ../src)
-+target_link_libraries(tst_qt68_audio_pull PRIVATE Qt6::Core Qt6::Test)
-+add_test(NAME qt68_audio_pull COMMAND tst_qt68_audio_pull)
-+set_tests_properties(qt68_audio_pull PROPERTIES TIMEOUT 15)
++# Debian Qt 6.8 push transport is tested without needing an audio device.
++qt_add_executable(tst_qt68_audio_push unit/qt68_audio_push_test.cpp)
++target_include_directories(tst_qt68_audio_push PRIVATE ../src)
++target_link_libraries(tst_qt68_audio_push PRIVATE Qt6::Core Qt6::Test)
++add_test(NAME qt68_audio_push COMMAND tst_qt68_audio_push)
++set_tests_properties(qt68_audio_push PROPERTIES TIMEOUT 15)
++
++# A private PulseAudio null sink exercises suspend/close/reopen without hardware.
++qt_add_executable(tst_qt68_audio_sink unit/qt68_audio_sink_test.cpp)
++target_include_directories(tst_qt68_audio_sink PRIVATE ../src)
++target_link_libraries(tst_qt68_audio_sink PRIVATE Qt6::Core Qt6::Network Qt6::Multimedia Qt6::Test)
++add_test(NAME qt68_audio_sink COMMAND tst_qt68_audio_sink)
++set_tests_properties(qt68_audio_sink PROPERTIES TIMEOUT 20)
++
++# Debian-only ListView input policy: mouse never steals; touch and wheel still scroll.
++qt_add_executable(tst_qt68_touch_list_view unit/qt68_touch_list_view_test.cpp
++    ../ui/controls/qt68_touch_list_view.h)
++target_include_directories(tst_qt68_touch_list_view PRIVATE ../ui/controls)
++target_link_libraries(tst_qt68_touch_list_view PRIVATE Qt6::QuickPrivate Qt6::Quick
++    Qt6::Qml Qt6::Gui Qt6::Test)
++add_test(NAME qt68_touch_list_view COMMAND tst_qt68_touch_list_view)
++set_tests_properties(qt68_touch_list_view PROPERTIES TIMEOUT 30)
 diff --git a/tests/unit/listening_report_test.cpp b/tests/unit/listening_report_test.cpp
 --- a/tests/unit/listening_report_test.cpp
 +++ b/tests/unit/listening_report_test.cpp
@@ -347,102 +429,567 @@ diff --git a/tests/unit/logging_test.cpp b/tests/unit/logging_test.cpp
  QString text(const log::Fields& fields) { return fields.text(); }
  
  QString readAll(const QString& directory)
-diff --git a/tests/unit/qt68_audio_pull_test.cpp b/tests/unit/qt68_audio_pull_test.cpp
+diff --git a/tests/unit/qt68_audio_push_test.cpp b/tests/unit/qt68_audio_push_test.cpp
 new file mode 100644
 --- /dev/null
-+++ b/tests/unit/qt68_audio_pull_test.cpp
-@@ -0,0 +1,91 @@
-+#include "infrastructure/media/qt68_audio_pull.h"
++++ b/tests/unit/qt68_audio_push_test.cpp
+@@ -0,0 +1,163 @@
++#include "infrastructure/media/qt68_audio_push.h"
 +#include "infrastructure/media/qt68_audio_thread.h"
++#include <QByteArray>
 +#include <QSemaphore>
 +#include <QTest>
 +#include <QTimer>
 +#include <cstring>
 +
-+using cirrus::media::Qt68AudioPull;
++using cirrus::media::Qt68AudioPush;
 +
-+class Qt68AudioPullTest : public QObject
++class Qt68AudioPushTest : public QObject
 +{
 +    Q_OBJECT
 +  private slots:
-+    void copiesStereoFramesIntoUnalignedDestination()
++    void doesNotConsumeWithoutWholeFrameCapacity()
++    {
++        int calls = 0;
++        Qt68AudioPush output([&](QSpan<float>) { ++calls; });
++        auto write = [](const char*, qint64 size) { return size; };
++        QCOMPARE(output.push(0, write), qint64(0));
++        QCOMPARE(output.push(7, write), qint64(0));
++        QCOMPARE(calls, 0);
++        QCOMPARE(output.pendingFrames(), qint64(0));
++    }
++
++    void keepsAlsaPeriodShortWriteWithoutReconsuming()
 +    {
 +        int sample = 0;
-+        Qt68AudioPull source(960, [&](QSpan<float> out) {
++        Qt68AudioPush output([&](QSpan<float> out) {
 +            QCOMPARE(out.size() % 2, 0);
 +            QVERIFY(out.size() <= 512);
 +            for (float& value : out)
 +                value = float(sample++);
 +        });
-+        QVERIFY(source.isSequential());
-+        QCOMPARE(source.bytesAvailable(), 960 * 2 * qint64(sizeof(float)));
-+        constexpr qint64 bytes = 513 * 2 * sizeof(float);
-+        QByteArray storage(bytes + 1, '\0');
-+        QCOMPARE(source.read(storage.data() + 1, bytes), bytes);
-+        QCOMPARE(sample, 1026);
++        QByteArray bytes(1, 'x'); // destination alignment is not assumed
++        int writes = 0;
++        QCOMPARE(output.push(8192,
++                             [&](const char* data, qint64 size) -> qint64 {
++                                 if (writes++ != 0)
++                                     return 0;
++                                 const qint64 accepted = std::min(size, qint64(1024));
++                                 bytes.append(data, accepted);
++                                 return accepted;
++                             }),
++                 qint64(1024));
++        QCOMPARE(sample, 512);
++        QCOMPARE(output.pendingFrames(), qint64(128));
++        QCOMPARE(output.push(1024,
++                             [&](const char* data, qint64 size) {
++                                 bytes.append(data, size);
++                                 return size;
++                             }),
++                 qint64(1024));
++        QCOMPARE(sample, 512);
++        QCOMPARE(output.pendingFrames(), qint64(0));
++        QCOMPARE(bytes.size(), qsizetype(2049));
 +        for (int index = 0; index < sample; ++index) {
 +            float value;
-+            std::memcpy(&value, storage.constData() + 1 + index * sizeof(float), sizeof(float));
++            std::memcpy(&value, bytes.constData() + 1 + index * sizeof(float), sizeof(float));
 +            QCOMPARE(value, float(index));
 +        }
 +    }
 +
-+    void doesNotPrefetchOrDiscardPartialFrames()
++    void preservesBytePartialWritesAndBackpressure()
 +    {
 +        int sample = 0;
-+        Qt68AudioPull source(960, [&](QSpan<float> out) {
++        Qt68AudioPush output([&](QSpan<float> out) {
 +            for (float& value : out)
 +                value = float(sample++);
 +        });
-+        char bytes[19]{};
-+        QCOMPARE(source.read(bytes, 3), qint64(0));
-+        QCOMPARE(sample, 0);
-+        QCOMPARE(source.read(bytes, 19), qint64(16));
-+        QCOMPARE(sample, 4);
-+        QCOMPARE(source.read(bytes, 8), qint64(8));
-+        QCOMPARE(sample, 6);
-+        float value;
-+        std::memcpy(&value, bytes, sizeof(float));
-+        QCOMPARE(value, 4.0f);
++        QByteArray bytes;
++        int writes = 0;
++        QCOMPARE(output.push(40,
++                             [&](const char* data, qint64) -> qint64 {
++                                 if (writes++ != 0)
++                                     return 0;
++                                 bytes.append(data, 7);
++                                 return 7;
++                             }),
++                 qint64(7));
++        QCOMPARE(sample, 10);
++        QCOMPARE(output.pendingFrames(), qint64(5));
++        QCOMPARE(output.push(33, [](const char*, qint64) -> qint64 { return -1; }), qint64(-1));
++        QCOMPARE(sample, 10);
++        QCOMPARE(output.pendingFrames(), qint64(5));
++        QCOMPARE(output.push(33,
++                             [&](const char* data, qint64 size) {
++                                 const qint64 accepted = std::min(size, qint64(3));
++                                 bytes.append(data, accepted);
++                                 return accepted;
++                             }),
++                 qint64(33));
++        QCOMPARE(sample, 10);
++        QCOMPARE(output.pendingFrames(), qint64(0));
++        for (int index = 0; index < sample; ++index) {
++            float value;
++            std::memcpy(&value, bytes.constData() + index * sizeof(float), sizeof(float));
++            QCOMPARE(value, float(index));
++        }
 +    }
 +
-+    void pullsWhileTheOwnerThreadWaitsForFlush()
-+    {
-+        cirrus::media::Qt68AudioThread audio;
-+        QSemaphore consumed;
-+        Qt68AudioPull* source = nullptr;
-+        audio.invoke([&] {
-+            source = new Qt68AudioPull(960, [&](QSpan<float> out) {
-+                std::fill(out.begin(), out.end(), 0.0f);
-+                consumed.release();
-+            });
-+            QTimer::singleShot(0, source, [source] {
-+                char frame[2 * sizeof(float)];
-+                source->read(frame, sizeof(frame));
-+            });
-+        });
-+        // No owner-thread event processing: the audio consumer must still answer.
-+        const bool answered = consumed.tryAcquire(1, 1000);
-+        audio.invoke([&] { delete source; });
-+        QVERIFY(answered);
-+    }
-+
-+    void passesSilenceWithoutAllocatingSampleStorage()
++    void copiesMultipleSilentBlocks()
 +    {
 +        int calls = 0;
-+        Qt68AudioPull source(960, [&](QSpan<float> out) {
++        Qt68AudioPush output([&](QSpan<float> out) {
 +            ++calls;
 +            std::fill(out.begin(), out.end(), 0.0f);
 +        });
-+        QByteArray data(8192, '\x7f');
-+        QCOMPARE(source.read(data.data(), data.size()), qint64(data.size()));
++        QByteArray bytes;
++        QCOMPARE(output.push(8192,
++                             [&](const char* data, qint64 size) {
++                                 bytes.append(data, size);
++                                 return size;
++                             }),
++                 qint64(8192));
 +        QCOMPARE(calls, 4);
-+        QCOMPARE(data, QByteArray(8192, '\0'));
++        QCOMPARE(bytes, QByteArray(8192, '\0'));
++    }
++
++    void resetDiscardsOnlyThePendingOutputTail()
++    {
++        int calls = 0;
++        Qt68AudioPush output([&](QSpan<float> out) {
++            ++calls;
++            std::fill(out.begin(), out.end(), 0.0f);
++        });
++        QCOMPARE(output.push(16, [](const char*, qint64) -> qint64 { return 0; }), qint64(0));
++        QCOMPARE(output.pendingFrames(), qint64(2));
++        output.clear();
++        QCOMPARE(output.pendingFrames(), qint64(0));
++        QCOMPARE(output.push(8, [](const char*, qint64 size) { return size; }), qint64(8));
++        QCOMPARE(calls, 2);
++    }
++
++    void writesWhileTheOwnerThreadWaitsForFlush()
++    {
++        cirrus::media::Qt68AudioThread audio;
++        QSemaphore written;
++        Qt68AudioPush* output = nullptr;
++        QObject* context = nullptr;
++        audio.invoke([&] {
++            context = new QObject;
++            output = new Qt68AudioPush(
++                [](QSpan<float> out) { std::fill(out.begin(), out.end(), 0.0f); });
++            QTimer::singleShot(0, context, [&] {
++                output->push(8, [&](const char*, qint64 size) {
++                    written.release();
++                    return size;
++                });
++            });
++        });
++        // Do not process the owner's event loop while waiting.
++        const bool answered = written.tryAcquire(1, 1000);
++        audio.invoke([&] {
++            delete context;
++            delete output;
++        });
++        QVERIFY(answered);
 +    }
 +};
 +
-+QTEST_GUILESS_MAIN(Qt68AudioPullTest)
-+#include "qt68_audio_pull_test.moc"
++QTEST_GUILESS_MAIN(Qt68AudioPushTest)
++#include "qt68_audio_push_test.moc"
+diff --git a/tests/unit/qt68_audio_sink_test.cpp b/tests/unit/qt68_audio_sink_test.cpp
+new file mode 100644
+--- /dev/null
++++ b/tests/unit/qt68_audio_sink_test.cpp
+@@ -0,0 +1,208 @@
++#include "infrastructure/media/qt68_audio_sink.h"
++#include <QAudioDevice>
++#include <QAudioFormat>
++#include <QDir>
++#include <QElapsedTimer>
++#include <QFile>
++#include <QLocalSocket>
++#include <QMediaDevices>
++#include <QProcess>
++#include <QProcessEnvironment>
++#include <QStringList>
++#include <QTemporaryDir>
++#include <QTest>
++#include <algorithm>
++#include <atomic>
++#include <memory>
++#include <sys/stat.h>
++
++using cirrus::media::Qt68AudioSink;
++
++// Debian / Qt 6.8 only. Link Core, Network, Multimedia and Test, with AUTOMOC.
++// Register this executable with CTest TIMEOUT 20: a regressed blocking drain
++// cannot be interrupted by QTRY or an elapsed-time assertion on this thread.
++class Qt68AudioSinkTest : public QObject
++{
++    Q_OBJECT
++  public:
++    ~Qt68AudioSinkTest() override { stopServer(); }
++
++  private:
++    static constexpr int kRate = 48000;
++    static constexpr int kReadyTimeoutMs = 2000;
++    static constexpr qint64 kCloseDeadlineMs = 2000;
++
++    QTemporaryDir m_directory{
++        QDir(QDir::currentPath()).filePath(QStringLiteral("qt68pulse_XXXXXX"))};
++    QProcess m_server; // destroyed before its private runtime/state directories
++    QString m_socketPath;
++    QString m_sinkName;
++    QAudioDevice m_device;
++    QAudioFormat m_format;
++
++    bool stopServer()
++    {
++        if (m_server.state() == QProcess::NotRunning)
++            return true;
++        // This is our foreground child, never the user's session daemon.
++        m_server.kill();
++        return m_server.waitForFinished(1000);
++    }
++
++    QString serverDiagnostics()
++    {
++        return QStringLiteral("Private pulseaudio: %1\n%2")
++            .arg(m_server.errorString(), QString::fromLocal8Bit(m_server.readAll()));
++    }
++
++    bool acceptsConnection()
++    {
++        if (m_server.state() != QProcess::Running)
++            return false;
++        QLocalSocket socket;
++        socket.connectToServer(m_socketPath);
++        const bool connected = socket.waitForConnected(25);
++        socket.abort();
++        return connected;
++    }
++
++    std::unique_ptr<Qt68AudioSink> openSink(std::atomic<quint64>& frames)
++    {
++        // One second of native buffering leaves queued PCM when we cork the
++        // stream, so the old drain-on-suspend close path cannot pass by draining
++        // an already empty stream. The counter outlives every callback.
++        return std::make_unique<Qt68AudioSink>(
++            m_device, m_format, qsizetype(kRate), [&frames](QSpan<float> out) {
++                std::fill(out.begin(), out.end(), 0.125f);
++                frames.fetch_add(quint64(out.size() / 2), std::memory_order_relaxed);
++            });
++    }
++
++  private slots:
++    void initTestCase()
++    {
++        QVERIFY2(m_directory.isValid(), qPrintable(m_directory.errorString()));
++        const QString runtimePath = m_directory.filePath(QStringLiteral("runtime"));
++        const QString statePath = m_directory.filePath(QStringLiteral("state"));
++        QVERIFY(::mkdir(QFile::encodeName(runtimePath).constData(), 0700) == 0);
++        QVERIFY(::mkdir(QFile::encodeName(statePath).constData(), 0700) == 0);
++        m_socketPath = m_directory.filePath(QStringLiteral("native"));
++        m_sinkName = QDir(m_directory.path()).dirName();
++
++        // Freeze the child's environment before changing this test process's
++        // server. Isolate PulseAudio's writable paths as well as its socket.
++        QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
++        environment.remove(QStringLiteral("PULSE_SERVER"));
++        environment.remove(QStringLiteral("PULSE_SINK"));
++        environment.remove(QStringLiteral("PULSE_SOURCE"));
++        environment.insert(QStringLiteral("PULSE_RUNTIME_PATH"), runtimePath);
++        environment.insert(QStringLiteral("PULSE_STATE_PATH"), statePath);
++        m_server.setProcessEnvironment(environment);
++        m_server.setProcessChannelMode(QProcess::MergedChannels);
++
++        QString escapedSocket = m_socketPath;
++        escapedSocket.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
++        escapedSocket.replace(QLatin1Char('"'), QStringLiteral("\\\""));
++        const QStringList arguments{
++            QStringLiteral("-n"),
++            QStringLiteral("--daemonize=no"),
++            QStringLiteral("--system=no"),
++            QStringLiteral("--use-pid-file=no"),
++            QStringLiteral("--exit-idle-time=-1"),
++            QStringLiteral("--log-target=stderr"),
++            QStringLiteral("--load=module-native-protocol-unix socket=\"%1\" auth-anonymous=1")
++                .arg(escapedSocket),
++            QStringLiteral("--load=module-null-sink sink_name=%1 rate=48000 channels=2 "
++                           "format=float32le sink_properties=device.description=%1")
++                .arg(m_sinkName),
++        };
++        m_server.start(QStringLiteral("pulseaudio"), arguments);
++        QVERIFY2(m_server.waitForStarted(1500), qPrintable(serverDiagnostics()));
++        QTRY_VERIFY2_WITH_TIMEOUT(acceptsConnection(), qPrintable(serverDiagnostics()), 3000);
++
++        // No QMediaDevices access occurs before this assignment. Keep it pinned
++        // until process exit, including multimedia singleton teardown, so a
++        // disconnect cannot redirect this executable to the host's server.
++        QVERIFY(qputenv("PULSE_SERVER", QByteArray("unix:") + m_socketPath.toUtf8()));
++        QTRY_VERIFY2_WITH_TIMEOUT(!QMediaDevices::defaultAudioOutput().isNull(),
++                                  qPrintable(serverDiagnostics()), kReadyTimeoutMs);
++        // A non-null host device must never accidentally satisfy this test.
++        QTRY_COMPARE_WITH_TIMEOUT(QMediaDevices::defaultAudioOutput().description(), m_sinkName,
++                                  kReadyTimeoutMs);
++
++        m_format.setSampleRate(kRate);
++        m_format.setChannelCount(2);
++        m_format.setSampleFormat(QAudioFormat::Float);
++        QTRY_VERIFY_WITH_TIMEOUT(QMediaDevices::defaultAudioOutput().isFormatSupported(m_format),
++                                 kReadyTimeoutMs);
++        m_device = QMediaDevices::defaultAudioOutput();
++    }
++
++    void suspendedStopReturnsPromptlyAndCanReopen()
++    {
++        std::atomic<quint64> frames{0};
++        auto sink = openSink(frames);
++        const quint64 initial = frames.load(std::memory_order_relaxed);
++        // Require timer-driven progress beyond the synchronous initial pump.
++        QTRY_VERIFY_WITH_TIMEOUT(frames.load(std::memory_order_relaxed) > initial, kReadyTimeoutMs);
++        QTRY_COMPARE_WITH_TIMEOUT(sink->state(), QtAudio::ActiveState, kReadyTimeoutMs);
++        sink->suspend();
++        QCOMPARE(sink->state(), QtAudio::SuspendedState);
++
++        QElapsedTimer closing;
++        closing.start();
++        sink->stop();
++        const auto stoppedState = sink->state();
++        sink.reset();
++        const qint64 elapsed = closing.elapsed();
++        QVERIFY2(elapsed < kCloseDeadlineMs, "Suspended stop/destruction took at least 2 seconds");
++        QCOMPARE(stoppedState, QtAudio::StoppedState);
++
++        const quint64 stoppedFrames = frames.load(std::memory_order_relaxed);
++        QTest::qWait(20);
++        QCOMPARE(frames.load(std::memory_order_relaxed), stoppedFrames);
++        frames.store(0, std::memory_order_relaxed);
++        sink = openSink(frames);
++        const quint64 reopenedInitial = frames.load(std::memory_order_relaxed);
++        QTRY_VERIFY_WITH_TIMEOUT(frames.load(std::memory_order_relaxed) > reopenedInitial,
++                                 kReadyTimeoutMs);
++        QTRY_COMPARE_WITH_TIMEOUT(sink->state(), QtAudio::ActiveState, kReadyTimeoutMs);
++        // Local sink is destroyed before frames, and before fixture/server cleanup,
++        // even when a QVERIFY/QTRY assertion returns early.
++    }
++
++    void suspendedDestructionReturnsPromptlyAndCanReopen()
++    {
++        std::atomic<quint64> frames{0};
++        auto sink = openSink(frames);
++        const quint64 initial = frames.load(std::memory_order_relaxed);
++        QTRY_VERIFY_WITH_TIMEOUT(frames.load(std::memory_order_relaxed) > initial, kReadyTimeoutMs);
++        QTRY_COMPARE_WITH_TIMEOUT(sink->state(), QtAudio::ActiveState, kReadyTimeoutMs);
++        sink->suspend();
++        QCOMPARE(sink->state(), QtAudio::SuspendedState);
++
++        QElapsedTimer closing;
++        closing.start();
++        sink.reset(); // no explicit stop(): exercise the destructor itself
++        const qint64 elapsed = closing.elapsed();
++        QVERIFY2(elapsed < kCloseDeadlineMs, "Suspended destruction took at least 2 seconds");
++
++        const quint64 stoppedFrames = frames.load(std::memory_order_relaxed);
++        QTest::qWait(20);
++        QCOMPARE(frames.load(std::memory_order_relaxed), stoppedFrames);
++        frames.store(0, std::memory_order_relaxed);
++        sink = openSink(frames);
++        const quint64 reopenedInitial = frames.load(std::memory_order_relaxed);
++        QTRY_VERIFY_WITH_TIMEOUT(frames.load(std::memory_order_relaxed) > reopenedInitial,
++                                 kReadyTimeoutMs);
++        QTRY_COMPARE_WITH_TIMEOUT(sink->state(), QtAudio::ActiveState, kReadyTimeoutMs);
++    }
++
++    void cleanupTestCase()
++    {
++        QVERIFY2(stopServer(), "Could not reap this test's private pulseaudio child");
++    }
++};
++
++QTEST_GUILESS_MAIN(Qt68AudioSinkTest)
++#include "qt68_audio_sink_test.moc"
+diff --git a/tests/unit/qt68_touch_list_view_test.cpp b/tests/unit/qt68_touch_list_view_test.cpp
+new file mode 100644
+--- /dev/null
++++ b/tests/unit/qt68_touch_list_view_test.cpp
+@@ -0,0 +1,175 @@
++#include "qt68_touch_list_view.h"
++
++#include <QtCore/QCoreApplication>
++#include <QtGui/QGuiApplication>
++#include <QtGui/QStyleHints>
++#include <QtGui/QWheelEvent>
++#include <QtQml/QQmlComponent>
++#include <QtQml/QQmlEngine>
++#include <QtQml/qqml.h>
++#include <QtQuick/QQuickView>
++#include <QtQuick/QSGRendererInterface>
++#include <QtTest/QTest>
++
++#include <memory>
++
++using cirrus::ui::Qt68TouchListView;
++
++class Qt68TouchListViewTest : public QObject
++{
++    Q_OBJECT
++
++  private:
++    std::unique_ptr<QQuickView> m_view;
++    Qt68TouchListView* m_list = nullptr;
++    QPointingDevice* m_touch = nullptr; // Qt owns createTouchDevice() devices.
++
++    void addInputRows()
++    {
++        QTest::addColumn<int>("x");
++        QTest::newRow("bare-rectangle") << 50;
++        QTest::newRow("child-mouse-area") << 150;
++    }
++
++  private slots:
++    void initTestCase()
++    {
++        QVERIFY(qmlRegisterType<Qt68TouchListView>("Cirrus.ShimTest", 1, 0, "Qt68TouchListView") >=
++                0);
++        m_touch = QTest::createTouchDevice();
++        QVERIFY(m_touch);
++    }
++
++    void init()
++    {
++        m_view = std::make_unique<QQuickView>();
++        m_view->setResizeMode(QQuickView::SizeViewToRootObject);
++        auto* component = new QQmlComponent(m_view->engine(), m_view.get());
++        const QUrl url(QStringLiteral("inline:qt68_touch_list_view_test.qml"));
++        component->setData(R"QML(
++import QtQuick
++import Cirrus.ShimTest 1.0
++Qt68TouchListView {
++    id: list
++    width: 200
++    height: 200
++    model: 100
++    property int mousePresses: 0
++    property int mouseMoves: 0
++    property int mouseReleases: 0
++    property int mouseCancels: 0
++    delegate: Rectangle {
++        width: 200
++        height: 40
++        color: "lightgray"
++        MouseArea {
++            x: 100
++            width: 100
++            height: 40
++            // Default preventStealing=false deliberately exercises the filter.
++            onPressed: list.mousePresses++
++            onPositionChanged: list.mouseMoves++
++            onReleased: list.mouseReleases++
++            onCanceled: list.mouseCancels++
++        }
++    }
++}
++)QML",
++                           url);
++        QVERIFY2(component->isReady(), qPrintable(component->errorString()));
++        QObject* root = component->create();
++        QVERIFY2(root, qPrintable(component->errorString()));
++        m_view->setContent(url, component, root);
++        m_list = qobject_cast<Qt68TouchListView*>(m_view->rootObject());
++        QVERIFY(m_list);
++        m_view->show();
++        QVERIFY(QTest::qWaitForWindowExposed(m_view.get()));
++        m_list->forceLayout();
++        QCOMPARE(m_list->count(), 100);
++        QVERIFY(m_list->contentHeight() > m_list->height());
++        QCOMPARE(m_list->acceptedMouseButtons(), Qt::MouseButtons(Qt::NoButton));
++        QVERIFY(m_list->acceptTouchEvents());
++        // Start away from both boundaries, so clamping cannot hide a drag.
++        m_list->setContentY(400);
++        QCOMPARE(m_list->contentY(), qreal(400));
++        QVERIFY(QGuiApplication::styleHints()->startDragDistance() < 60);
++    }
++
++    void cleanup()
++    {
++        m_list = nullptr;
++        m_view.reset();
++    }
++
++    void mouseDragDoesNotScroll_data() { addInputRows(); }
++    void mouseDragDoesNotScroll()
++    {
++        QFETCH(int, x);
++        const qreal start = m_list->contentY();
++        QTest::mousePress(m_view.get(), Qt::LeftButton, Qt::NoModifier, QPoint(x, 180));
++        QTest::mouseMove(m_view.get(), QPoint(x, 120), 20);
++        QTest::mouseMove(m_view.get(), QPoint(x, 60), 20);
++        const qreal duringDrag = m_list->contentY();
++        QTest::mouseRelease(m_view.get(), Qt::LeftButton, Qt::NoModifier, QPoint(x, 60));
++        QCOMPARE(duringDrag, start);
++        QTest::qWait(100);
++        QCOMPARE(m_list->contentY(), start);
++        QVERIFY(!m_list->isMoving());
++        if (x == 150) {
++            QCOMPARE(m_list->property("mousePresses").toInt(), 1);
++            QVERIFY(m_list->property("mouseMoves").toInt() >= 2);
++            QCOMPARE(m_list->property("mouseReleases").toInt(), 1);
++            QCOMPARE(m_list->property("mouseCancels").toInt(), 0);
++        }
++    }
++
++    void touchDragScrolls_data() { addInputRows(); }
++    void touchDragScrolls()
++    {
++        QFETCH(int, x);
++        const qreal start = m_list->contentY();
++        auto sequence = QTest::touchEvent(m_view.get(), m_touch, false);
++        QVERIFY(sequence.press(0, QPoint(x, 180), m_view.get()).commit());
++        QTest::qWait(20);
++        QVERIFY(sequence.move(0, QPoint(x, 120), m_view.get()).commit());
++        QTest::qWait(20);
++        QVERIFY(sequence.move(0, QPoint(x, 60), m_view.get()).commit());
++        // Flush any compressed touch update before releasing the contact.
++        QTest::qWait(50);
++        const qreal duringDrag = m_list->contentY();
++        QVERIFY(sequence.release(0, QPoint(x, 60), m_view.get()).commit());
++        QVERIFY2(duringDrag > start + 1, "Native touch must move content while pressed");
++    }
++
++    void wheelScrolls_data() { addInputRows(); }
++    void wheelScrolls()
++    {
++        QFETCH(int, x);
++        const qreal start = m_list->contentY();
++        const QPoint local(x, 100);
++        QWheelEvent wheel(QPointF(local), QPointF(m_view->mapToGlobal(local)), QPoint(),
++                          QPoint(0, -120), Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false,
++                          Qt::MouseEventNotSynthesized);
++        wheel.setTimestamp(1000);
++        wheel.setAccepted(false);
++        QCoreApplication::sendEvent(m_view.get(), &wheel);
++        QVERIFY(wheel.isAccepted());
++        QTRY_VERIFY(m_list->contentY() > start + 1);
++    }
++};
++
++int main(int argc, char** argv)
++{
++    qputenv("QT_QPA_PLATFORM", "offscreen");
++    qputenv("QT_QUICK_BACKEND", "software");
++    qputenv("QSG_RENDER_LOOP", "basic");
++    QGuiApplication app(argc, argv);
++    QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);
++    // Deterministic application preferences, independent of host configuration.
++    app.styleHints()->setStartDragDistance(10);
++    app.styleHints()->setWheelScrollLines(3);
++    Qt68TouchListViewTest test;
++    return QTest::qExec(&test, argc, argv);
++}
++
++#include "qt68_touch_list_view_test.moc"
 diff --git a/tests/unit/runtime_cache_test.cpp b/tests/unit/runtime_cache_test.cpp
 --- a/tests/unit/runtime_cache_test.cpp
 +++ b/tests/unit/runtime_cache_test.cpp
@@ -472,6 +1019,62 @@ diff --git a/ui/CMakeLists.txt b/ui/CMakeLists.txt
      file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/cirrus-qmlimportscanner.txt"
          CONTENT "$<TARGET_FILE:Qt6::qmlimportscanner>\n")
  else()
+diff --git a/ui/app/PlaylistOrderPage.qml b/ui/app/PlaylistOrderPage.qml
+--- a/ui/app/PlaylistOrderPage.qml
++++ b/ui/app/PlaylistOrderPage.qml
+@@ -253,7 +253,7 @@
+             }
+         }
+ 
+-        ListView {
++        Qt68TouchListView {
+             id: list
+ 
+             anchors.top: header.bottom
+@@ -265,7 +265,6 @@
+             bottomMargin: 24 + PageInsets.bottom
+             boundsBehavior: Flickable.DragAndOvershootBounds
+             // Wheel and touch scroll; mouse drags are for the handles.
+-            acceptedButtons: Qt.NoButton
+             keyNavigationEnabled: false
+             highlightFollowsCurrentItem: false
+             activeFocusOnTab: true
+diff --git a/ui/components/SongTable.qml b/ui/components/SongTable.qml
+--- a/ui/components/SongTable.qml
++++ b/ui/components/SongTable.qml
+@@ -377,7 +377,7 @@
+         }
+     }
+ 
+-    ListView {
++    Qt68TouchListView {
+         id: list
+ 
+         anchors.fill: parent
+@@ -388,7 +388,6 @@
+         // Overshoots and springs back at the ends.
+         boundsBehavior: Flickable.DragAndOvershootBounds
+         // Wheel and touch scroll; mouse drags don't (desktop).
+-        acceptedButtons: Qt.NoButton
+         keyNavigationEnabled: false
+         highlightFollowsCurrentItem: false
+         activeFocusOnTab: true
+diff --git a/ui/controls/CMakeLists.txt b/ui/controls/CMakeLists.txt
+--- a/ui/controls/CMakeLists.txt
++++ b/ui/controls/CMakeLists.txt
+@@ -11,6 +11,7 @@
+         M3Shapes
+     SOURCES
+         md.h
++        qt68_touch_list_view.h
+         input_mode.h input_mode.cpp
+         wheel_filter.h wheel_filter.cpp
+         shadow_owns_material.h shadow_owns_material.cpp
+@@ -69,3 +70,4 @@
+ )
+ 
+ target_link_libraries(cirrus_ui_controls PRIVATE Qt6::Quick cirrus_ui_theme m3shapes)
++target_link_libraries(cirrus_ui_controls PUBLIC Qt6::QuickPrivate)
 diff --git a/ui/controls/TextField.qml b/ui/controls/TextField.qml
 --- a/ui/controls/TextField.qml
 +++ b/ui/controls/TextField.qml
@@ -512,6 +1115,48 @@ diff --git a/ui/controls/TextField.qml b/ui/controls/TextField.qml
                  text: control.label
                  font: Theme.type.bodyLarge.font
                  color: !control.enabled ? control.mutedColor
+diff --git a/ui/controls/qt68_touch_list_view.h b/ui/controls/qt68_touch_list_view.h
+new file mode 100644
+--- /dev/null
++++ b/ui/controls/qt68_touch_list_view.h
+@@ -0,0 +1,37 @@
++#pragma once
++
++#include <QtCore/QEvent>
++#include <QtQml/qqmlregistration.h>
++#include <QtQuick/private/qquicklistview_p.h>
++
++namespace cirrus::ui
++{
++
++class Qt68TouchListView : public QQuickListView
++{
++    Q_OBJECT
++    QML_ELEMENT
++
++  public:
++    explicit Qt68TouchListView(QQuickItem* parent = nullptr) : QQuickListView(parent)
++    {
++        // QQuickFlickable already enables touch separately; leave that intact.
++        setAcceptedMouseButtons(Qt::NoButton);
++    }
++
++  protected:
++    bool childMouseEventFilter(QQuickItem* child, QEvent* event) override
++    {
++        switch (event->type()) {
++        case QEvent::MouseButtonPress:
++        case QEvent::MouseButtonRelease:
++        case QEvent::MouseButtonDblClick:
++        case QEvent::MouseMove:
++            return false;
++        default:
++            return QQuickListView::childMouseEventFilter(child, event);
++        }
++    }
++};
++
++} // namespace cirrus::ui
 diff --git a/ui/presentation/backend/backend_host.cpp b/ui/presentation/backend/backend_host.cpp
 --- a/ui/presentation/backend/backend_host.cpp
 +++ b/ui/presentation/backend/backend_host.cpp

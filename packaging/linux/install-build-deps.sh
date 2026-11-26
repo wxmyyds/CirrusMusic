@@ -29,7 +29,7 @@ case "$distribution" in
             qt6-base-dev qt6-base-private-dev qt6-declarative-dev qt6-declarative-private-dev \
             qt6-multimedia-dev qt6-shadertools-dev qt6-wayland-dev qt6-wayland-private-dev \
             qt6-image-formats-plugins qt6-wayland qt6-qpa-plugins \
-            qtkeychain-qt6-dev libqt6sql6-sqlite qt6-svg-plugins \
+            qtkeychain-qt6-dev libqt6sql6-sqlite qt6-svg-plugins pulseaudio \
             qml6-module-qtcore qml6-module-qtqml qml6-module-qtqml-models \
             qml6-module-qtqml-workerscript qml6-module-qtquick qml6-module-qtquick-controls \
             qml6-module-qtquick-dialogs qml6-module-qtquick-effects qml6-module-qtquick-layouts \
