@@ -48,7 +48,7 @@ case "$distribution" in
             openssl-devel zlib-devel libzstd-devel libsecret-devel \
             qt6-qtbase-devel qt6-qtbase-private-devel qt6-qtdeclarative-devel \
             qt6-qtmultimedia-devel qt6-qtshadertools-devel \
-            qt6-qtimageformats qt6-qtsvg qt6-qtbase-sqlite qtkeychain-qt6-devel \
+            qt6-qtimageformats qt6-qtsvg qtkeychain-qt6-devel \
             ffmpeg-free libavformat-free-devel libavcodec-free-devel libavutil-free-devel libswresample-free-devel \
             mesa-libGL-devel mesa-libEGL-devel libxkbcommon-devel wayland-devel dbus-daemon \
             desktop-file-utils appstream hicolor-icon-theme rpm-build redhat-rpm-config \

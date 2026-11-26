@@ -25,54 +25,52 @@ diff --git a/CMakeLists.txt b/CMakeLists.txt
 diff --git a/src/infrastructure/media/audio_output.cpp b/src/infrastructure/media/audio_output.cpp
 --- a/src/infrastructure/media/audio_output.cpp
 +++ b/src/infrastructure/media/audio_output.cpp
-@@ -1,4 +1,5 @@
+@@ -1,6 +1,6 @@
  #include "audio_output.h"
-+#include "qt68_audio_pull.h"
  #include "automix/mix.h"
- #include <QAudioSink>
+-#include <QAudioSink>
++#include "qt68_audio_sink.h"
  #include <QMediaDevices>
-@@ -119,8 +120,10 @@
+ #include <QThread>
+ #include <algorithm>
+@@ -118,9 +118,8 @@
+     }
      m_rate = format.sampleRate();
      m_device = device;
-     m_sink = std::make_unique<QAudioSink>(device, format);
+-    m_sink = std::make_unique<QAudioSink>(device, format);
 -    m_sink->setBufferFrameCount(m_rate / 50); // 20 ms
 -    m_sink->start([this](QSpan<float> out) { consume(out); });
-+    m_sink->setBufferSize(format.bytesForFrames(m_rate / 50)); // 20 ms
-+    m_pull = std::make_unique<Qt68AudioPull>(m_rate / 50,
-+                                            [this](QSpan<float> out) { consume(out); });
-+    m_sink->start(m_pull.get());
++    m_sink = std::make_unique<Qt68AudioSink>(
++        device, format, m_rate / 50, [this](QSpan<float> out) { consume(out); }); // 20 ms
      return true;
  }
  
-@@ -130,11 +133,15 @@
-         return;
-     m_sink->stop();
-     m_sink.reset();
-+    m_pull.reset();
-     m_tail.clear(); // no callback runs now
+@@ -134,7 +133,7 @@
      m_fading.store(false, std::memory_order_relaxed);
  }
  
 -qint64 AudioOutput::latencyFrames() const { return m_sink ? m_sink->bufferFrameCount() : 0; }
-+qint64 AudioOutput::latencyFrames() const
-+{
-+    return m_sink ? m_sink->format().framesForBytes(m_sink->bufferSize()) : 0;
-+}
++qint64 AudioOutput::latencyFrames() const { return m_sink ? m_sink->bufferFrames() : 0; }
  
  void AudioOutput::suspend()
  {
 diff --git a/src/infrastructure/media/audio_output.h b/src/infrastructure/media/audio_output.h
 --- a/src/infrastructure/media/audio_output.h
 +++ b/src/infrastructure/media/audio_output.h
-@@ -7,6 +7,7 @@
+@@ -6,11 +6,11 @@
+ #include <memory>
  #include <vector>
  
- class QAudioSink;
-+class QIODevice;
+-class QAudioSink;
  class QMediaDevices;
  
  namespace cirrus::media
-@@ -76,8 +77,8 @@
+ {
++class Qt68AudioSink;
+ 
+ // Single-producer single-consumer ring of interleaved stereo float frames.
+ class AudioRing final
+@@ -76,8 +76,8 @@
      qsizetype m_length = 0, m_at = 0;
  };
  
@@ -83,11 +81,12 @@ diff --git a/src/infrastructure/media/audio_output.h b/src/infrastructure/media/
  // object; the ring and the flush handshake are for the producer thread.
  class AudioOutput final : public QObject
  {
-@@ -122,6 +123,7 @@
+@@ -121,7 +121,7 @@
+     void devicesChanged();
  
      QMediaDevices* m_devices = nullptr;
-     std::unique_ptr<QAudioSink> m_sink;
-+    std::unique_ptr<QIODevice> m_pull;
+-    std::unique_ptr<QAudioSink> m_sink;
++    std::unique_ptr<Qt68AudioSink> m_sink;
      QAudioDevice m_device;
      int m_rate = 0;
      std::unique_ptr<AudioRing> m_ring;
@@ -146,6 +145,107 @@ new file mode 100644
 +    Consumer m_consume;
 +};
 +} // namespace cirrus::media
+diff --git a/src/infrastructure/media/qt68_audio_sink.h b/src/infrastructure/media/qt68_audio_sink.h
+new file mode 100644
+--- /dev/null
++++ b/src/infrastructure/media/qt68_audio_sink.h
+@@ -0,0 +1,54 @@
++#pragma once
++#include "qt68_audio_pull.h"
++#include "qt68_audio_thread.h"
++#include <QAudioSink>
++#include <memory>
++
++namespace cirrus::media
++{
++// Only control operations cross threads. PCM reads call the original consumer
++// directly in the audio event thread, with no queued per-sample work or prefetch.
++class Qt68AudioSink final
++{
++  public:
++    Qt68AudioSink(const QAudioDevice& device, const QAudioFormat& format,
++                  qsizetype periodFrames, Qt68AudioPull::Consumer consume)
++    {
++        m_thread.invoke([this, device, format, periodFrames, consume = std::move(consume)]() mutable {
++            m_sink = std::make_unique<QAudioSink>(device, format);
++            m_sink->setBufferSize(format.bytesForFrames(periodFrames));
++            m_source = std::make_unique<Qt68AudioPull>(periodFrames, std::move(consume));
++            m_sink->start(m_source.get());
++        });
++    }
++    ~Qt68AudioSink()
++    {
++        m_thread.invoke([this] {
++            m_sink.reset(); // stops the native consumer before its device is deleted
++            m_source.reset();
++        });
++    }
++    void stop() { m_thread.invoke([this] { m_sink->stop(); }); }
++    void suspend() { m_thread.invoke([this] { m_sink->suspend(); }); }
++    void resume() { m_thread.invoke([this] { m_sink->resume(); }); }
++    QtAudio::State state() const
++    {
++        QtAudio::State result = QtAudio::StoppedState;
++        m_thread.invoke([this, &result] { result = m_sink->state(); });
++        return result;
++    }
++    qint64 bufferFrames() const
++    {
++        qint64 result = 0;
++        m_thread.invoke([this, &result] {
++            result = m_sink->format().framesForBytes(m_sink->bufferSize());
++        });
++        return result;
++    }
++
++  private:
++    Qt68AudioThread m_thread;
++    std::unique_ptr<Qt68AudioPull> m_source;
++    std::unique_ptr<QAudioSink> m_sink;
++};
++} // namespace cirrus::media
+diff --git a/src/infrastructure/media/qt68_audio_thread.h b/src/infrastructure/media/qt68_audio_thread.h
+new file mode 100644
+--- /dev/null
++++ b/src/infrastructure/media/qt68_audio_thread.h
+@@ -0,0 +1,37 @@
++#pragma once
++#include <QDebug>
++#include <QThread>
++#include <utility>
++
++namespace cirrus::media
++{
++// Qt 6.8 PulseAudio/ALSA pull sources use the sink owner's event loop. Keep it
++// independent of the application/producer so beginFlush() never blocks the reader.
++class Qt68AudioThread final
++{
++  public:
++    Qt68AudioThread() : m_context(new QObject)
++    {
++        m_thread.setObjectName(QStringLiteral("audio-pull"));
++        m_context->moveToThread(&m_thread);
++        QObject::connect(&m_thread, &QThread::finished, m_context, &QObject::deleteLater);
++        m_thread.start();
++    }
++    ~Qt68AudioThread()
++    {
++        m_thread.quit();
++        m_thread.wait();
++    }
++    template <typename F> void invoke(F operation) const
++    {
++        const bool queued = QMetaObject::invokeMethod(
++            m_context, std::move(operation), Qt::BlockingQueuedConnection);
++        if (!queued)
++            qFatal("Cannot invoke Debian audio event thread");
++    }
++
++  private:
++    QThread m_thread;
++    QObject* m_context;
++};
++} // namespace cirrus::media
 diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
 --- a/tests/CMakeLists.txt
 +++ b/tests/CMakeLists.txt
@@ -164,9 +264,12 @@ diff --git a/tests/unit/qt68_audio_pull_test.cpp b/tests/unit/qt68_audio_pull_te
 new file mode 100644
 --- /dev/null
 +++ b/tests/unit/qt68_audio_pull_test.cpp
-@@ -0,0 +1,67 @@
+@@ -0,0 +1,91 @@
 +#include "infrastructure/media/qt68_audio_pull.h"
++#include "infrastructure/media/qt68_audio_thread.h"
++#include <QSemaphore>
 +#include <QTest>
++#include <QTimer>
 +#include <cstring>
 +
 +using cirrus::media::Qt68AudioPull;
@@ -216,6 +319,27 @@ new file mode 100644
 +        QCOMPARE(value, 4.0f);
 +    }
 +
++    void pullsWhileTheOwnerThreadWaitsForFlush()
++    {
++        cirrus::media::Qt68AudioThread audio;
++        QSemaphore consumed;
++        Qt68AudioPull* source = nullptr;
++        audio.invoke([&] {
++            source = new Qt68AudioPull(960, [&](QSpan<float> out) {
++                std::fill(out.begin(), out.end(), 0.0f);
++                consumed.release();
++            });
++            QTimer::singleShot(0, source, [source] {
++                char frame[2 * sizeof(float)];
++                source->read(frame, sizeof(frame));
++            });
++        });
++        // No owner-thread event processing: the audio consumer must still answer.
++        const bool answered = consumed.tryAcquire(1, 1000);
++        audio.invoke([&] { delete source; });
++        QVERIFY(answered);
++    }
++
 +    void passesSilenceWithoutAllocatingSampleStorage()
 +    {
 +        int calls = 0;
@@ -245,6 +369,22 @@ diff --git a/tests/unit/runtime_cache_test.cpp b/tests/unit/runtime_cache_test.c
          QVERIFY(QDir().rmdir(m_paths.cache));
  #ifdef Q_OS_WIN
          QProcess link;
+diff --git a/ui/CMakeLists.txt b/ui/CMakeLists.txt
+--- a/ui/CMakeLists.txt
++++ b/ui/CMakeLists.txt
+@@ -5,7 +5,11 @@
+ # the static modules see these targets.
+ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+     # System Qt packages must retain the native window and diagnostic features.
+-    find_package(Qt6 REQUIRED COMPONENTS GuiPrivate WaylandClientPrivate QmlTools)
++    # Qt 6.8 exports private targets alongside the public module configs.
++    find_package(Qt6 REQUIRED COMPONENTS WaylandClient QmlTools)
++    if(NOT TARGET Qt6::GuiPrivate OR NOT TARGET Qt6::WaylandClientPrivate)
++        message(FATAL_ERROR "Debian Qt private development headers/targets are required")
++    endif()
+     file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/cirrus-qmlimportscanner.txt"
+         CONTENT "$<TARGET_FILE:Qt6::qmlimportscanner>\n")
+ else()
 diff --git a/ui/presentation/backend/backend_host.cpp b/ui/presentation/backend/backend_host.cpp
 --- a/ui/presentation/backend/backend_host.cpp
 +++ b/ui/presentation/backend/backend_host.cpp
