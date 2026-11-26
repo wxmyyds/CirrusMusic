@@ -73,7 +73,7 @@ Arch ARM 镜像不是 Arch Linux ARM 官方发布镜像。当前固定 `base-dev
 
 所有 Linux 目标通过系统 pkg-config 查找 FFmpeg，要求 5.1 起的新声道布局 API；不从 Qt SDK 或私有依赖前缀查找。依赖准备阶段核对四个开发模块的系统路径和包所有权，并用发行版 FFmpeg 实际解码 MP3、FLAC、MP4/AAC、fragmented MP4 和 MP4/FLAC 样本。
 
-Linux AudioEngine 集成测试与 Debian 音频后端回归共用一个私有 PulseAudio/null-sink 夹具，在无物理声卡的容器中执行播放、seek、暂停、衔接和停止用例。服务与运行目录由测试进程独占，显式选择 PulseAudio 后端并验证唯一的虚拟输出；依赖或设备缺失直接失败。该服务仅作为构建/测试工具安装，不进入应用运行依赖。
+Linux AudioEngine 集成测试与 Debian 音频后端回归共用一个私有 PulseAudio/null-sink 夹具，在无物理声卡的容器中执行播放、seek、暂停、衔接和停止用例。音频服务、会话 D-Bus 与运行目录均由测试进程独占，显式选择 PulseAudio 后端并验证唯一的虚拟输出；依赖或设备缺失直接失败。该服务仅作为构建/测试工具安装，不进入应用运行依赖。
 
 公共播放代码、B 站 Dolby 请求与原有格式策略保持不变。Fedora 补丁按实际 codec ID 将 E-AC-3 交给 `libcirrus_eac3.so.1`，其余编码仍走原有系统 FFmpeg 路径，不进行失败重试或音源切换。该私有库由未修改的 FFmpeg 9.0.2 静态对象组成，配置仅启用 E-AC-3 及其上游强制的 AC-3/解析器依赖；应用入口只接受 E-AC-3，不把 AC-3 转给它。库以隐藏符号、版本脚本及本地绑定隔离内部 FFmpeg，边界仅传原始 packet 字节、时间戳及立体声 PCM，不交换 FFmpeg 对象。两个 Fedora 原生构建均运行应用补丁后的音频测试，正向验证 E-AC-3、seek/reset 和实际后端选择，同时核验普通 AAC/FLAC 仍走系统库。
 

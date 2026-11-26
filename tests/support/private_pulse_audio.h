@@ -10,6 +10,7 @@
 #include <QProcessEnvironment>
 #include <QStringList>
 #include <QTemporaryDir>
+#include <QUrl>
 #include <QtTest>
 #include <sys/stat.h>
 
@@ -34,12 +35,28 @@ class PrivatePulseAudioServer
         m_socketPath = m_directory.filePath(QStringLiteral("native"));
         const QString sinkName = QDir(m_directory.path()).dirName();
 
+        // PulseAudio owns org.PulseAudio1 on its session bus. Parallel test
+        // processes need distinct buses as well as distinct audio sockets.
+        m_busSocketPath = m_directory.filePath(QStringLiteral("bus"));
+        const QString busAddress =
+            QStringLiteral("unix:path=") +
+            QString::fromLatin1(QUrl::toPercentEncoding(m_busSocketPath, QByteArray("/")));
+        m_bus.setProcessChannelMode(QProcess::MergedChannels);
+        m_bus.start(QStringLiteral("dbus-daemon"),
+                    {QStringLiteral("--session"), QStringLiteral("--nofork"),
+                     QStringLiteral("--nopidfile"), QStringLiteral("--address=") + busAddress});
+        if (!m_bus.waitForStarted(1500))
+            return fail(QStringLiteral("Cannot start private session D-Bus"));
+        if (!QTest::qWaitFor([this] { return acceptsConnection(m_bus, m_busSocketPath); }, 3000))
+            return fail(QStringLiteral("Private session D-Bus socket did not become ready"));
+
         QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
         environment.remove(QStringLiteral("PULSE_SERVER"));
         environment.remove(QStringLiteral("PULSE_SINK"));
         environment.remove(QStringLiteral("PULSE_SOURCE"));
         environment.insert(QStringLiteral("PULSE_RUNTIME_PATH"), runtimePath);
         environment.insert(QStringLiteral("PULSE_STATE_PATH"), statePath);
+        environment.insert(QStringLiteral("DBUS_SESSION_BUS_ADDRESS"), busAddress);
         m_server.setProcessEnvironment(environment);
         m_server.setProcessChannelMode(QProcess::MergedChannels);
         QString escapedSocket = m_socketPath;
@@ -57,7 +74,7 @@ class PrivatePulseAudioServer
                  .arg(sinkName)});
         if (!m_server.waitForStarted(1500))
             return fail(QStringLiteral("Cannot start private PulseAudio"));
-        if (!QTest::qWaitFor([this] { return acceptsConnection(); }, 3000))
+        if (!QTest::qWaitFor([this] { return acceptsConnection(m_server, m_socketPath); }, 3000))
             return fail(QStringLiteral("Private PulseAudio socket did not become ready"));
 
         // Set these before the first QMediaDevices access. Keep the server
@@ -83,16 +100,18 @@ class PrivatePulseAudioServer
 
     bool stop()
     {
-        if (m_server.state() == QProcess::NotRunning)
-            return true;
-        m_server.kill();
-        return m_server.waitForFinished(1000);
+        const bool audioStopped = stopProcess(m_server);
+        const bool busStopped = stopProcess(m_bus);
+        return audioStopped && busStopped;
     }
 
     QString errorString()
     {
         return QStringLiteral("%1\nPrivate pulseaudio: %2\n%3")
-            .arg(m_failure, m_server.errorString(), QString::fromLocal8Bit(m_server.readAll()));
+                   .arg(m_failure, m_server.errorString(),
+                        QString::fromLocal8Bit(m_server.readAll())) +
+               QStringLiteral("\nPrivate session D-Bus: %1\n%2")
+                   .arg(m_bus.errorString(), QString::fromLocal8Bit(m_bus.readAll()));
     }
 
     const QAudioDevice& device() const { return m_device; }
@@ -101,7 +120,9 @@ class PrivatePulseAudioServer
   private:
     QTemporaryDir m_directory{
         QDir(QDir::currentPath()).filePath(QStringLiteral("cirrus-pulse_XXXXXX"))};
-    QProcess m_server; // destroyed before its private directories
+    QProcess m_bus;
+    QProcess m_server; // audio, then bus, then private directories are destroyed
+    QString m_busSocketPath;
     QString m_socketPath;
     QString m_failure;
     QAudioDevice m_device;
@@ -113,12 +134,20 @@ class PrivatePulseAudioServer
         return false;
     }
 
-    bool acceptsConnection()
+    static bool stopProcess(QProcess& process)
     {
-        if (m_server.state() != QProcess::Running)
+        if (process.state() == QProcess::NotRunning)
+            return true;
+        process.kill();
+        return process.waitForFinished(1000);
+    }
+
+    static bool acceptsConnection(QProcess& process, const QString& path)
+    {
+        if (process.state() != QProcess::Running)
             return false;
         QLocalSocket socket;
-        socket.connectToServer(m_socketPath);
+        socket.connectToServer(path);
         const bool connected = socket.waitForConnected(25);
         socket.abort();
         return connected;

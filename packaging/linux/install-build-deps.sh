@@ -62,7 +62,7 @@ case "$distribution" in
             qt6-base qt6-declarative qt6-multimedia qt6-multimedia-ffmpeg qt6-wayland \
             qt6-imageformats qt6-shadertools qt6-tools qtkeychain-qt6 \
             ffmpeg openssl zlib zstd libsecret hicolor-icon-theme ca-certificates \
-            desktop-file-utils appstream pulseaudio
+            desktop-file-utils appstream pulseaudio dbus
         cc=gcc cxx=g++
         ;;
     *)
