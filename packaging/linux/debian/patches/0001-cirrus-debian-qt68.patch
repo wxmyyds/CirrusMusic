@@ -362,7 +362,7 @@ diff --git a/src/logging/logger.cpp b/src/logging/logger.cpp
 diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
 --- a/tests/CMakeLists.txt
 +++ b/tests/CMakeLists.txt
-@@ -480,3 +480,26 @@
+@@ -480,3 +480,33 @@
  target_include_directories(tst_app_link PRIVATE ${PROJECT_SOURCE_DIR}/ui/presentation)
  target_link_libraries(tst_app_link PRIVATE Qt6::Test Qt6::Core)
  add_test(NAME app_link COMMAND tst_app_link)
@@ -382,11 +382,18 @@ diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
 +set_tests_properties(qt68_audio_sink PROPERTIES TIMEOUT 20)
 +
 +# Debian-only ListView input policy: mouse never steals; touch and wheel still scroll.
-+qt_add_executable(tst_qt68_touch_list_view unit/qt68_touch_list_view_test.cpp
-+    ../ui/controls/qt68_touch_list_view.h)
++qt_add_executable(tst_qt68_touch_list_view unit/qt68_touch_list_view_test.cpp)
 +target_include_directories(tst_qt68_touch_list_view PRIVATE ../ui/controls)
 +target_link_libraries(tst_qt68_touch_list_view PRIVATE Qt6::QuickPrivate Qt6::Quick
 +    Qt6::Qml Qt6::Gui Qt6::Test)
++# Use production's generated registration, including revisioned Qt base types.
++qt_add_qml_module(tst_qt68_touch_list_view
++    URI Cirrus.ShimTest
++    VERSION 1.0
++    OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/qt68-shim-qml/Cirrus/ShimTest
++    DEPENDENCIES QtQuick
++    SOURCES ../ui/controls/qt68_touch_list_view.h
++)
 +add_test(NAME qt68_touch_list_view COMMAND tst_qt68_touch_list_view)
 +set_tests_properties(qt68_touch_list_view PROPERTIES TIMEOUT 30)
 diff --git a/tests/unit/listening_report_test.cpp b/tests/unit/listening_report_test.cpp
@@ -814,7 +821,7 @@ diff --git a/tests/unit/qt68_touch_list_view_test.cpp b/tests/unit/qt68_touch_li
 new file mode 100644
 --- /dev/null
 +++ b/tests/unit/qt68_touch_list_view_test.cpp
-@@ -0,0 +1,203 @@
+@@ -0,0 +1,214 @@
 +#include "qt68_touch_list_view.h"
 +
 +#include <QtCore/QCoreApplication>
@@ -824,13 +831,12 @@ new file mode 100644
 +#include <QtGui/QWheelEvent>
 +#include <QtQml/QQmlComponent>
 +#include <QtQml/QQmlEngine>
-+#include <QtQml/qqml.h>
 +#include <QtQuick/QQuickView>
++#include <QtQuick/private/qquickdeliveryagent_p_p.h>
++#include <QtQuick/private/qquickwindow_p.h>
 +#include <QtTest/QTest>
 +
 +#include <memory>
-+
-+using cirrus::ui::Qt68TouchListView;
 +
 +class Qt68TouchListViewTest : public QObject
 +{
@@ -841,6 +847,15 @@ new file mode 100644
 +    QQuickListView* m_list = nullptr;
 +    bool m_native = false;
 +    QPointingDevice* m_touch = nullptr; // Qt owns createTouchDevice() devices.
++
++    void flushTouch()
++    {
++        // Qt's Quick tests deliver each update before frame compression can
++        // replace it with the next gesture position.
++        auto* delivery = QQuickWindowPrivate::get(m_view.get())->deliveryAgentPrivate();
++        if (delivery && delivery->delayedTouch)
++            delivery->deliverDelayedTouchEvent();
++    }
 +
 +    void addInputRows()
 +    {
@@ -855,8 +870,6 @@ new file mode 100644
 +  private slots:
 +    void initTestCase()
 +    {
-+        QVERIFY(qmlRegisterType<Qt68TouchListView>("Cirrus.ShimTest", 1, 0, "Qt68TouchListView") >=
-+                0);
 +        m_touch = QTest::createTouchDevice();
 +        QVERIFY(m_touch);
 +    }
@@ -971,16 +984,21 @@ new file mode 100644
 +        const qreal start = m_list->contentY();
 +        auto sequence = QTest::touchEvent(m_view.get(), m_touch, false);
 +        QVERIFY(sequence.press(0, QPoint(x, 180), m_view.get()).commit());
++        flushTouch();
 +        QTest::qWait(20);
 +        QVERIFY(sequence.move(0, QPoint(x, 120), m_view.get()).commit());
++        flushTouch();
 +        QTest::qWait(20);
 +        QVERIFY(sequence.move(0, QPoint(x, 60), m_view.get()).commit());
++        flushTouch();
 +        QTest::qWait(20);
 +        QVERIFY(sequence.move(0, QPoint(x, 20), m_view.get()).commit());
++        flushTouch();
 +        // Flush any compressed touch update before releasing the contact.
 +        QTest::qWait(50);
 +        const qreal duringDrag = m_list->contentY();
 +        QVERIFY(sequence.release(0, QPoint(x, 20), m_view.get()).commit());
++        flushTouch();
 +        qInfo() << "Touch position" << start << duringDrag << "native" << m_native;
 +        QVERIFY2(duringDrag > start + 1, "Native touch must move content while pressed");
 +    }
