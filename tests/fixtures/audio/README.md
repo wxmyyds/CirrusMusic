@@ -3,6 +3,12 @@
 Synthetic tones only (no recordings): 0.5 s, 44.1 kHz stereo, 440 Hz left and 660 Hz right,
 22050 frames. Used by `tst_audio_decoder` and `tst_audio_engine`.
 
+`tone.mp3` has 21 MPEG frames of 1152 samples each. Its LAME tag records 576 samples
+of encoder delay and 1566 samples of end padding, leaving exactly 22050 playable samples.
+FFmpeg 6.1 reports the full encoded stream duration (24192 / 44100 s, rounded to 549 ms);
+newer demuxers subtract the delay and padding and report 500 ms. The decoder test checks
+these exact metadata values separately from its exact 22050-frame gapless PCM assertion.
+
 `long.mp3`: 4 s, 22.05 kHz mono, 330 Hz, long enough for a transition (`tst_audio_engine`).
 
 `seek.mp3`: 200 s, 8 kHz mono, 330 Hz at 8 kbit/s (200 KB): longer than what opening reads,

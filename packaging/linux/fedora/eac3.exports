@@ -1,0 +1,4 @@
+CIRRUS_EAC3_1 {
+    global: cirrus_eac3_*;
+    local: *;
+};

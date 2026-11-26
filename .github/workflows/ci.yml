@@ -32,7 +32,7 @@ jobs:
       matrix:
         include:
           - platform: Linux
-            runner: ubuntu-22.04
+            runner: ubuntu-24.04
             arch: x86_64
           - platform: Windows
             runner: windows-2022
@@ -95,6 +95,9 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
           QT_FORCE_STDERR_LOGGING: '1'
+          # The Linux SDK's FFmpeg media-player backend is not used by Cirrus.
+          # Production Linux deployment excludes it; test the same backend choice.
+          QT_MEDIA_BACKEND: ${{ runner.os == 'Linux' && 'gstreamer' || '' }}
         run: |
           set -euo pipefail
           command=(ctest --test-dir build --output-on-failure --no-tests=error --parallel 4

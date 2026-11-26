@@ -89,46 +89,18 @@ while IFS= read -r -d '' path; do
 done < <(find "$stage/opt/cirrus" -type f -print0)
 ((${#elves[@]} > 0))
 
-# Resolve the target distribution's bzip2 ABI through its native compiler.
-# Qt's x86_64 and ARM64 SDK FFmpeg builds use different bzip2 SONAMEs.
-# Rewrite their imports to the native SONAME before inspecting the entire tree.
-bzip_provider=$("$CC" -print-file-name=libbz2.so)
-[[ $bzip_provider == /* && -f $bzip_provider ]]
-bzip_provider=$(readlink -e "$bzip_provider")
-case "$bzip_provider" in
-    /lib/* | /lib64/* | /usr/lib/* | /usr/lib64/*) ;;
-    *) printf 'Non-system bzip2 provider: %s\n' "$bzip_provider" >&2; exit 1 ;;
-esac
-[[ $(LC_ALL=C readelf -h "$bzip_provider" | awk -F ': *' '/Machine:/ {print $2}') == "$machine" ]]
-bzip_soname=$(LC_ALL=C readelf -d "$bzip_provider" | awk -F '[][]' '/\(SONAME\)/ {print $2}')
-case "$bzip_soname" in
-    libbz2.so.1 | libbz2.so.1.0) ;;
-    *) printf 'Unsupported native bzip2 SONAME: %s\n' "$bzip_soname" >&2; exit 1 ;;
-esac
-bzip_exports=$(LC_ALL=C readelf --dyn-syms --wide "$bzip_provider" |
-    awk '$7 != "UND" && $6 == "DEFAULT" && $8 ~ /^BZ2_/ {print $8}' | sort -u)
-[[ -n $bzip_exports ]]
-for path in "${elves[@]}"; do
-    mapfile -t bzip_imports < <(LC_ALL=C readelf -d "$path" |
-        awk -F '[][]' '/\(NEEDED\)/ && $2 ~ /^libbz2\.so/ {print $2}')
-    for needed in "${bzip_imports[@]}"; do
-        case "$needed" in
-            libbz2.so.1 | libbz2.so.1.0) ;;
-            *) printf 'Unsupported bzip2 import: %s (%s)\n' "$needed" "$path" >&2; exit 1 ;;
-        esac
-        [[ $needed != "$bzip_soname" ]] || continue
-        mapfile -t bzip_symbols < <(LC_ALL=C readelf --dyn-syms --wide "$path" |
-            awk '$7 == "UND" && $8 ~ /^BZ2_/ {print $8}')
-        for symbol in "${bzip_symbols[@]}"; do
-            grep -Fx -- "$symbol" <<< "$bzip_exports" >/dev/null || {
-                printf 'Native bzip2 does not export %s required by %s\n' "$symbol" "$path" >&2
-                exit 1
-            }
-        done
-        printf 'Native bzip2 import: %s: %s -> %s\n' "$path" "$needed" "$bzip_soname"
-        patchelf --replace-needed "$needed" "$bzip_soname" "$path"
-    done
-done
+# No loose FFmpeg DSOs or Qt FFmpeg media plugin. Fedora's isolated EAC3 bridge
+# contains static private objects and is validated separately by its entrypoint.
+mapfile -t bundled_ffmpeg < <(find "$stage/opt/cirrus" \
+    \( -name 'libavcodec.so*' -o -name 'libavformat.so*' -o -name 'libavutil.so*' \
+       -o -name 'libavfilter.so*' -o -name 'libavdevice.so*' \
+       -o -name 'libswresample.so*' -o -name 'libswscale.so*' \
+       -o -name 'libpostproc.so*' -o -name '*ffmpeg*.so*' -o -name '*FFmpeg*.so*' \) -print)
+if ((${#bundled_ffmpeg[@]})); then
+    printf 'Unexpected loose FFmpeg library or plugin: %s\n' "${bundled_ffmpeg[@]}" >&2
+    exit 1
+fi
+declare -A system_ffmpeg=()
 
 for path in "${elves[@]}"; do
     description=$(LC_ALL=C file -b "$path")
@@ -150,14 +122,17 @@ for path in "${elves[@]}"; do
         printf 'Unresolved dependencies: %s\n%s\n' "$path" "$dependencies" >&2
         exit 1
     fi
-    resolved_bzip=$(awk -v name="$bzip_soname" '$1 == name && $2 == "=>" {print $3}' <<< "$dependencies")
-    if [[ -n $resolved_bzip ]]; then
-        [[ $(readlink -e "$resolved_bzip") == "$bzip_provider" ]] || {
-            printf 'Non-native bzip2 resolved by %s: %s\n' "$path" "$resolved_bzip" >&2
-            exit 1
-        }
-    fi
     while IFS= read -r dependency; do
+        for component in avformat avcodec avutil swresample; do
+            if [[ ${dependency##*/} == lib"$component".so.* ]]; then
+                resolved=$(readlink -e "$dependency")
+                case "$resolved" in
+                    /lib/* | /lib64/* | /usr/lib/* | /usr/lib64/*) ;;
+                    *) printf 'Non-system FFmpeg resolved by %s: %s\n' "$path" "$resolved" >&2; exit 1 ;;
+                esac
+                system_ffmpeg[$component]=$resolved
+            fi
+        done
         case "$dependency" in
         "$stage"/* | /lib/* | /lib64/* | /usr/lib/* | /usr/lib64/*) ;;
         *)
@@ -166,5 +141,12 @@ for path in "${elves[@]}"; do
             ;;
         esac
     done < <(awk '$2 == "=>" && $3 ~ /^\// {print $3} $1 ~ /^\// {print $1}' <<<"$dependencies")
+done
+for component in avformat avcodec avutil swresample; do
+    [[ -n ${system_ffmpeg[$component]:-} ]] || {
+        printf 'Missing system FFmpeg import: lib%s\n' "$component" >&2
+        exit 1
+    }
+    printf 'System FFmpeg import: lib%s => %s\n' "$component" "${system_ffmpeg[$component]}"
 done
 

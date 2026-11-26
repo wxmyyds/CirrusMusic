@@ -1,0 +1,223 @@
+From: Cirrus Fedora packaging
+Subject: [PATCH] Fedora: isolate the private EAC3 decoder from system FFmpeg
+
+Apply only to the Cirrus Fedora build worktree. FFmpeg sources are unmodified.
+
+--- a/src/infrastructure/media/audio_decoder.h
++++ b/src/infrastructure/media/audio_decoder.h
+@@ -15,6 +15,7 @@
+ namespace cirrus::media
+ {
+ class ByteSource;
++class FedoraEac3Decoder;
+ 
+ // One audio stream decoded to interleaved stereo float at its own sample rate, read through
+ // a ByteSource (the AudioStore's stream; blocking: run it on a decoder thread). Only the
+@@ -25,7 +26,7 @@
+ class AudioDecoder final
+ {
+   public:
+-    AudioDecoder() = default;
++    AudioDecoder();
+     ~AudioDecoder();
+     AudioDecoder(const AudioDecoder&) = delete;
+     AudioDecoder& operator=(const AudioDecoder&) = delete;
+@@ -34,6 +35,7 @@
+     // error() says why.
+     bool open(std::shared_ptr<ByteSource> stream, const QString& format);
+     [[nodiscard]] int sampleRate() const { return m_rate; }
++    [[nodiscard]] bool usesBuiltinEac3() const { return bool(m_fedoraEac3); }
+     [[nodiscard]] qint64 durationMs() const { return m_durationMs; }
+     // Position of the next frame read() gives, in source frames.
+     [[nodiscard]] qint64 position() const { return m_position; }
+@@ -61,6 +63,7 @@
+     qint64 m_offset = 0; // byte position in the stream
+     AVIOContext* m_io = nullptr;
+     AVFormatContext* m_format = nullptr;
++    std::unique_ptr<FedoraEac3Decoder> m_fedoraEac3;
+     AVCodecContext* m_codec = nullptr;
+     SwrContext* m_convert = nullptr;
+     AVPacket* m_packet = nullptr;
+--- a/src/infrastructure/media/audio_decoder.cpp
++++ b/src/infrastructure/media/audio_decoder.cpp
+@@ -1,5 +1,6 @@
+ #include "audio_decoder.h"
+ #include "byte_source.h"
++#include "fedora_eac3_codec.h"
+ extern "C" {
+ #include <libavcodec/avcodec.h>
+ #include <libavformat/avformat.h>
+@@ -46,8 +47,11 @@
+ }
+ } // namespace
+ 
++AudioDecoder::AudioDecoder() = default;
++
+ AudioDecoder::~AudioDecoder()
+ {
++    m_fedoraEac3.reset();
+     swr_free(&m_convert);
+     av_frame_free(&m_frame);
+     av_packet_free(&m_packet);
+@@ -161,22 +165,34 @@
+         if (int(i) != m_streamIndex)
+             m_format->streams[i]->discard = AVDISCARD_ALL;
+     const AVStream* audio = m_format->streams[m_streamIndex];
+-    const AVCodec* codec = avcodec_find_decoder(expected);
+-    m_codec = codec ? avcodec_alloc_context3(codec) : nullptr;
+-    if (!m_codec || avcodec_parameters_to_context(m_codec, audio->codecpar) < 0 ||
+-        avcodec_open2(m_codec, codec, nullptr) < 0 || m_codec->sample_rate <= 0 ||
+-        m_codec->sample_rate > 768000 || m_codec->ch_layout.nb_channels <= 0 ||
+-        m_codec->ch_layout.nb_channels > 8) {
+-        failWith(PlaybackError::Decode);
+-        return false;
+-    }
+-    m_rate = m_codec->sample_rate;
+-    AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
+-    if (swr_alloc_set_opts2(&m_convert, &stereo, AV_SAMPLE_FMT_FLT, m_rate, &m_codec->ch_layout,
+-                            m_codec->sample_fmt, m_rate, 0, nullptr) < 0 ||
+-        swr_init(m_convert) < 0) {
+-        failWith(PlaybackError::Decode);
+-        return false;
++    // Fedora's application patch selects the private decoder by actual codec ID.
++    // No retry: all other codecs keep the original system-library implementation.
++    if (audio->codecpar->codec_id == AV_CODEC_ID_EAC3) {
++        m_fedoraEac3 =
++            FedoraEac3Decoder::create(audio->codecpar, audio->time_base.num, audio->time_base.den);
++        if (!m_fedoraEac3) {
++            failWith(PlaybackError::Decode);
++            return false;
++        }
++        m_rate = m_fedoraEac3->sampleRate();
++    } else {
++        const AVCodec* codec = avcodec_find_decoder(expected);
++        m_codec = codec ? avcodec_alloc_context3(codec) : nullptr;
++        if (!m_codec || avcodec_parameters_to_context(m_codec, audio->codecpar) < 0 ||
++            avcodec_open2(m_codec, codec, nullptr) < 0 || m_codec->sample_rate <= 0 ||
++            m_codec->sample_rate > 768000 || m_codec->ch_layout.nb_channels <= 0 ||
++            m_codec->ch_layout.nb_channels > 8) {
++            failWith(PlaybackError::Decode);
++            return false;
++        }
++        m_rate = m_codec->sample_rate;
++        AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
++        if (swr_alloc_set_opts2(&m_convert, &stereo, AV_SAMPLE_FMT_FLT, m_rate, &m_codec->ch_layout,
++                                m_codec->sample_fmt, m_rate, 0, nullptr) < 0 ||
++            swr_init(m_convert) < 0) {
++            failWith(PlaybackError::Decode);
++            return false;
++        }
+     }
+     m_packet = av_packet_alloc();
+     m_frame = av_frame_alloc();
+@@ -197,6 +213,12 @@
+ 
+ void AudioDecoder::convert(const AVFrame* frame, qint64 skip)
+ {
++    if (m_fedoraEac3) {
++        const auto& samples = m_fedoraEac3->samples();
++        const auto drop = std::min<size_t>(size_t(std::max<qint64>(skip, 0)) * 2, samples.size());
++        m_pending.insert(m_pending.end(), samples.begin() + qsizetype(drop), samples.end());
++        return;
++    }
+     const int count = swr_get_out_samples(m_convert, frame->nb_samples);
+     if (count <= 0)
+         return;
+@@ -217,17 +239,22 @@
+ bool AudioDecoder::decodeSome()
+ {
+     while (!m_error && !m_interrupted) {
+-        const int got = avcodec_receive_frame(m_codec, m_frame);
++        const int got =
++            m_fedoraEac3 ? m_fedoraEac3->receive() : avcodec_receive_frame(m_codec, m_frame);
+         if (got == 0) {
+             qint64 skip = 0;
+             if (m_dropUntil >= 0) {
+                 const AVStream* stream = m_format->streams[m_streamIndex];
+                 const qint64 start = stream->start_time == AV_NOPTS_VALUE ? 0 : stream->start_time;
+-                const qint64 pts = m_frame->best_effort_timestamp;
++                const qint64 pts =
++                    m_fedoraEac3 ? m_fedoraEac3->pts() : m_frame->best_effort_timestamp;
+                 if (pts != AV_NOPTS_VALUE) {
+                     const qint64 first = av_rescale_q(pts - start, stream->time_base, {1, m_rate});
+                     skip = m_dropUntil - first;
+-                    if (skip >= m_frame->nb_samples) {
++                    const auto decodedFrames = m_fedoraEac3
++                                                   ? qint64(m_fedoraEac3->samples().size() / 2)
++                                                   : m_frame->nb_samples;
++                    if (skip >= decodedFrames) {
+                         av_frame_unref(m_frame);
+                         continue;
+                     }
+@@ -255,11 +282,15 @@
+             return false; // the stream failed or was interrupted under the demuxer
+         if (read < 0) {
+             m_inputDone = true;
+-            avcodec_send_packet(m_codec, nullptr); // drain
++            if (m_fedoraEac3)
++                m_fedoraEac3->send(nullptr);
++            else
++                avcodec_send_packet(m_codec, nullptr); // drain
+             continue;
+         }
+         if (m_packet->stream_index == m_streamIndex) {
+-            const int sent = avcodec_send_packet(m_codec, m_packet);
++            const int sent = m_fedoraEac3 ? m_fedoraEac3->send(m_packet)
++                                          : avcodec_send_packet(m_codec, m_packet);
+             // A damaged frame is skipped, as players do; anything else is fatal.
+             if (sent < 0 && sent != AVERROR_INVALIDDATA && sent != AVERROR(EAGAIN)) {
+                 av_packet_unref(m_packet);
+@@ -319,8 +350,12 @@
+     m_format->flags &= ~AVFMT_FLAG_FAST_SEEK;
+     if (sought < 0 || m_interrupted)
+         return false;
+-    avcodec_flush_buffers(m_codec);
+-    swr_init(m_convert); // drops what it held
++    if (m_fedoraEac3) {
++        m_fedoraEac3->flush();
++    } else {
++        avcodec_flush_buffers(m_codec);
++        swr_init(m_convert); // drops what it held
++    }
+     m_pending.clear();
+     m_inputDone = false;
+     m_done = false;
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -480,3 +480,6 @@
+ )
+ target_link_libraries(cirrus_backend PUBLIC cirrus_application
+     PRIVATE cirrus_bootstrap cirrus_netease_auth cirrus_netease_music cirrus_media cirrus_bilibili cirrus_listening_state cirrus_resource_cache)
++
++# Fedora-only application build patch.
++include("${PROJECT_SOURCE_DIR}/packaging/linux/fedora/eac3-backend.cmake")
+--- a/tests/unit/audio_decoder_test.cpp
++++ b/tests/unit/audio_decoder_test.cpp
+@@ -98,16 +98,25 @@
+         auto s = store(server);
+         auto stream = s->open(source(server.body, format));
+         QVERIFY(stream);
+-        const auto [opened, rate, frames] = onThread([stream, format] {
++        const auto [opened, rate, frames, builtin, seeked, remaining] = onThread([stream, format] {
+             AudioDecoder decoder;
+             const bool ok = decoder.open(stream, format);
+             const auto all = ok ? decodeAll(decoder) : std::vector<float>();
+-            return std::tuple{ok, decoder.sampleRate(), qint64(all.size() / 2)};
++            const bool seeked = ok && decoder.seek(250);
++            const auto rest = seeked ? decodeAll(decoder) : std::vector<float>();
++            return std::tuple{
++                ok,     decoder.sampleRate(),   qint64(all.size() / 2), decoder.usesBuiltinEac3(),
++                seeked, qint64(rest.size() / 2)};
+         });
+         QVERIFY(opened);
+         QCOMPARE(rate, 44100);
+         // Lossy codecs pad: the count is near the source, not frame-exact.
+         QVERIFY(std::abs(frames - ToneFrames) <= 2048);
++        QCOMPARE(builtin, format == QStringLiteral("eac3"));
++        QVERIFY(seeked);
++        QVERIFY(std::abs(remaining - ToneFrames / 2) <= 2048);
++        qInfo().noquote() << "Fedora decoder route:" << format
++                          << (builtin ? "private-eac3" : "system-ffmpeg");
+     }
+     void decodesTheWholeFile()
+     {
