@@ -252,7 +252,8 @@ class FmListeningTest : public QObject
         const auto saved = [] {
             QueueSnapshot queue;
             for (const char* id : {"1", "2"})
-                queue.entries.append({QUuid::createUuid(), {QString::fromLatin1(id)}, {}});
+                queue.entries.append(
+                    QueueEntry{QUuid::createUuid(), {QString::fromLatin1(id)}, {}});
             queue.active = queue.entries.last().id;
             return queue;
         }();

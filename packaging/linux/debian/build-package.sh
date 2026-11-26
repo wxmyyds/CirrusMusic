@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Native debian package entrypoint; shared compilation stays in ../build-common.sh.
 set -euo pipefail
+[[ ${GITHUB_ACTIONS:-} == true ]] || { echo '该操作需要通过 GitHub Actions 执行。' >&2; exit 1; }
+original=$(cd "$(dirname "$0")/../../.." && pwd)
+patched=$("$original/packaging/linux/prepare-source.sh" debian "${1:?missing architecture}")
 distribution=debian
-source "$(dirname "$0")/../build-common.sh"
+source "$patched/packaging/linux/build-common.sh"
 
 make_deb() {
     local temporary="$build/debian-metadata" depends
@@ -30,6 +33,12 @@ make_deb() {
             exit 1
         }
     done
+    for package in "${qt_runtime_packages[@]}"; do
+        case ", $depends," in
+            *", $package,"* | *", $package ("*) ;;
+            *) depends+=", $package" ;;
+        esac
+    done
     depends+=", ca-certificates, libsecret-1-0, hicolor-icon-theme"
     {
         cat "$root/LICENSE"
@@ -48,8 +57,8 @@ Installed-Size: $(du -sk --exclude=DEBIAN "$stage" | cut -f1)
 Depends: $depends
 Recommends: gnome-keyring | kwalletmanager | keepassxc
 Description: Desktop NetEase Cloud Music client with Bilibili audio support
- Cirrus carries private Qt and QtKeychain libraries in /opt/cirrus.
- FFmpeg comes from Debian system packages.
+ Qt, QtKeychain and FFmpeg come from Debian system packages.
+ ICU is managed by Debian's Qt dependencies.
  It is not affiliated with NetEase or Bilibili.
 EOF
     local package="$out/cirrus_${version}_$deb_arch.deb"

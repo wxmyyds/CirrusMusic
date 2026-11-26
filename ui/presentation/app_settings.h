@@ -53,8 +53,8 @@ class AppSettings : public QObject
     // Theme.Variant: TonalSpot (0) …
     CIRRUS_SETTING(int, variant, setVariant, "appearance/variant", 0)
     CIRRUS_SETTING(bool, reducedMotion, setReducedMotion, "appearance/reducedMotion", false)
-    // Fonts.TextSource: Bundled (0, MiSans, default), System, Custom.
-    CIRRUS_SETTING(int, fontSource, setFontSource, "appearance/fontSource", 0)
+    // Use the system font unless the user selects an installed or imported family.
+    CIRRUS_SETTING(int, fontSource, setFontSource, "appearance/fontSource", 1)
     // Family for fontSource Custom.
     CIRRUS_SETTING(QString, customFontFamily, setCustomFontFamily, "appearance/customFontFamily",
                    QString())
@@ -167,7 +167,7 @@ class AppSettings : public QObject
     CIRRUS_SETTING(int, lyricSize, setLyricSize, "lyrics/size", 40)
     CIRRUS_SETTING(int, lyricSpacing, setLyricSpacing, "lyrics/spacing", 9)
     CIRRUS_SETTING(int, lyricWeight, setLyricWeight, "lyrics/weight", 700)
-    // The lyrics' font: 0 the UI font, 1 the bundled one, 2 lyricFontFamily.
+    // Lyrics font source: 0 follows the UI font, 2 uses lyricFontFamily; 1 is unassigned.
     CIRRUS_SETTING(int, lyricFontSource, setLyricFontSource, "lyrics/fontSource", 0)
     CIRRUS_SETTING(QString, lyricFontFamily, setLyricFontFamily, "lyrics/fontFamily", QString())
     CIRRUS_SETTING(int, lyricAlign, setLyricAlign, "lyrics/align", 0)

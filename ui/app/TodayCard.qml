@@ -90,9 +90,6 @@ Rectangle {
             elide: Text.ElideRight
             color: card.content
             font: Fonts.font(800, size)
-            // MiSans's line box is much taller than its glyphs.
-            lineHeightMode: Text.FixedHeight
-            lineHeight: Math.round(size * 1.12)
             verticalAlignment: Text.AlignVCenter
             Accessible.role: Accessible.Heading
         }

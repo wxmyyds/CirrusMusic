@@ -185,17 +185,13 @@ SettingsGroup {
     }
     ChoiceSetting {
         text: qsTr("歌词字体")
-        // No bundled choice in builds without MiSans.
         options: [{
                 value: 0,
                 text: qsTr("跟随界面")
             }, {
-                value: 1,
-                text: "MiSans"
-            }, {
                 value: 2,
                 text: qsTr("自定义")
-            }].filter(option => option.value !== 1 || Fonts.bundledAvailable)
+            }]
         value: App.settings.lyricFontSource
         onChosen: value => App.settings.lyricFontSource = value
     }

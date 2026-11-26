@@ -60,10 +60,8 @@ FocusScope {
     readonly property bool shaders: GraphicsInfo.api !== GraphicsInfo.Software
                                     && GraphicsInfo.api !== GraphicsInfo.Unknown
     // The lyrics' own family (a setting): "" follows the UI font.
-    readonly property string family: {
-        const source = App.settings.lyricFontSource;
-        return source === 1 ? Fonts.bundled : source === 2 ? App.settings.lyricFontFamily : "";
-    }
+    readonly property string family: App.settings.lyricFontSource === 2
+                                     ? App.settings.lyricFontFamily : ""
     readonly property font lineFont: fontAt(fontSize)
     readonly property font smallFont: fontAt(fontSize * 0.6)
     readonly property font rubyFont: fontAt(fontSize * 0.42)

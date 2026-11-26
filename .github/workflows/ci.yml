@@ -3,43 +3,188 @@ name: CI
 
 on:
   push:
-    branches: [master]
-  pull_request:
+    branches: ['**']
   workflow_dispatch:
     inputs:
-      ref:
-        description: Source ref to test (empty uses the selected workflow commit)
-        type: string
-        default: ''
+      target:
+        description: Native target to test; push events always test the full matrix
+        type: choice
+        options: [all, linux, arch, debian, fedora, windows, macos]
+        default: all
+      architecture:
+        description: Native architecture to test
+        type: choice
+        options: [all, x86_64, arm64]
+        default: all
   workflow_call:
     inputs:
       ref:
         type: string
         default: ''
+      target:
+        type: string
+        default: all
+      architecture:
+        type: string
+        default: all
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ inputs.ref || github.ref }}
+  group: ci-${{ github.workflow }}-${{ inputs.ref || github.ref }}-${{ inputs.target || 'all' }}-${{ inputs.architecture || 'all' }}
   cancel-in-progress: true
 
 jobs:
-  tests:
-    name: ${{ matrix.platform }} tests (${{ matrix.arch }})
+  select-targets:
+    name: Select native test targets
+    runs-on: ubuntu-24.04
+    outputs:
+      linux_matrix: ${{ steps.select.outputs.linux_matrix }}
+      windows_matrix: ${{ steps.select.outputs.windows_matrix }}
+      macos_matrix: ${{ steps.select.outputs.macos_matrix }}
+      run_linux: ${{ steps.select.outputs.run_linux }}
+      run_windows: ${{ steps.select.outputs.run_windows }}
+      run_macos: ${{ steps.select.outputs.run_macos }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - id: select
+        name: Validate and select target matrix
+        env:
+          TARGET: ${{ inputs.target || 'all' }}
+          ARCHITECTURE: ${{ inputs.architecture || 'all' }}
+        run: |
+          set -euo pipefail
+          selection=$(python3 tools/ci/select-native-matrix.py tests "$TARGET" "$ARCHITECTURE")
+          {
+            echo "linux_matrix=$(jq -c '.linux_matrix' <<<"$selection")"
+            echo "windows_matrix=$(jq -c '.windows_matrix' <<<"$selection")"
+            echo "macos_matrix=$(jq -c '.macos_matrix' <<<"$selection")"
+            echo "run_linux=$(jq -r '.run_linux' <<<"$selection")"
+            echo "run_windows=$(jq -r '.run_windows' <<<"$selection")"
+            echo "run_macos=$(jq -r '.run_macos' <<<"$selection")"
+          } >> "$GITHUB_OUTPUT"
+
+  linux-tests:
+    name: Linux ${{ matrix.distribution }} tests (${{ matrix.arch }})
+    needs: select-targets
+    if: needs.select-targets.outputs.run_linux == 'true'
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - platform: Linux
-            runner: ubuntu-24.04
-            arch: x86_64
-          - platform: Windows
-            runner: windows-2022
-            arch: x86_64
-          - platform: macOS
-            runner: macos-15
-            arch: arm64
+      matrix: ${{ fromJSON(needs.select-targets.outputs.linux_matrix) }}
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ${{ matrix.image }}
+      options: --user 0 --security-opt no-new-privileges
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    env:
+      DISTRIBUTION: ${{ matrix.distribution }}
+      TARGET_ARCH: ${{ matrix.arch }}
+      QT_QPA_PLATFORM: offscreen
+      QT_FORCE_STDERR_LOGGING: '1'
+      # Cache-security tests need a build path inside the unprivileged user's home.
+      CIRRUS_TEST_BUILD_DIR: /home/cirrus-builder/build/tests
+    steps:
+      - name: Bootstrap native distribution tools
+        run: |
+          set -euo pipefail
+          case "$DISTRIBUTION" in
+            arch) pacman -Syu --noconfirm --needed git ca-certificates tar gzip ;;
+            debian)
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git ca-certificates tar gzip
+              ;;
+            fedora) dnf install -y git ca-certificates tar gzip ;;
+            *) exit 2 ;;
+          esac
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-linux
+        with:
+          distribution: ${{ matrix.distribution }}
+          arch: ${{ matrix.arch }}
+          purpose: tests
+          cache-scope: tests
+
+      - name: Prepare native test source as unprivileged user
+        run: |
+          set -euo pipefail
+          useradd --create-home cirrus-builder
+          chown -R cirrus-builder:cirrus-builder "$GITHUB_WORKSPACE"
+          source=$(runuser -u cirrus-builder -- packaging/linux/prepare-source.sh "$DISTRIBUTION" "$TARGET_ARCH")
+          echo "CIRRUS_SOURCE_DIR=$source" >> "$GITHUB_ENV"
+
+      - name: Verify system FFmpeg audio fixtures
+        run: runuser -u cirrus-builder -- packaging/linux/verify-system-ffmpeg.sh
+
+      - name: Configure native test build
+        run: |
+          set -euo pipefail
+          runuser -u cirrus-builder -- cmake -S "$CIRRUS_SOURCE_DIR" -B "$CIRRUS_TEST_BUILD_DIR" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DCIRRUS_DEPLOY_QT=OFF \
+            -DCMAKE_PREFIX_PATH="$CIRRUS_CMAKE_PREFIX_PATH" \
+            -DPKG_CONFIG_EXECUTABLE="$CIRRUS_PKG_CONFIG_EXECUTABLE" \
+            -DOPENSSL_ROOT_DIR="$CIRRUS_OPENSSL_ROOT" \
+            -DCMAKE_C_COMPILER_LAUNCHER="$CIRRUS_COMPILER_LAUNCHER" \
+            -DCMAKE_CXX_COMPILER_LAUNCHER="$CIRRUS_COMPILER_LAUNCHER"
+
+      - name: Compile native test dependencies
+        run: runuser -u cirrus-builder -- cmake --build "$CIRRUS_TEST_BUILD_DIR" --parallel 4 -- -k 0
+
+      - name: QML lint
+        run: runuser -u cirrus-builder -- cmake --build "$CIRRUS_TEST_BUILD_DIR" --target all_qmllint
+
+      - name: Audit system Qt runtime dependencies
+        run: |
+          runuser -u cirrus-builder -- python3 "$CIRRUS_SOURCE_DIR/packaging/linux/qt-runtime-dependencies.py" \
+            "$DISTRIBUTION" "$CIRRUS_SOURCE_DIR" "$CIRRUS_TEST_BUILD_DIR" \
+            --evidence "$CIRRUS_TEST_BUILD_DIR/system-qt-runtime-evidence.json"
+
+      - name: Run all native tests
+        run: |
+          runuser -u cirrus-builder -- dbus-run-session -- ctest --test-dir "$CIRRUS_TEST_BUILD_DIR" \
+            --output-on-failure --no-tests=error --parallel 4 \
+            --output-junit "$CIRRUS_TEST_BUILD_DIR/junit.xml"
+
+      - name: Save compiler cache
+        if: always() && env.CIRRUS_CCACHE_KEY != '' && env.CIRRUS_CCACHE_HIT != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ env.CIRRUS_CCACHE_KEY }}
+
+      - name: Upload native test reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-Linux-${{ matrix.distribution }}-${{ matrix.arch }}
+          retention-days: 3
+          overwrite: ${{ github.run_attempt > 1 }}
+          path: |
+            ${{ env.CIRRUS_TEST_BUILD_DIR }}/junit.xml
+            ${{ env.CIRRUS_TEST_BUILD_DIR }}/Testing/Temporary/LastTest.log
+            ${{ env.CIRRUS_TEST_BUILD_DIR }}/Testing/Temporary/LastTestsFailed.log
+            ${{ env.CIRRUS_TEST_BUILD_DIR }}/system-qt-runtime-evidence.json
+            ${{ env.CIRRUS_TEST_BUILD_DIR }}/system-qt-runtime-packages.txt
+            ${{ env.CIRRUS_TEST_BUILD_DIR }}/cirrus-qmlimportscanner.txt
+          if-no-files-found: warn
+
+  windows-tests:
+    name: Windows tests (${{ matrix.arch }})
+    needs: select-targets
+    if: needs.select-targets.outputs.run_windows == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.select-targets.outputs.windows_matrix) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     defaults:
@@ -51,22 +196,79 @@ jobs:
           ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
 
-      - name: Set up Linux test dependencies
-        if: runner.os == 'Linux'
-        uses: ./.github/actions/setup-linux
-        with:
-          distribution: ubuntu
-          arch: ${{ matrix.arch }}
-          cache-scope: tests
-
       - name: Set up Windows test dependencies
-        if: runner.os == 'Windows'
         uses: ./.github/actions/setup-windows
         with:
           arch: ${{ matrix.arch }}
 
+      - name: Configure test build
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON \
+            -DCIRRUS_DEPLOY_QT=OFF \
+            -DCMAKE_PREFIX_PATH="$CIRRUS_CMAKE_PREFIX_PATH" \
+            -DPKG_CONFIG_EXECUTABLE="$CIRRUS_PKG_CONFIG_EXECUTABLE" \
+            -DOPENSSL_ROOT_DIR="$CIRRUS_OPENSSL_ROOT" \
+            -DCMAKE_C_COMPILER_LAUNCHER="$CIRRUS_COMPILER_LAUNCHER" \
+            -DCMAKE_CXX_COMPILER_LAUNCHER="$CIRRUS_COMPILER_LAUNCHER"
+
+      - name: Compile test dependencies
+        run: cmake --build build --parallel 4 -- -k 0
+
+      - name: QML lint
+        run: cmake --build build --target all_qmllint
+
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_FORCE_STDERR_LOGGING: '1'
+        run: |
+          set -euo pipefail
+          command=(ctest --test-dir build --output-on-failure --no-tests=error --parallel 4
+            --output-junit "$PWD/build/junit.xml")
+          "${command[@]}"
+
+      - name: Save compiler cache
+        if: always() && env.CIRRUS_CCACHE_KEY != '' && env.CIRRUS_CCACHE_HIT != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ env.CIRRUS_CCACHE_KEY }}
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-Windows-${{ matrix.arch }}
+          retention-days: 3
+          overwrite: ${{ github.run_attempt > 1 }}
+          path: |
+            build/junit.xml
+            build/Testing/Temporary/LastTest.log
+            build/Testing/Temporary/LastTestsFailed.log
+          if-no-files-found: warn
+
+  macos-tests:
+    name: macOS tests (${{ matrix.arch }})
+    needs: select-targets
+    if: needs.select-targets.outputs.run_macos == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.select-targets.outputs.macos_matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
       - name: Set up macOS test dependencies
-        if: runner.os == 'macOS'
         uses: ./.github/actions/setup-macos
         with:
           arch: ${{ matrix.arch }}
@@ -95,18 +297,11 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
           QT_FORCE_STDERR_LOGGING: '1'
-          # The Linux SDK's FFmpeg media-player backend is not used by Cirrus.
-          # Production Linux deployment excludes it; test the same backend choice.
-          QT_MEDIA_BACKEND: ${{ runner.os == 'Linux' && 'gstreamer' || '' }}
         run: |
           set -euo pipefail
           command=(ctest --test-dir build --output-on-failure --no-tests=error --parallel 4
             --output-junit "$PWD/build/junit.xml")
-          if [[ $RUNNER_OS == Linux ]]; then
-            dbus-run-session -- "${command[@]}"
-          else
-            "${command[@]}"
-          fi
+          "${command[@]}"
 
       - name: Save compiler cache
         if: always() && env.CIRRUS_CCACHE_KEY != '' && env.CIRRUS_CCACHE_HIT != 'true'
@@ -119,7 +314,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: test-results-${{ matrix.platform }}-${{ matrix.arch }}
+          name: test-results-macOS-${{ matrix.arch }}
           retention-days: 3
           overwrite: ${{ github.run_attempt > 1 }}
           path: |

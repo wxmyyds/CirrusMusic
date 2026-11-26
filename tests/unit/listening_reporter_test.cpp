@@ -2,6 +2,7 @@
 #include "application/playback/listening_reporter.h"
 #include "application/playback/listening_session.h"
 #include <QSignalSpy>
+#include <QTimeZone>
 #include <QtTest>
 using namespace cirrus;
 using namespace application;
@@ -225,6 +226,46 @@ class ListeningReporterTest : public QObject
         QVERIFY(guest.session.next());
         QVERIFY(guest.reports.isEmpty()); // neither StartPlay nor Play
         QVERIFY(guest.actives.isEmpty());
+    }
+    void dayStartPreservesClock_data()
+    {
+        QTest::addColumn<QTimeZone>("zone");
+        QTest::addColumn<QDate>("date");
+        QTest::addColumn<QTime>("time");
+        QTest::addColumn<QDate>("expectedDate");
+        const QList<QPair<const char*, QTimeZone>> zones{
+            {"local", QTimeZone(QTimeZone::LocalTime)},
+            {"utc", QTimeZone(QTimeZone::UTC)},
+            {"fixed", QTimeZone::fromSecondsAheadOfUtc(5 * 3600 + 45 * 60)},
+            {"named", QTimeZone("Europe/Berlin")}};
+        for (const auto& [name, zone] : zones) {
+            QTest::addRow("%s-before", name)
+                << zone << QDate(2026, 11, 15) << QTime(5, 59, 59, 999) << QDate(2026, 11, 14);
+            QTest::addRow("%s-at", name)
+                << zone << QDate(2026, 11, 15) << QTime(6, 0) << QDate(2026, 11, 15);
+            QTest::addRow("%s-after", name)
+                << zone << QDate(2026, 11, 15) << QTime(6, 0, 0, 1) << QDate(2026, 11, 15);
+            QTest::addRow("%s-spring-transition", name)
+                << zone << QDate(2026, 3, 29) << QTime(5, 59) << QDate(2026, 3, 28);
+            QTest::addRow("%s-autumn-transition", name)
+                << zone << QDate(2026, 10, 25) << QTime(5, 59) << QDate(2026, 10, 24);
+        }
+    }
+    void dayStartPreservesClock()
+    {
+        QFETCH(QTimeZone, zone);
+        QFETCH(QDate, date);
+        QFETCH(QTime, time);
+        QFETCH(QDate, expectedDate);
+        QVERIFY(zone.isValid());
+        const QDateTime now(date, time, zone);
+        const QDateTime expected(expectedDate, QTime(6, 0), zone);
+        const auto actual = ListeningReporter::dayStart(now);
+        QVERIFY(actual.isValid());
+        QCOMPARE(actual, expected);
+        QCOMPARE(actual.toMSecsSinceEpoch(), expected.toMSecsSinceEpoch());
+        QCOMPARE(actual.timeRepresentation(), now.timeRepresentation());
+        QCOMPARE(actual.timeSpec(), now.timeSpec());
     }
     void activeClientOnceADay()
     {

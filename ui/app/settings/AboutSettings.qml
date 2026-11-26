@@ -8,8 +8,8 @@ import Cirrus.Presentation
 SettingsGroup {
     id: group
 
-    // The open source parts and fonts, with their licenses (third_party/, ui/theme/fonts/;
-    // the full list with texts: packaging/THIRD-PARTY-NOTICES.md).
+    // The open source parts and fonts, with their licenses (third_party/; the full list
+    // with texts: packaging/THIRD-PARTY-NOTICES.md).
     readonly property var components: [{
             name: "Qt",
             license: "LGPL-3.0",
@@ -35,10 +35,6 @@ SettingsGroup {
             license: "MIT",
             use: qsTr("登录二维码")
         }, {
-            name: qsTr("小米 MiSans"),
-            license: qsTr("MiSans 字体知识产权许可协议"),
-            use: qsTr("界面文字字体")
-        }, {
             name: "Material Symbols",
             license: "Apache-2.0",
             use: qsTr("图标")
@@ -62,7 +58,7 @@ SettingsGroup {
 
     SettingRow {
         text: qsTr("Cirrus %1").arg(Qt.application.version)
-        supportingText: qsTr("非官方客户端，与网易云音乐没有关联。以 MIT 许可开源。界面文字使用小米 MiSans 字体。")
+        supportingText: qsTr("非官方客户端，与网易云音乐没有关联。以 MIT 许可开源。界面文字使用系统字体。")
         focusPolicy: Qt.NoFocus
         hoverEnabled: false
         leading: Component {

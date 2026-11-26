@@ -13,15 +13,14 @@ in the package's `lib/` or `lib64/`, next to `Cirrus.exe`, or in the macOS Frame
 
 | Component | Version | License | Use |
 | --- | --- | --- | --- |
-| Qt | 6.11 | LGPL-3.0-only (`licenses/LGPL-3.0-only.txt`, `licenses/GPL-3.0-only.txt`) | Application framework |
+| Qt | Distribution version on Linux; 6.11 on Windows/macOS | Bundled builds: LGPL-3.0-only (`licenses/LGPL-3.0-only.txt`, `licenses/GPL-3.0-only.txt`); system builds: distribution package terms | Application framework |
 | FFmpeg (Qt Multimedia, Windows/macOS) | 7.1 | LGPL-2.1-or-later (`licenses/LGPL-2.1-or-later.txt`) | Qt Multimedia backend |
 | FFmpeg (Cirrus decoder) | Distribution version on Linux; 9.0 on Windows/macOS | Bundled builds: LGPL-2.1-or-later (`licenses/LGPL-2.1-or-later.txt`); system builds: distribution package terms | Audio decoding (MP3, FLAC, AAC; E-AC-3 when available) |
 | FFmpeg (Fedora private EAC3 backend) | 9.0.2 | LGPL-2.1-or-later (`licenses/LGPL-2.1-or-later.txt`) | EAC3-only application entrypoint; includes upstream-required AC3 dependencies |
-| QtKeychain | 0.17 | BSD-3-Clause (below) | Storing the sign-in in the system keyring |
+| QtKeychain | Distribution version on Linux; 0.17 on Windows/macOS | BSD-3-Clause (below) | Storing the sign-in in the system keyring |
 | OpenSSL | 3 | Apache-2.0 (`licenses/Apache-2.0.txt`) | Cryptography for the service protocol |
 | zlib | 1.x | Zlib (below) | Decompression |
 | Zstandard (zstd) | 1.5 | BSD-3-Clause (below) | Compressing the listening logs |
-| MiSans (Xiaomi) | 4.009 | MiSans font license (`licenses/MiSans-LICENSE.txt`) | Interface font, unmodified |
 | Material Symbols (Google) | 2.973 | Apache-2.0 | Icons; subset to the glyphs Cirrus uses |
 | material-color-utilities (Google) | `5b3618b` | Apache-2.0 | Colour schemes |
 | m3shapes | `8a6fe89` | Apache-2.0 | Shapes and morphing |
@@ -30,11 +29,13 @@ in the package's `lib/` or `lib64/`, next to `Cirrus.exe`, or in the macOS Frame
 
 Which libraries a package carries:
 
-- **deb and RPM** carry Qt and QtKeychain. FFmpeg, OpenSSL, zlib, zstd, libsecret and
-  GStreamer runtime libraries come from the official distribution repositories. The
-  unused Qt FFmpeg media-player plugin is excluded. Fedora additionally carries
-  `libcirrus_eac3.so.1`: a private, symbol-isolated EAC3 decoder selected by a Fedora-only
-  Cirrus build patch. Other audio continues to use the official system libraries.
+- **deb and RPM** use official distribution Qt, QtKeychain, FFmpeg, OpenSSL, zlib,
+  zstd and libsecret packages, including native QML and Qt plugin runtime dependencies.
+  ICU comes through the distribution's Qt dependencies; Cirrus does not bundle it or
+  specify an ICU version. Debian uses an application-only Qt 6.8 compatibility patch.
+  Fedora additionally carries `libcirrus_eac3.so.1`: a private, symbol-isolated EAC3
+  decoder selected by a Fedora-only Cirrus build patch. Other audio continues to use
+  the official system libraries.
 - **Windows installer and zip, macOS dmg** carry Qt, both FFmpeg builds and
   QtKeychain (on Windows linked into `Cirrus.exe`). The Windows packages also carry OpenSSL,
   zlib, zstd and the Microsoft Visual C++ runtime; the macOS dmg also carries OpenSSL and
@@ -54,9 +55,10 @@ The bundled libraries are unmodified releases:
   `packaging/linux/fedora/build-eac3-ffmpeg.sh`; upstream FFmpeg itself is not patched.
   It enables EAC3 and the AC3/parser dependencies selected by upstream configure,
   with only avcodec, avutil and swresample linked into the isolated bridge.
-- Linux FFmpeg: the matching source packages from Arch Linux / Arch Linux ARM,
-  Debian 13 and Fedora 44 official repositories. Fedora's isolated EAC3 bridge is the
-  only additional private FFmpeg component on Linux.
+- Linux Qt, QtKeychain, ICU and FFmpeg: matching source packages from Arch Linux /
+  Arch Linux ARM, Debian 13 and Fedora 44 official repositories. Cirrus does not
+  redistribute their shared libraries. Fedora's isolated EAC3 bridge is the only
+  additional private FFmpeg component on Linux; its build sources are included above.
 - QtKeychain 0.17.0: <https://github.com/frankosterfeld/qtkeychain/releases/tag/0.17.0>
 - OpenSSL 3, zlib and zstd on Windows: vcpkg's `openssl`, `zlib` and `zstd` ports. OpenSSL 3
   and zstd on macOS: Homebrew's `openssl@3` and `zstd`.

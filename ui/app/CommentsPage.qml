@@ -705,7 +705,7 @@ Item {
             // The text: plain, selectable, folded past 8 lines.
             Item {
                 id: body
-                // The text's own line pitch: MiSans' metrics differ from what it lays out.
+                // Fold the text using the text engine's measured line pitch.
                 readonly property real lineHeight: textEdit.lineCount > 0
                     ? textEdit.contentHeight / textEdit.lineCount : 0
                 readonly property bool folds: textEdit.lineCount > 8

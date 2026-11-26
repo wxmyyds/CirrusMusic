@@ -10,10 +10,8 @@
 # Windows: the executable and its DLLs in the prefix itself (CMAKE_INSTALL_BINDIR=.),
 #   notices in licenses/.
 # macOS: <CIRRUS_EXECUTABLE>.app in the prefix, notices in its Contents/Resources/doc/.
-# CIRRUS_DEPLOY_QT copies Qt and QtKeychain for deb/RPM, Windows and macOS;
-# Windows/macOS also deploy FFmpeg and OpenSSL (macdeployqt uses the app bundle).
-# All Linux packages use distribution FFmpeg. Arch also uses distribution Qt
-# and QtKeychain and leaves CIRRUS_DEPLOY_QT disabled.
+# CIRRUS_DEPLOY_QT copies Qt and runtime libraries for Windows and macOS only.
+# All Linux packages use distribution Qt, QtKeychain, ICU and FFmpeg.
 
 set(CIRRUS_APP_ID "com.guang233.Cirrus")
 option(CIRRUS_DEPLOY_QT "Install the Qt runtime and bundled libraries with the app (self-contained packages)" OFF)
@@ -39,7 +37,6 @@ install(FILES
         "${PROJECT_SOURCE_DIR}/third_party/licenses/GPL-3.0-only.txt"
         "${PROJECT_SOURCE_DIR}/third_party/licenses/LGPL-2.1-or-later.txt"
         "${PROJECT_SOURCE_DIR}/third_party/licenses/LGPL-3.0-only.txt"
-        "${PROJECT_SOURCE_DIR}/ui/theme/fonts/MiSans-LICENSE.txt"
     DESTINATION "${cirrus_doc_dir}/licenses")
 install(FILES "${PROJECT_SOURCE_DIR}/third_party/qrcodegen/LICENSE"
     DESTINATION "${cirrus_doc_dir}/licenses" RENAME qrcodegen-MIT.txt)
@@ -70,29 +67,17 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 if(CIRRUS_DEPLOY_QT)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        message(FATAL_ERROR "Linux uses distribution Qt/QtKeychain; CIRRUS_DEPLOY_QT must stay OFF")
+    endif()
     # Translations: the UI is Chinese-only and uses no Qt dialogs that need them.
     # Plugins are named by file, without lib and suffix. Cirrus only uses SQLite; the
     # other SQL drivers need client libraries nobody has.
     set(cirrus_deploy_options)
     set(cirrus_excluded_plugins qsqlodbc qsqloci qsqlibase qsqlpsql qsqlmysql qsqlmimer)
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        # Qt picks xcb as the default platform; Wayland sessions need their own. QML
-        # debugging, Designer and embedded (EGLFS) plugins are not for a desktop app.
-        # Cirrus decodes through system FFmpeg and outputs PCM through QAudioSink.
-        # Keep the SDK's GStreamer integration for Qt audio devices; its FFmpeg
-        # media-player plugin would introduce a second, SDK-specific FFmpeg ABI.
-        list(APPEND cirrus_excluded_plugins ffmpegmediaplugin)
-        list(APPEND cirrus_deploy_options
-            INCLUDE_PLUGINS qwayland
-            EXCLUDE_PLUGIN_TYPES designer qmltooling egldeviceintegrations
-            PRE_EXCLUDE_REGEXES
-                "^libavcodec[.]so" "^libavformat[.]so" "^libavutil[.]so"
-                "^libavfilter[.]so" "^libavdevice[.]so" "^libswresample[.]so"
-                "^libswscale[.]so" "^libpostproc[.]so")
-    elseif(WIN32)
-        # windeployqt aborts on plugins Windows does not have (qwayland), so the Linux
-        # list stays out. Verbose: a failure then says where it stopped. The MSVC runtime
-        # is deployed app-locally from the native toolset by the Windows package step.
+    if(WIN32)
+        # The MSVC runtime is deployed app-locally from the native toolset by the
+        # Windows package step. Verbose deployment identifies failing components.
         list(APPEND cirrus_deploy_options
             NO_COMPILER_RUNTIME
             EXCLUDE_PLUGIN_TYPES designer qmltooling

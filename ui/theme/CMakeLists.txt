@@ -35,21 +35,7 @@ qt_add_qml_module(cirrus_ui_theme
         fonts/MaterialSymbolsRounded.ttf
 )
 
-# The default text font, MiSans (fonts/MiSans-LICENSE.txt). 20 MB, so it is compiled as
-# a big resource rather than a C array. Builds without the file fall back to the system
-# font (for a smaller package without it, later).
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/fonts/MiSansVF.ttf")
-    # Not compressed: the font is used straight from the executable's pages (fonts.cpp).
-    qt_add_resources(cirrus_ui_theme cirrus_ui_theme_misans
-        BIG_RESOURCES
-        PREFIX "/qt/qml/Cirrus/Theme"
-        FILES fonts/MiSansVF.ttf
-        OPTIONS -no-compress
-    )
-else()
-    message(WARNING "ui/theme/fonts/MiSansVF.ttf is missing (tools/ui/prepare_fonts.py fetches "
-                    "it). Building without the bundled text font: text uses the system font.")
-endif()
+# The text font follows the system by default; Material Symbols remains the bundled icon font.
 
 target_compile_features(cirrus_ui_theme PUBLIC cxx_std_20)
 find_package(Qt6 REQUIRED COMPONENTS QuickControls2)

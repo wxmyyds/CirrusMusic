@@ -7,36 +7,70 @@ on:
         description: Git ref to build (empty uses the workflow commit)
         type: string
         default: ''
+      architecture:
+        description: Native Windows package architecture to build
+        type: choice
+        options: [all, x86_64, arm64]
+        default: all
   workflow_call:
     inputs:
       ref:
         description: Git ref to build (empty uses the caller commit)
         type: string
         default: ''
+      architecture:
+        type: string
+        default: all
 
 permissions:
   contents: read
 
 jobs:
+  resolve-source:
+    name: Resolve exact package source
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  select-target:
+    name: Select Windows architecture
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - id: select
+        env:
+          ARCHITECTURE: ${{ inputs.architecture || 'all' }}
+        run: |
+          set -euo pipefail
+          selection=$(python3 tools/ci/select-native-matrix.py windows-build "$ARCHITECTURE")
+          echo "matrix=$(jq -c '.matrix' <<<"$selection")" >> "$GITHUB_OUTPUT"
+
   windows:
     name: Windows ${{ matrix.arch }} packages
+    needs: [resolve-source, select-target]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - arch: x86_64
-            runner: windows-2022
-          - arch: arm64
-            runner: windows-11-arm
+      matrix: ${{ fromJSON(needs.select-target.outputs.matrix) }}
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.ref || github.sha }}
+          ref: ${{ needs.resolve-source.outputs.sha }}
           persist-credentials: false
       - uses: ./.github/actions/setup-windows
         with:

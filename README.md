@@ -130,4 +130,4 @@ python3 tools/now-playing/cirrus_now_playing.py --once   # 打印一份快照（
 
 ## 许可证
 
-[MIT](LICENSE)。安装包附带的第三方软件（Qt、FFmpeg、QtKeychain、MiSans 字体、Material Symbols 等）及其许可证见 [packaging/THIRD-PARTY-NOTICES.md](packaging/THIRD-PARTY-NOTICES.md)。
+[MIT](LICENSE)。安装包附带的第三方软件（Qt、FFmpeg、QtKeychain、Material Symbols 等）及其许可证见 [packaging/THIRD-PARTY-NOTICES.md](packaging/THIRD-PARTY-NOTICES.md)。界面文字默认使用系统字体。

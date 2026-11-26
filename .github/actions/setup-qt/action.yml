@@ -2,7 +2,7 @@ name: Set up Qt
 description: Install the pinned native Qt SDK for a platform and CPU
 inputs:
   platform:
-    description: linux, windows, or macos
+    description: windows or macos
     required: true
   arch:
     description: x86_64 or arm64
@@ -20,8 +20,6 @@ runs:
         set -euo pipefail
         source packaging/versions.sh
         case "$CIRRUS_QT_PLATFORM/$CIRRUS_QT_ARCH" in
-          linux/x86_64) host=linux; sdk=linux_gcc_64 ;;
-          linux/arm64) host=linux_arm64; sdk=linux_gcc_arm64 ;;
           windows/x86_64) host=windows; sdk=win64_msvc2022_64 ;;
           windows/arm64) host=windows_arm64; sdk=win64_msvc2022_arm64 ;;
           macos/x86_64 | macos/arm64) host=mac; sdk=clang_64 ;;
@@ -43,10 +41,9 @@ runs:
         arch: ${{ steps.sdk.outputs.sdk }}
         modules: qtmultimedia qtshadertools qtimageformats
         cache: true
-        # Each native setup action installs its own distribution dependencies.
-        # Debian/Fedora containers use their isolated system-Python environment.
+        # Each native setup action installs its own platform dependencies.
         install-deps: false
-        setup-python: ${{ inputs.platform != 'linux' }}
+        setup-python: true
         cache-key-prefix: cirrus-qt-${{ inputs.platform }}-${{ inputs.arch }}-native-v1
         # Qt 6.11 moved Windows SDKs into per-architecture repository folders.
         # This pinned aqt revision supports that layout and native ARM64 hosts,

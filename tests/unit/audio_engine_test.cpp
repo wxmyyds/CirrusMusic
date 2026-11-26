@@ -10,6 +10,9 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QtTest>
+#ifdef Q_OS_LINUX
+#include "../support/private_pulse_audio.h"
+#endif
 using namespace cirrus;
 using namespace domain;
 using application::PlaybackEvent;
@@ -42,10 +45,14 @@ QList<Kind> kinds(const QList<PlaybackEvent>& events)
 }
 } // namespace
 
-// Plays on the real default output at volume 0; skipped without one.
+// Linux owns a private null sink; other platforms need a default output.
+// All cases play at volume 0.
 class AudioEngineTest : public QObject
 {
     Q_OBJECT
+#ifdef Q_OS_LINUX
+    test::PrivatePulseAudioServer m_pulse;
+#endif
     std::unique_ptr<QTemporaryDir> m_dir;
     test::RangeServer m_server;
     std::unique_ptr<AudioStore> m_store;
@@ -91,10 +98,29 @@ class AudioEngineTest : public QObject
     }
 
   private slots:
+    void initTestCase()
+    {
+#ifdef Q_OS_LINUX
+        QVERIFY2(m_pulse.start(), qPrintable(m_pulse.errorString()));
+#endif
+    }
+
+    void cleanupTestCase()
+    {
+#ifdef Q_OS_LINUX
+        QVERIFY2(m_pulse.stop(), "Could not reap this test's private PulseAudio server");
+#endif
+    }
+
     void init()
     {
-        if (QMediaDevices::defaultAudioOutput().isNull())
+        const bool hasOutput = !QMediaDevices::defaultAudioOutput().isNull();
+#ifdef Q_OS_LINUX
+        QVERIFY2(hasOutput, "Private PulseAudio output disappeared");
+#else
+        if (!hasOutput)
             QSKIP("no audio output device");
+#endif
         m_dir = std::make_unique<QTemporaryDir>(QCoreApplication::applicationDirPath() +
                                                 QStringLiteral("/audio-engine-XXXXXX"));
         AudioStore::Options options;
@@ -118,14 +144,30 @@ class AudioEngineTest : public QObject
     void opensPlaysAndEnds()
     {
         const auto t = token(1);
+        QList<PlaybackEvent> openingEvents;
+        QObject readyObserver;
+        connect(
+            m_engine.get(), &AudioEngine::event, &readyObserver,
+            [this, &openingEvents](PlaybackEvent e) {
+                if (e.kind == Kind::Ready && openingEvents.isEmpty())
+                    openingEvents = m_events;
+            },
+            Qt::DirectConnection);
         load(QStringLiteral("tone.flac"), QStringLiteral("flac"), t);
         QTRY_VERIFY_WITH_TIMEOUT(has(Kind::Ready), 5000);
-        // The old backend's order: Duration, Seekable, Volume, then Ready.
-        QCOMPARE(kinds(m_events),
+        // Capture the exact opening sequence before a later timer tick can append events.
+        QCOMPARE(kinds(openingEvents),
                  (QList<Kind>{Kind::Duration, Kind::Seekable, Kind::Volume, Kind::Ready}));
-        QVERIFY(std::abs(m_events[0].value - 500) <= 30);
-        QCOMPARE(m_events[1].value, 1);
-        QCOMPARE(m_events[2].volumeLinear, std::optional(0.f));
+        QVERIFY(std::abs(openingEvents[0].value - 500) <= 30);
+        QCOMPARE(openingEvents[1].value, 1);
+        QCOMPARE(openingEvents[2].volumeLinear, std::optional(0.f));
+        QTRY_VERIFY_WITH_TIMEOUT(has(Kind::Observation), 5000);
+        QCOMPARE(kinds(m_events), (QList<Kind>{Kind::Duration, Kind::Seekable, Kind::Volume,
+                                               Kind::Ready, Kind::Position, Kind::Observation}));
+        QCOMPARE(first(Kind::Position).value, 0);
+        QVERIFY(first(Kind::Observation).observed.has_value());
+        QCOMPARE(first(Kind::Observation).observed->playedMs, 0);
+        QVERIFY(!first(Kind::Observation).observed->capped);
         m_engine->play();
         QTRY_VERIFY_WITH_TIMEOUT(has(Kind::Ended), 5000);
         qint64 last = -1;
@@ -302,23 +344,26 @@ class AudioEngineTest : public QObject
         QTRY_VERIFY_WITH_TIMEOUT(has(Kind::Ready), 5000);
         m_engine->play();
         QTRY_VERIFY_WITH_TIMEOUT(has(Kind::Advanced), 10000);
-        const auto advanced = std::find_if(m_events.begin(), m_events.end(),
+        const auto advanced = std::find_if(m_events.cbegin(), m_events.cend(),
                                            [](const auto& e) { return e.kind == Kind::Advanced; });
+        // Event delivery may reallocate the list while QTRY processes the next tick.
+        const auto advancedIndex = advanced - m_events.cbegin();
         qint64 lastOfFirst = -1;
-        for (auto it = m_events.begin(); it != advanced; ++it)
+        for (auto it = m_events.cbegin(); it != advanced; ++it)
             if (it->kind == Kind::Position)
                 lastOfFirst = it->value;
         // 4 s tracks: a third of one (about 1.36 s) overlaps; the switch is in its middle.
         QVERIFY2(lastOfFirst > 2400 && lastOfFirst < 3700,
                  qPrintable(QString::number(lastOfFirst)));
         QTRY_VERIFY_WITH_TIMEOUT(
-            std::any_of(advanced, m_events.end(),
+            std::any_of(m_events.cbegin() + advancedIndex, m_events.cend(),
                         [](const auto& e) { return e.kind == Kind::Position; }),
             2000);
         const auto firstOfSecond =
             std::find_if(m_events.begin(), m_events.end(), [&](const auto& e) {
                 return e.token == second && e.kind == Kind::Position;
             });
+        QVERIFY(firstOfSecond != m_events.end());
         QVERIFY2(firstOfSecond->value >= 450 && firstOfSecond->value < 1200,
                  qPrintable(QString::number(firstOfSecond->value)));
         QTRY_VERIFY_WITH_TIMEOUT(has(Kind::Ended), 10000);

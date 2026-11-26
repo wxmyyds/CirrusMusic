@@ -88,17 +88,13 @@ SettingsGroup {
     ChoiceSetting {
         text: qsTr("字体")
         supportingText: qsTr("界面文字的字体")
-        // No bundled choice in builds without MiSans.
         options: [{
-                value: Fonts.Bundled,
-                text: qsTr("内置（MiSans）")
-            }, {
                 value: Fonts.System,
                 text: qsTr("系统字体")
             }, {
                 value: Fonts.Custom,
                 text: qsTr("自定义")
-            }].filter(option => option.value !== Fonts.Bundled || Fonts.bundledAvailable)
+            }]
         value: App.settings.fontSource
         onChosen: value => App.settings.fontSource = value
     }
