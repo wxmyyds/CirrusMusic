@@ -8,7 +8,10 @@ if [[ ${GITHUB_ACTIONS:-} != true ]]; then
     exit 1
 fi
 
-distribution=${1:?usage: install-build-deps.sh <arch|debian|fedora>}
+distribution=${1:?usage: install-build-deps.sh <arch|debian|fedora> <build|tests>}
+purpose=${2:?missing build or tests purpose}
+case "$purpose" in build|tests) ;; *) exit 2 ;; esac
+test_packages=()
 source /etc/os-release
 printf 'Build distribution: %s (%s)\nNative architecture: %s\n' "$PRETTY_NAME" "$ID" "$(uname -m)"
 privilege=()
@@ -20,6 +23,9 @@ case "$distribution" in
     debian)
         [[ $ID == debian && $VERSION_ID == 13 ]]
         cc=gcc cxx=g++
+        if [[ $purpose == tests ]]; then
+            test_packages=(pulseaudio dbus qt6-qpa-plugins qml6-module-qttest)
+        fi
         "${privilege[@]}" apt-get update
         "${privilege[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             g++ \
@@ -36,10 +42,16 @@ case "$distribution" in
             qml6-module-qtquick-shapes qml6-module-qtquick-templates qml6-module-qtquick-window \
             ffmpeg libavformat-dev libavcodec-dev libavutil-dev libswresample-dev \
             libgl-dev libegl-dev libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev \
-            desktop-file-utils appstream hicolor-icon-theme passwd util-linux
+            desktop-file-utils appstream hicolor-icon-theme passwd util-linux \
+            "${test_packages[@]}"
         ;;
     fedora)
         [[ $ID == fedora && $VERSION_ID == 44 ]]
+        if [[ $purpose == tests ]]; then
+            # Select the test server in this transaction, before weak dependencies
+            # choose the conflicting pipewire-pulseaudio provider.
+            test_packages=(pulseaudio dbus-daemon)
+        fi
         "${privilege[@]}" dnf install -y \
             gcc gcc-c++ make cmake ccache ninja-build nasm patchelf pkgconf-pkg-config file binutils \
             git /usr/bin/curl ca-certificates tar xz gzip zstd python3 \
@@ -50,17 +62,22 @@ case "$distribution" in
             ffmpeg-free libavformat-free-devel libavcodec-free-devel libavutil-free-devel libswresample-free-devel \
             mesa-libGL-devel mesa-libEGL-devel libxkbcommon-devel wayland-devel \
             desktop-file-utils appstream hicolor-icon-theme rpm-build redhat-rpm-config \
-            shadow-utils util-linux findutils diffutils which
+            shadow-utils util-linux findutils diffutils which \
+            "${test_packages[@]}"
         cc=gcc cxx=g++
         ;;
     arch)
         [[ $ID == arch || $ID == archarm ]]
+        if [[ $purpose == tests ]]; then
+            test_packages=(pulseaudio dbus)
+        fi
         "${privilege[@]}" pacman -Syu --noconfirm --needed \
             base-devel cmake ninja ccache pkgconf git \
             qt6-base qt6-declarative qt6-multimedia qt6-multimedia-ffmpeg qt6-wayland \
             qt6-imageformats qt6-shadertools qt6-tools qtkeychain-qt6 \
             ffmpeg openssl zlib zstd libsecret hicolor-icon-theme ca-certificates \
-            desktop-file-utils appstream
+            desktop-file-utils appstream \
+            "${test_packages[@]}"
         cc=gcc cxx=g++
         ;;
     *)

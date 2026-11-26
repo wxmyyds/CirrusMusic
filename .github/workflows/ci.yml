@@ -68,6 +68,8 @@ jobs:
       TARGET_ARCH: ${{ matrix.arch }}
       QT_QPA_PLATFORM: offscreen
       QT_FORCE_STDERR_LOGGING: '1'
+      # Cache-security tests need a build path inside the unprivileged user's home.
+      CIRRUS_TEST_BUILD_DIR: /home/cirrus-builder/build/tests
     steps:
       - name: Bootstrap native distribution tools
         run: |
@@ -91,20 +93,8 @@ jobs:
         with:
           distribution: ${{ matrix.distribution }}
           arch: ${{ matrix.arch }}
+          purpose: tests
           cache-scope: tests
-
-      - name: Install native test services
-        run: |
-          set -euo pipefail
-          case "$DISTRIBUTION" in
-            arch) pacman -S --noconfirm --needed pulseaudio dbus ;;
-            debian)
-              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-                pulseaudio dbus qt6-qpa-plugins qml6-module-qttest
-              ;;
-            fedora) dnf install -y pulseaudio dbus-daemon ;;
-            *) exit 2 ;;
-          esac
 
       - name: Prepare native test source as unprivileged user
         run: |
@@ -113,9 +103,6 @@ jobs:
           chown -R cirrus-builder:cirrus-builder "$GITHUB_WORKSPACE"
           source=$(runuser -u cirrus-builder -- packaging/linux/prepare-source.sh "$DISTRIBUTION" "$TARGET_ARCH")
           echo "CIRRUS_SOURCE_DIR=$source" >> "$GITHUB_ENV"
-          # Private-cache tests require root/current-user ownership on every ancestor.
-          # GitHub's /__w bind mount belongs to the host runner's different UID.
-          echo "CIRRUS_TEST_BUILD_DIR=/home/cirrus-builder/build/tests" >> "$GITHUB_ENV"
 
       - name: Verify system FFmpeg audio fixtures
         run: runuser -u cirrus-builder -- packaging/linux/verify-system-ffmpeg.sh

@@ -7,6 +7,9 @@ inputs:
   arch:
     description: Native CPU (x86_64 or arm64)
     required: true
+  purpose:
+    description: Dependency purpose (build or tests)
+    default: build
   cache-scope:
     description: Compiler-cache scope (build or tests)
     default: build
@@ -36,7 +39,8 @@ runs:
       shell: bash
       env:
         DISTRIBUTION: ${{ inputs.distribution }}
-      run: packaging/linux/install-build-deps.sh "$DISTRIBUTION"
+        BUILD_PURPOSE: ${{ inputs.purpose }}
+      run: packaging/linux/install-build-deps.sh "$DISTRIBUTION" "$BUILD_PURPOSE"
 
     - name: Verify and export system Qt environment
       shell: bash

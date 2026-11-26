@@ -65,7 +65,7 @@ Linux 生产包的配置、编译和打包命令都在对应发行版容器中�
 
 Arch ARM 镜像不是 Arch Linux ARM 官方发布镜像。当前固定 `base-devel-20261124.45339717499` 的 ARM64 manifest：`sha256:89dd0b1da3cab11ef9a0f12481794cf31fd2cb7377ced80aa2041d3a5cae757d`。更新镜像时应重新核对维护来源和原生架构。
 
-依赖安装统一由 `packaging/linux/install-build-deps.sh` 按发行版执行。容器启动时设置 `no_new_privs`，使 pacman 能在没有 `CAP_SYS_ADMIN` 的容器中应用 Landlock。每个构建 job 检查 `/etc/os-release` 与 `uname -m`，安装依赖后以无特权的 `cirrus-builder` 用户构建。
+依赖安装统一由 `packaging/linux/install-build-deps.sh` 按发行版和用途执行。生产构建使用默认 `purpose: build`；CI 明确指定 `purpose: tests`，在同一次包管理事务中安装开发依赖和测试服务，避免 Fedora 先自动选择冲突的 Pulse 服务 provider。容器启动时设置 `no_new_privs`，使 pacman 能在没有 `CAP_SYS_ADMIN` 的容器中应用 Landlock。每个构建 job 检查 `/etc/os-release` 与 `uname -m`，安装依赖后以无特权的 `cirrus-builder` 用户构建。
 
 - **Arch**：对检出提交做 `git archive`，以 SHA-256 验证源码，渲染 `packaging/linux/arch/PKGBUILD.in` 后调用 `makepkg`。装到 `/usr`，不打包系统 Qt/FFmpeg。配方同时支持 `x86_64`、`aarch64`，检查包版本、实际架构、桌面资源和许可证。关闭 LTO 和额外 debug 包；依赖 Arch 滚动仓库，Qt 私有接口升级后需要重新构建。
 - **Debian**：装到 `/opt/cirrus`，Qt、QtKeychain、FFmpeg 使用官方系统库；桌面集成和文档放到 `/usr/share`，`/usr/bin/cirrus` 链接到主程序。仅在独立应用构建工作树应用 `packaging/linux/debian/patches/0001-cirrus-debian-qt68.patch`：以现有 `mkdir(0700)` 安全原语按序创建缺失父目录，用旧版行过滤通知、字节/帧换算、列表输入兼容组件及独立音频事件线程的 `QIODevice` 推送接口适配 Qt 6.8。音频只在后端可写容量内生成 PCM，至多保存一个固定输出块的短写余量并计入延迟，关闭使用 `reset()` 避免暂停流 drain 阻塞；列表保留鼠标不拖动、触摸和滚轮可滚动的策略。主线最低 Qt 要求与其他平台实现不变；当 Debian 系统 Qt 达到这些 API 所需的 6.11 时，构建明确失败并要求移除补丁及接入，不静默切换路径。CI 对两个原生架构运行补丁后的完整测试、QML lint、音频短写/独立消费、私有虚拟 PulseAudio 暂停/关闭/重开及离屏列表输入测试。虚拟音频服务仅为测试构建依赖，不加入应用运行依赖。`dpkg-shlibdeps` 生成共享库和必要 Qt 私有 ABI 依赖；目标为 Debian 13。
