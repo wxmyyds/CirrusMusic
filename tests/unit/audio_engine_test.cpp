@@ -344,23 +344,26 @@ class AudioEngineTest : public QObject
         QTRY_VERIFY_WITH_TIMEOUT(has(Kind::Ready), 5000);
         m_engine->play();
         QTRY_VERIFY_WITH_TIMEOUT(has(Kind::Advanced), 10000);
-        const auto advanced = std::find_if(m_events.begin(), m_events.end(),
+        const auto advanced = std::find_if(m_events.cbegin(), m_events.cend(),
                                            [](const auto& e) { return e.kind == Kind::Advanced; });
+        // Event delivery may reallocate the list while QTRY processes the next tick.
+        const auto advancedIndex = advanced - m_events.cbegin();
         qint64 lastOfFirst = -1;
-        for (auto it = m_events.begin(); it != advanced; ++it)
+        for (auto it = m_events.cbegin(); it != advanced; ++it)
             if (it->kind == Kind::Position)
                 lastOfFirst = it->value;
         // 4 s tracks: a third of one (about 1.36 s) overlaps; the switch is in its middle.
         QVERIFY2(lastOfFirst > 2400 && lastOfFirst < 3700,
                  qPrintable(QString::number(lastOfFirst)));
         QTRY_VERIFY_WITH_TIMEOUT(
-            std::any_of(advanced, m_events.end(),
+            std::any_of(m_events.cbegin() + advancedIndex, m_events.cend(),
                         [](const auto& e) { return e.kind == Kind::Position; }),
             2000);
         const auto firstOfSecond =
             std::find_if(m_events.begin(), m_events.end(), [&](const auto& e) {
                 return e.token == second && e.kind == Kind::Position;
             });
+        QVERIFY(firstOfSecond != m_events.end());
         QVERIFY2(firstOfSecond->value >= 450 && firstOfSecond->value < 1200,
                  qPrintable(QString::number(firstOfSecond->value)));
         QTRY_VERIFY_WITH_TIMEOUT(has(Kind::Ended), 10000);
