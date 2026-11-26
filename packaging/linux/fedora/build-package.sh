@@ -11,7 +11,7 @@ patched="$original/build/fedora-source-$1"
 mkdir -p "$original/build"
 # Patch only Cirrus, in a detached build worktree. Upstream FFmpeg stays unmodified.
 git -C "$original" worktree add --detach "$patched" HEAD
-patch_file="$original/packaging/linux/fedora/0001-cirrus-fedora-eac3-backend.patch"
+patch_file="$original/packaging/linux/fedora/patches/0001-cirrus-fedora-eac3-backend.patch"
 sha256sum "$patch_file"
 git -C "$patched" apply --check "$patch_file"
 git -C "$patched" apply "$patch_file"
