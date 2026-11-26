@@ -144,14 +144,30 @@ class AudioEngineTest : public QObject
     void opensPlaysAndEnds()
     {
         const auto t = token(1);
+        QList<PlaybackEvent> openingEvents;
+        QObject readyObserver;
+        connect(
+            m_engine.get(), &AudioEngine::event, &readyObserver,
+            [this, &openingEvents](PlaybackEvent e) {
+                if (e.kind == Kind::Ready && openingEvents.isEmpty())
+                    openingEvents = m_events;
+            },
+            Qt::DirectConnection);
         load(QStringLiteral("tone.flac"), QStringLiteral("flac"), t);
         QTRY_VERIFY_WITH_TIMEOUT(has(Kind::Ready), 5000);
-        // The old backend's order: Duration, Seekable, Volume, then Ready.
-        QCOMPARE(kinds(m_events),
+        // Capture the exact opening sequence before a later timer tick can append events.
+        QCOMPARE(kinds(openingEvents),
                  (QList<Kind>{Kind::Duration, Kind::Seekable, Kind::Volume, Kind::Ready}));
-        QVERIFY(std::abs(m_events[0].value - 500) <= 30);
-        QCOMPARE(m_events[1].value, 1);
-        QCOMPARE(m_events[2].volumeLinear, std::optional(0.f));
+        QVERIFY(std::abs(openingEvents[0].value - 500) <= 30);
+        QCOMPARE(openingEvents[1].value, 1);
+        QCOMPARE(openingEvents[2].volumeLinear, std::optional(0.f));
+        QTRY_VERIFY_WITH_TIMEOUT(has(Kind::Observation), 5000);
+        QCOMPARE(kinds(m_events), (QList<Kind>{Kind::Duration, Kind::Seekable, Kind::Volume,
+                                               Kind::Ready, Kind::Position, Kind::Observation}));
+        QCOMPARE(first(Kind::Position).value, 0);
+        QVERIFY(first(Kind::Observation).observed.has_value());
+        QCOMPARE(first(Kind::Observation).observed->playedMs, 0);
+        QVERIFY(!first(Kind::Observation).observed->capped);
         m_engine->play();
         QTRY_VERIFY_WITH_TIMEOUT(has(Kind::Ended), 5000);
         qint64 last = -1;

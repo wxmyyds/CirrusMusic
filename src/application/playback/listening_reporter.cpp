@@ -148,7 +148,7 @@ ListeningReporter::prepare(const StoredListeningRecord& row, ListeningReportActi
 
 QDateTime ListeningReporter::dayStart(const QDateTime& now)
 {
-    QDateTime start(now.date(), QTime(6, 0), now.timeZone());
+    QDateTime start(now.date(), QTime(6, 0), now.timeRepresentation());
     return now < start ? start.addDays(-1) : start;
 }
 
