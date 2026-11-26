@@ -159,24 +159,16 @@ jobs:
             ${{ env.CIRRUS_TEST_BUILD_DIR }}/cirrus-qmlimportscanner.txt
           if-no-files-found: warn
 
-  tests:
-    name: ${{ matrix.platform }} tests (${{ matrix.arch }})
+  windows-tests:
+    name: Windows tests (${{ matrix.arch }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: Windows
-            runner: windows-2022
+          - runner: windows-2022
             arch: x86_64
-          - platform: Windows
-            runner: windows-11-arm
+          - runner: windows-11-arm
             arch: arm64
-          - platform: macOS
-            runner: macos-15
-            arch: arm64
-          - platform: macOS
-            runner: macos-15-intel
-            arch: x86_64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     defaults:
@@ -189,13 +181,81 @@ jobs:
           persist-credentials: false
 
       - name: Set up Windows test dependencies
-        if: runner.os == 'Windows'
         uses: ./.github/actions/setup-windows
         with:
           arch: ${{ matrix.arch }}
 
+      - name: Configure test build
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON \
+            -DCIRRUS_DEPLOY_QT=OFF \
+            -DCMAKE_PREFIX_PATH="$CIRRUS_CMAKE_PREFIX_PATH" \
+            -DPKG_CONFIG_EXECUTABLE="$CIRRUS_PKG_CONFIG_EXECUTABLE" \
+            -DOPENSSL_ROOT_DIR="$CIRRUS_OPENSSL_ROOT" \
+            -DCMAKE_C_COMPILER_LAUNCHER="$CIRRUS_COMPILER_LAUNCHER" \
+            -DCMAKE_CXX_COMPILER_LAUNCHER="$CIRRUS_COMPILER_LAUNCHER"
+
+      - name: Compile test dependencies
+        run: cmake --build build --parallel 4 -- -k 0
+
+      - name: QML lint
+        run: cmake --build build --target all_qmllint
+
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_FORCE_STDERR_LOGGING: '1'
+        run: |
+          set -euo pipefail
+          command=(ctest --test-dir build --output-on-failure --no-tests=error --parallel 4
+            --output-junit "$PWD/build/junit.xml")
+          "${command[@]}"
+
+      - name: Save compiler cache
+        if: always() && env.CIRRUS_CCACHE_KEY != '' && env.CIRRUS_CCACHE_HIT != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ env.CIRRUS_CCACHE_KEY }}
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-Windows-${{ matrix.arch }}
+          retention-days: 3
+          overwrite: ${{ github.run_attempt > 1 }}
+          path: |
+            build/junit.xml
+            build/Testing/Temporary/LastTest.log
+            build/Testing/Temporary/LastTestsFailed.log
+          if-no-files-found: warn
+
+  macos-tests:
+    name: macOS tests (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
       - name: Set up macOS test dependencies
-        if: runner.os == 'macOS'
         uses: ./.github/actions/setup-macos
         with:
           arch: ${{ matrix.arch }}
@@ -241,7 +301,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: test-results-${{ matrix.platform }}-${{ matrix.arch }}
+          name: test-results-macOS-${{ matrix.arch }}
           retention-days: 3
           overwrite: ${{ github.run_attempt > 1 }}
           path: |

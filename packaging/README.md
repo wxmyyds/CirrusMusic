@@ -29,6 +29,8 @@ Linux 通用编译、部署、桌面资源和依赖安装直接放在 `packaging
 | `macos-build.yml` | 手动、可复用调用 | ARM64、x86_64 两个独立构建 job，各输出 DMG |
 | `release.yml` | 手动选择 `ref`、`tag`、`publish` | 检查版本、Tag 和 Changelog 并固定源码提交 → CI 测试 → 并行构建三平台十个原生目标 → 汇合校验完整产物清单和 SHA-256 → 发布 |
 
+CI 分为 `linux-tests`、`windows-tests`、`macos-tests` 三个独立 job 定义，分别通过矩阵展开为 6、2、2 个原生任务，各自仅准备本平台依赖、测试及报告。
+
 构建工作流没有 `package`、`format` 或平台开关；CI 不再承担打包任务。旧 Linux portable/AppImage 打包链路已移除。独立工作流的 `ref` 留空时使用所选工作流提交；Release 始终向 CI 和三个 build 工作流传入同一个完整提交 SHA。
 
 在 Actions 选择 **Linux build / Windows build / macOS build → Run workflow**，选择工作流所在分支，并按需填写源码 `ref`。每次构建该平台的全部目标架构。新文件尚未在默认分支注册时，可通过已注册的 Release 工作流在功能分支上以 `publish=false` 调用和验证。
