@@ -9,10 +9,8 @@ fi
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 : "${distribution:?distribution entrypoint is required}"
 arch=${1:?missing architecture}
-qt=${2:?missing Qt prefix}
-deps=$(cd "${3:?missing dependency prefix}" && pwd)
-mkdir -p "${4:?missing output directory}"
-out=$(cd "$4" && pwd)
+mkdir -p "${2:?missing output directory}"
+out=$(cd "$2" && pwd)
 source /etc/os-release
 [[ $ID == "$distribution" ]]
 case "$distribution" in
@@ -45,16 +43,16 @@ version=$(sed -nE 's/^project\(CirrusMusic VERSION ([0-9]+\.[0-9]+\.[0-9]+)([[:s
 build="$root/build/package-$distribution-$arch"
 stage="$build/stage"
 
-PKG_CONFIG_PATH="$deps/lib/pkgconfig" cmake -S "$root" -B "$build" -G Ninja \
+cmake -S "$root" -B "$build" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_PREFIX_PATH="$qt;$deps" \
+    -DCMAKE_PREFIX_PATH=/usr \
     -DPKG_CONFIG_EXECUTABLE="${CIRRUS_PKG_CONFIG_EXECUTABLE:?missing pkg-config}" \
     -DOPENSSL_ROOT_DIR="${CIRRUS_OPENSSL_ROOT:?missing OpenSSL root}" \
     -DBUILD_TESTING=OFF \
     -DCIRRUS_BUILD_GALLERY=OFF \
     -DCIRRUS_EXECUTABLE=cirrus \
     -DCIRRUS_PACKAGE=linux \
-    -DCIRRUS_DEPLOY_QT=ON
+    -DCIRRUS_DEPLOY_QT=OFF
 cmake --build "$build" --parallel "${JOBS:-4}"
 rm -rf "$stage"
 DESTDIR="$stage" cmake --install "$build" --prefix /opt/cirrus
@@ -69,8 +67,21 @@ find "$stage/opt/cirrus/share" -depth -type d -empty -delete
 desktop-file-validate "$stage/usr/share/applications/com.guang233.Cirrus.desktop"
 appstreamcli validate --no-net "$stage/usr/share/metainfo/com.guang233.Cirrus.metainfo.xml"
 
-# Inspect the deployed tree, never the SDK/dependency directories. A bundle that
-# accidentally loads an SDK library must fail before dependency generation.
+# Resolve dynamically loaded QML/plugins to their owning runtime packages too.
+python3 "$root/packaging/linux/qt-runtime-dependencies.py" "$distribution" "$root" "$build"
+mapfile -t qt_runtime_packages < "$build/system-qt-runtime-packages.txt"
+((${#qt_runtime_packages[@]} > 0))
+
+# No Linux Qt/QtKeychain/ICU deployment tree may survive this migration.
+mapfile -t bundled_qt < <(find "$stage/opt/cirrus" \
+    \( -name 'libQt6*.so*' -o -name 'libqt6keychain.so*' -o -name 'libicu*.so*' \
+       -o -name qt.conf -o -type d -name plugins -o -type d -name qml \) -print)
+if ((${#bundled_qt[@]})); then
+    printf 'Unexpected bundled Qt/QtKeychain/ICU: %s\n' "${bundled_qt[@]}" >&2
+    exit 1
+fi
+
+# Inspect only the installed application and its explicitly private Fedora backend.
 mapfile -t library_dirs < <(find "$stage/opt/cirrus" -name '*.so*' -printf '%h\n' | sort -u)
 library_path=$(
     IFS=:

@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Native Linux build tools. 该操作需要通过 GitHub Actions 执行。
-# All targets use their official distribution FFmpeg packages.
-# Arch uses system Qt/QtKeychain; other targets use the SDK and built QtKeychain.
+# All targets use their official distribution Qt, QtKeychain and FFmpeg packages.
 set -euo pipefail
 
 if [[ ${GITHUB_ACTIONS:-} != true ]]; then
@@ -9,7 +8,7 @@ if [[ ${GITHUB_ACTIONS:-} != true ]]; then
     exit 1
 fi
 
-distribution=${1:?usage: install-build-deps.sh <arch|debian|fedora|ubuntu>}
+distribution=${1:?usage: install-build-deps.sh <arch|debian|fedora>}
 source /etc/os-release
 printf 'Build distribution: %s (%s)\nNative architecture: %s\n' "$PRETTY_NAME" "$ID" "$(uname -m)"
 privilege=()
@@ -18,41 +17,40 @@ if (( EUID != 0 )); then
 fi
 
 case "$distribution" in
-    ubuntu | debian)
-        [[ $ID == "$distribution" ]]
-        if [[ $distribution == ubuntu ]]; then
-            [[ $VERSION_ID == 24.04 ]]
-        else
-            [[ $VERSION_ID == 13 ]]
-        fi
-        compiler=(g++)
+    debian)
+        [[ $ID == debian && $VERSION_ID == 13 ]]
         cc=gcc cxx=g++
-        runtime=(libgtk-3-0t64 libcups2t64
-            libgstreamer-plugins-base1.0-0 libgstreamer-plugins-bad1.0-0 libgstreamer-gl1.0-0)
         "${privilege[@]}" apt-get update
         "${privilege[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            "${compiler[@]}" "${runtime[@]}" \
+            g++ \
             make cmake ccache ninja-build patchelf pkg-config file binutils dpkg-dev \
-            git curl ca-certificates tar xz-utils gzip zstd python3 python3-venv python3-pip \
+            git curl ca-certificates tar xz-utils gzip zstd python3 \
             libssl-dev zlib1g-dev libzstd-dev libsecret-1-dev \
+            qt6-base-dev qt6-base-private-dev qt6-declarative-dev qt6-declarative-private-dev \
+            qt6-multimedia-dev qt6-shadertools-dev qt6-wayland-dev qt6-wayland-private-dev \
+            qt6-image-formats-plugins qt6-wayland qt6-qpa-plugins \
+            qtkeychain-qt6-dev libqt6sql6-sqlite libqt6svg6 \
+            qml6-module-qtcore qml6-module-qtqml qml6-module-qtqml-models \
+            qml6-module-qtqml-workerscript qml6-module-qtquick qml6-module-qtquick-controls \
+            qml6-module-qtquick-dialogs qml6-module-qtquick-effects qml6-module-qtquick-layouts \
+            qml6-module-qtquick-shapes qml6-module-qtquick-templates qml6-module-qtquick-window \
+            qml6-module-qttest \
             ffmpeg libavformat-dev libavcodec-dev libavutil-dev libswresample-dev \
             libgl-dev libegl-dev libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev \
-            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
-            libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1 \
-            libfontconfig1 libdbus-1-3 dbus libpulse0 libxrandr2 libgbm1 libsm6 libice6 \
+            dbus \
             desktop-file-utils appstream hicolor-icon-theme passwd util-linux
         ;;
     fedora)
         [[ $ID == fedora && $VERSION_ID == 44 ]]
         "${privilege[@]}" dnf install -y \
             gcc gcc-c++ make cmake ccache ninja-build nasm patchelf pkgconf-pkg-config file binutils \
-            git /usr/bin/curl ca-certificates tar xz gzip zstd python3 python3-pip \
+            git /usr/bin/curl ca-certificates tar xz gzip zstd python3 \
             openssl-devel zlib-devel libzstd-devel libsecret-devel \
+            qt6-qtbase-devel qt6-qtbase-private-devel qt6-qtdeclarative-devel \
+            qt6-qtmultimedia-devel qt6-qtshadertools-devel \
+            qt6-qtimageformats qt6-qtsvg qt6-qtbase-sqlite qtkeychain-qt6-devel \
             ffmpeg-free libavformat-free-devel libavcodec-free-devel libavutil-free-devel libswresample-free-devel \
-            mesa-libGL-devel mesa-libEGL-devel mesa-libgbm libxkbcommon-devel libxkbcommon-x11 wayland-devel \
-            libxcb xcb-util-cursor xcb-util-wm xcb-util-image xcb-util-keysyms xcb-util-renderutil \
-            fontconfig dbus-libs dbus-daemon pulseaudio-libs gtk3 libXrandr libSM libICE cups-libs libxcrypt-compat \
-            gstreamer1-plugins-bad-free-libs \
+            mesa-libGL-devel mesa-libEGL-devel libxkbcommon-devel wayland-devel dbus-daemon \
             desktop-file-utils appstream hicolor-icon-theme rpm-build redhat-rpm-config \
             shadow-utils util-linux findutils diffutils which
         cc=gcc cxx=g++

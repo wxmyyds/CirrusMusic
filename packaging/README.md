@@ -10,6 +10,7 @@ packaging/
 │   ├── arch/
 │   │   └── cpkg/
 │   ├── debian/
+│   │   └── patches/
 │   └── fedora/
 │       └── patches/
 ├── windows/
@@ -22,7 +23,7 @@ Linux 通用编译、部署、桌面资源和依赖安装直接放在 `packaging
 
 | 工作流 | 入口 | 职责 |
 | --- | --- | --- |
-| `ci.yml` | master push、PR、手动、可复用调用 | Ubuntu 24.04、Fedora 44 的 x86_64，以及 Windows x86_64、macOS ARM64 四个测试 job；编译测试所需目标、QML lint、CTest，仅上传测试报告 |
+| `ci.yml` | master push、PR、手动、可复用调用 | Debian 13、Fedora 44 各 x86_64/ARM64，以及 Windows x86_64、macOS ARM64 六个测试 job；编译测试所需目标、QML lint、CTest，仅上传测试报告 |
 | `linux-build.yml` | 手动、可复用调用 | Arch、Debian、Fedora × x86_64、ARM64，矩阵展开为六个独立构建 job |
 | `windows-build.yml` | 手动、可复用调用 | x86_64、ARM64 两个独立构建 job，各输出 ZIP 和安装器 |
 | `macos-build.yml` | 手动、可复用调用 | ARM64、x86_64 两个独立构建 job，各输出 DMG |
@@ -59,41 +60,41 @@ Linux 生产包的配置、编译和打包命令都在对应发行版容器中�
 | --- | --- | --- |
 | Arch x86_64 | 官方 `archlinux:base-devel` | 原生 Arch Qt、FFmpeg、QtKeychain |
 | Arch Linux ARM | 社区 [Menci/docker-archlinuxarm](https://github.com/Menci/docker-archlinuxarm) 的 base-devel 镜像 | 原生 aarch64 Arch Linux ARM 仓库依赖 |
-| Debian 13 | 官方 `debian:13`，两个原生 CPU job | 固定 Qt SDK、自编 QtKeychain、Debian 官方 FFmpeg 与系统基础库 |
-| Fedora 44 | 官方 `registry.fedoraproject.org/fedora:44`，两个原生 CPU job | 固定 Qt SDK、自编 QtKeychain、Fedora 官方 FFmpeg 与系统基础库 |
+| Debian 13 | 官方 `debian:13`，两个原生 CPU job | 系统 Qt 6.8、QtKeychain、FFmpeg；应用工作树应用 Debian Qt 兼容补丁 |
+| Fedora 44 | 官方 `registry.fedoraproject.org/fedora:44`，两个原生 CPU job | 系统 Qt、QtKeychain、FFmpeg；保留私有 E-AC-3 应用构建补丁 |
 
 Arch ARM 镜像不是 Arch Linux ARM 官方发布镜像。当前固定 `base-devel-20261124.45339717499` 的 ARM64 manifest：`sha256:89dd0b1da3cab11ef9a0f12481794cf31fd2cb7377ced80aa2041d3a5cae757d`。更新镜像时应重新核对维护来源和原生架构。
 
 依赖安装统一由 `packaging/linux/install-build-deps.sh` 按发行版执行。容器启动时设置 `no_new_privs`，使 pacman 能在没有 `CAP_SYS_ADMIN` 的容器中应用 Landlock。每个构建 job 检查 `/etc/os-release` 与 `uname -m`，安装依赖后以无特权的 `cirrus-builder` 用户构建。
 
 - **Arch**：对检出提交做 `git archive`，以 SHA-256 验证源码，渲染 `packaging/linux/arch/PKGBUILD.in` 后调用 `makepkg`。装到 `/usr`，不打包系统 Qt/FFmpeg。配方同时支持 `x86_64`、`aarch64`，检查包版本、实际架构、桌面资源和许可证。关闭 LTO 和额外 debug 包；依赖 Arch 滚动仓库，Qt 私有接口升级后需要重新构建。
-- **Debian**：装到 `/opt/cirrus`，自带 Qt/QtKeychain，FFmpeg 使用 Debian 官方共享库；桌面集成和文档放到 `/usr/share`，`/usr/bin/cirrus` 链接到主程序。`dpkg-shlibdeps` 从 Debian 包数据库生成外部 ABI 依赖，再添加证书、libsecret、图标主题依赖。目标是 Debian 13，不再声称兼容旧 Ubuntu 22.04 / Debian 12。
+- **Debian**：装到 `/opt/cirrus`，Qt、QtKeychain、FFmpeg 使用官方系统库；桌面集成和文档放到 `/usr/share`，`/usr/bin/cirrus` 链接到主程序。仅在独立应用构建工作树应用 `packaging/linux/debian/patches/0001-cirrus-debian-qt68.patch`：以现有 `mkdir(0700)` 安全原语按序创建缺失父目录，用旧版行过滤通知、字节/帧换算及无预读的 `QIODevice` 音频拉取接口适配 Qt 6.8。主线最低 Qt 要求与其他平台实现不变；当 Debian 系统 Qt 达到这些 API 所需的 6.11 时，构建明确失败并要求移除补丁及接入，不静默切换路径。CI 对两个原生架构运行补丁后的完整测试、QML lint 和音频拉取适配层专用测试。`dpkg-shlibdeps` 生成共享库和必要 Qt 私有 ABI 依赖；目标为 Debian 13。
 - **Fedora**：同一应用安装布局，使用 Fedora 官方 `ffmpeg-free` 开发库，不启用 RPM Fusion。仅在 Fedora 构建的独立工作树中应用 `packaging/linux/fedora/patches/0001-cirrus-fedora-eac3-backend.patch`，为 Cirrus 接入内置 E-AC-3 解码库；FFmpeg 上游源码不打补丁，非 Fedora 构建不应用这份补丁。由 `rpmbuild` 生成 RPM；保留系统库的自动 ABI 依赖，排除随包私有 SONAME 依赖，并禁止把私有库发布为全局 Provides。
 
 所有 Linux 目标通过系统 pkg-config 查找 FFmpeg，要求 5.1 起的新声道布局 API；不从 Qt SDK 或私有依赖前缀查找。依赖准备阶段核对四个开发模块的系统路径和包所有权，并用发行版 FFmpeg 实际解码 MP3、FLAC、MP4/AAC、fragmented MP4 和 MP4/FLAC 样本。
 
 公共播放代码、B 站 Dolby 请求与原有格式策略保持不变。Fedora 补丁按实际 codec ID 将 E-AC-3 交给 `libcirrus_eac3.so.1`，其余编码仍走原有系统 FFmpeg 路径，不进行失败重试或音源切换。该私有库由未修改的 FFmpeg 9.0.2 静态对象组成，配置仅启用 E-AC-3 及其上游强制的 AC-3/解析器依赖；应用入口只接受 E-AC-3，不把 AC-3 转给它。库以隐藏符号、版本脚本及本地绑定隔离内部 FFmpeg，边界仅传原始 packet 字节、时间戳及立体声 PCM，不交换 FFmpeg 对象。两个 Fedora 原生构建均运行应用补丁后的音频测试，正向验证 E-AC-3、seek/reset 和实际后端选择，同时核验普通 AAC/FLAC 仍走系统库。
 
-Debian/Fedora 部署排除未使用的 Qt FFmpeg 媒体播放插件及所有 FFmpeg 共享库；Qt 音频设备集成保留 GStreamer，实际歌曲解码仍只有 Cirrus 的 FFmpeg 解码器。部署后检查包内没有独立的 FFmpeg 共享库或 Qt FFmpeg 插件，四个实际 ELF 导入均解析到系统库，生成的 DEB/RPM 元数据也必须包含四个运行库依赖。Fedora 另检查唯一的私有 E-AC-3 库：只导出规定的 C ABI，不动态引用或导出 FFmpeg 符号、不依赖系统 FFmpeg，并拒绝 TEXTREL。保留全部 ELF 架构、缺库与构建目录泄漏校验；删除旧 SDK FFmpeg 专用的 bzip2 SONAME 改写。只 strip 尚未去符号的文件。桌面文件与 AppStream 元数据在打包时验证。
+Debian/Fedora 不再下载或部署 Qt SDK、自编 QtKeychain、ICU、QML 模块及 Qt 插件。依赖准备核对系统 Qt/QtKeychain 的真实文件和发行版包所有权；打包检查包内没有这些共享库、插件/QML 目录、`qt.conf` 或独立 FFmpeg DSO。QML 导入由系统 `qmlimportscanner` 扫描，SQLite、WebP/SVG、XCB/Wayland 和多媒体插件按文件所有权转换为原生运行包依赖，补足共享库扫描看不到的动态加载。ICU 由系统 Qt 依赖管理，Cirrus 不手写 ICU 版本；保留原生工具生成的必要 ABI 约束。四个 FFmpeg ELF 导入必须解析到系统库且进入 DEB/RPM 元数据。Fedora 仍单独检查唯一私有 E-AC-3 库的 C ABI、FFmpeg 符号隔离、独立性及 TEXTREL。保留全部 ELF 架构、缺库、构建目录泄漏、桌面文件与 AppStream 校验，只 strip 尚未去符号的文件。
 
 Arch 只保留 `packaging/linux/arch/` 的当前源码构建链路，旧上游 AUR 配方已移除。`packaging/linux/arch/cpkg/` 负责将同一份二进制产物接入 `arch-cloud-pkgs` 的统一 OCI 发布器，不在包仓库重新构建 Cirrus。
 
 ## 共享依赖与缓存
 
-`.github/actions/setup-qt` 从 `packaging/versions.sh` 读取 Qt 版本，统一安装 qtmultimedia、qtshadertools、qtimageformats；按平台和 CPU 选择原生 SDK。Arch 使用系统 Qt，跳过 SDK 和自编库链路。
+`.github/actions/setup-qt` 仅为 Windows/macOS 从 `packaging/versions.sh` 读取 Qt 版本并安装 qtmultimedia、qtshadertools、qtimageformats 原生 SDK。全部 Linux 目标使用系统 Qt/QtKeychain；Debian/Fedora 测试与生产构建共用同一份应用补丁准备脚本。
 
 | 库 | 随包目标的来源 |
 | --- | --- |
-| Qt 6.11.2 | Qt 官方二进制；macOS `clang_64` 是同时含两个 CPU slice 的框架 |
+| Qt | Linux 由发行版提供；Windows/macOS 固定 Qt 6.11.2 官方二进制，macOS `clang_64` 含两个 CPU slice |
 | FFmpeg | Linux 主解码器使用各发行版官方共享库；仅 Fedora 通过应用构建补丁增加隔离的最小 E-AC-3 库。macOS 从固定 SHA-256 的 9.0.2 源码编译；Windows 由固定 baseline 的 vcpkg 构建，保持原有配置 |
-| QtKeychain 0.17.0 | 同一源码脚本，针对选定 Qt 构建；Windows 静态链接 |
+| QtKeychain | Linux 由发行版提供；Windows/macOS 从固定 0.17.0 源码针对选定 Qt 构建，Windows 静态链接 |
 | OpenSSL、zlib、zstd | Linux 用对应发行版；Windows 用 vcpkg；macOS 用 Homebrew 的 OpenSSL/zstd 和系统 zlib |
 
 Windows/macOS 的 Qt Multimedia 与 Cirrus 解码器可能各有不同 SONAME 的 FFmpeg；Linux 不部署 SDK FFmpeg。部署检查按实际 ELF/DLL/Mach-O 依赖验证。Linux/Windows/macOS 的依赖准备分别只有一个 setup action，由 CI 和生产构建共同调用；测试和生产的 CMake 配置分开。
 
 依赖缓存严格区分发行版、CPU、Qt/工具链和依赖脚本。编译缓存按原生环境与测试/生产用途隔离，恢复后由 ccache 核验编译器内容、参数和头文件；运行依赖或准备脚本调整不会清空仍有效的编译输出。依赖构建完成后立即保存，编译缓存即使后续检查失败也会保存。缓存缺失只重新执行同一来源的依赖构建，不改变源码或编译目标。
 
-安装规则位于 `cmake/CirrusInstall.cmake`。`CIRRUS_DEPLOY_QT=ON` 用于 Debian、Fedora、Windows、macOS；Arch 关闭。`CIRRUS_RUNTIME_DIRS` 仅用于 Windows 的额外运行库搜索。许可证和第三方声明随应用安装；登录状态持久保存需要可用且已解锁的系统钥匙串。
+安装规则位于 `cmake/CirrusInstall.cmake`。`CIRRUS_DEPLOY_QT=ON` 仅用于 Windows/macOS；Linux 必须关闭。`CIRRUS_RUNTIME_DIRS` 仅用于 Windows 的额外运行库搜索。许可证和第三方声明随应用安装；登录状态持久保存需要可用且已解锁的系统钥匙串。
 
 ## Windows 与 macOS
 

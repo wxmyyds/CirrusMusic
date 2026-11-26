@@ -96,7 +96,7 @@ jobs:
             runuser -u cirrus-builder -- packaging/linux/arch/build-package.sh "$TARGET_ARCH" "$GITHUB_WORKSPACE/dist"
           else
             runuser -u cirrus-builder -- "packaging/linux/$DISTRIBUTION/build-package.sh" \
-              "$TARGET_ARCH" "$QT_ROOT_DIR" "$DEPS" "$GITHUB_WORKSPACE/dist"
+              "$TARGET_ARCH" "$GITHUB_WORKSPACE/dist"
           fi
 
       - name: Collect corresponding bundled-library sources once

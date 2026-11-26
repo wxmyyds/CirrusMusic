@@ -309,7 +309,7 @@ add_library(cirrus_secrets STATIC
 )
 target_compile_features(cirrus_secrets PUBLIC cxx_std_20)
 target_include_directories(cirrus_secrets PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(cirrus_secrets PUBLIC Qt6::Core cirrus_logging PRIVATE Qt6Keychain::Qt6Keychain)
+target_link_libraries(cirrus_secrets PUBLIC Qt6::Core cirrus_logging PRIVATE qt6keychain)
 
 # Composition-level glue between protocol state, storage and secrets.
 add_library(cirrus_bootstrap STATIC

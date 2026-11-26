@@ -1,0 +1,316 @@
+From: CirrusMusic maintainers
+Subject: [PATCH] Debian: adapt Qt 6.10/6.11 APIs to the system Qt 6.8
+
+Applied only to Debian's detached application build worktree. The original
+Qt >= 6.10 baseline and the Windows/macOS/Fedora/Arch implementations remain.
+Use the existing mkdir(0700) primitive for missing parents, Qt 6.8 row-filter
+invalidation, byte/frame conversion and an unbuffered QIODevice PCM pull
+adapter. Do not relax existing path/owner/mode/link checks or change decoding.
+The build fails with an explicit removal request once Debian meets mainline's
+Qt 6.11 APIs, including QAudioSink callbacks. Remove this patch and its build
+integration together then.
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -8,7 +8,7 @@
+ 
+ find_package(Qt6 REQUIRED COMPONENTS Core Quick Multimedia)
+ 
+-qt_standard_project_setup(REQUIRES 6.10)
++qt_standard_project_setup(REQUIRES 6.8)
+ # Every log record knows its file, line and function, release builds too: warnings and
+ # errors carry src= and fn= (docs/tasks/logging-v2.md §11).
+ add_compile_definitions(QT_MESSAGELOGCONTEXT)
+diff --git a/src/infrastructure/media/audio_output.cpp b/src/infrastructure/media/audio_output.cpp
+--- a/src/infrastructure/media/audio_output.cpp
++++ b/src/infrastructure/media/audio_output.cpp
+@@ -1,4 +1,5 @@
+ #include "audio_output.h"
++#include "qt68_audio_pull.h"
+ #include "automix/mix.h"
+ #include <QAudioSink>
+ #include <QMediaDevices>
+@@ -119,8 +120,10 @@
+     m_rate = format.sampleRate();
+     m_device = device;
+     m_sink = std::make_unique<QAudioSink>(device, format);
+-    m_sink->setBufferFrameCount(m_rate / 50); // 20 ms
+-    m_sink->start([this](QSpan<float> out) { consume(out); });
++    m_sink->setBufferSize(format.bytesForFrames(m_rate / 50)); // 20 ms
++    m_pull = std::make_unique<Qt68AudioPull>(m_rate / 50,
++                                            [this](QSpan<float> out) { consume(out); });
++    m_sink->start(m_pull.get());
+     return true;
+ }
+ 
+@@ -130,11 +133,15 @@
+         return;
+     m_sink->stop();
+     m_sink.reset();
++    m_pull.reset();
+     m_tail.clear(); // no callback runs now
+     m_fading.store(false, std::memory_order_relaxed);
+ }
+ 
+-qint64 AudioOutput::latencyFrames() const { return m_sink ? m_sink->bufferFrameCount() : 0; }
++qint64 AudioOutput::latencyFrames() const
++{
++    return m_sink ? m_sink->format().framesForBytes(m_sink->bufferSize()) : 0;
++}
+ 
+ void AudioOutput::suspend()
+ {
+diff --git a/src/infrastructure/media/audio_output.h b/src/infrastructure/media/audio_output.h
+--- a/src/infrastructure/media/audio_output.h
++++ b/src/infrastructure/media/audio_output.h
+@@ -7,6 +7,7 @@
+ #include <vector>
+ 
+ class QAudioSink;
++class QIODevice;
+ class QMediaDevices;
+ 
+ namespace cirrus::media
+@@ -76,8 +77,8 @@
+     qsizetype m_length = 0, m_at = 0;
+ };
+ 
+-// The default output device through QAudioSink's real-time callback, which only copies
+-// out of the ring and applies short gain ramps (pause, seek) and the volume. Owner-thread
++// The default output device through Qt 6.8's QIODevice pull interface, copying the
++// same ring consumer's gain ramps and PCM into the sink. Owner-thread
+ // object; the ring and the flush handshake are for the producer thread.
+ class AudioOutput final : public QObject
+ {
+@@ -122,6 +123,7 @@
+ 
+     QMediaDevices* m_devices = nullptr;
+     std::unique_ptr<QAudioSink> m_sink;
++    std::unique_ptr<QIODevice> m_pull;
+     QAudioDevice m_device;
+     int m_rate = 0;
+     std::unique_ptr<AudioRing> m_ring;
+diff --git a/src/infrastructure/media/qt68_audio_pull.h b/src/infrastructure/media/qt68_audio_pull.h
+new file mode 100644
+--- /dev/null
++++ b/src/infrastructure/media/qt68_audio_pull.h
+@@ -0,0 +1,50 @@
++#pragma once
++#include <QIODevice>
++#include <QSpan>
++#include <algorithm>
++#include <array>
++#include <cstring>
++#include <functional>
++#include <utility>
++
++namespace cirrus::media
++{
++// Debian-only Qt 6.8 adapter. No PCM prefetch or persistent sample buffer: seek/
++// flush and consumed-frame accounting stay in AudioOutput's original consumer.
++class Qt68AudioPull final : public QIODevice
++{
++  public:
++    using Consumer = std::function<void(QSpan<float>)>;
++    Qt68AudioPull(qsizetype periodFrames, Consumer consume)
++        : m_periodBytes(periodFrames * kFrameBytes), m_consume(std::move(consume))
++    {
++        open(QIODevice::ReadOnly | QIODevice::Unbuffered);
++    }
++    bool isSequential() const override { return true; }
++    qint64 bytesAvailable() const override { return m_periodBytes + QIODevice::bytesAvailable(); }
++
++  protected:
++    qint64 readData(char* data, qint64 maximum) override
++    {
++        // Native sinks consume complete stereo frames. Returning only complete
++        // frames also leaves a short trailing request unconsumed, without loss.
++        const auto size = maximum - maximum % kFrameBytes;
++        qint64 done = 0;
++        std::array<float, 512> samples;
++        while (done < size) {
++            const auto bytes = std::min(size - done, qint64(sizeof(samples)));
++            m_consume(QSpan<float>(samples.data(), qsizetype(bytes / sizeof(float))));
++            // QIODevice supplies char buffers; their float alignment is not assumed.
++            std::memcpy(data + done, samples.data(), size_t(bytes));
++            done += bytes;
++        }
++        return done;
++    }
++    qint64 writeData(const char*, qint64) override { return -1; }
++
++  private:
++    static constexpr qint64 kFrameBytes = 2 * sizeof(float);
++    qint64 m_periodBytes;
++    Consumer m_consume;
++};
++} // namespace cirrus::media
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -480,3 +480,10 @@
+ target_include_directories(tst_app_link PRIVATE ${PROJECT_SOURCE_DIR}/ui/presentation)
+ target_link_libraries(tst_app_link PRIVATE Qt6::Test Qt6::Core)
+ add_test(NAME app_link COMMAND tst_app_link)
++
++# Debian Qt 6.8 pull adapter is tested without needing an audio device.
++qt_add_executable(tst_qt68_audio_pull unit/qt68_audio_pull_test.cpp)
++target_include_directories(tst_qt68_audio_pull PRIVATE ../src)
++target_link_libraries(tst_qt68_audio_pull PRIVATE Qt6::Core Qt6::Test)
++add_test(NAME qt68_audio_pull COMMAND tst_qt68_audio_pull)
++set_tests_properties(qt68_audio_pull PROPERTIES TIMEOUT 15)
+diff --git a/tests/unit/qt68_audio_pull_test.cpp b/tests/unit/qt68_audio_pull_test.cpp
+new file mode 100644
+--- /dev/null
++++ b/tests/unit/qt68_audio_pull_test.cpp
+@@ -0,0 +1,67 @@
++#include "infrastructure/media/qt68_audio_pull.h"
++#include <QTest>
++#include <cstring>
++
++using cirrus::media::Qt68AudioPull;
++
++class Qt68AudioPullTest : public QObject
++{
++    Q_OBJECT
++  private slots:
++    void copiesStereoFramesIntoUnalignedDestination()
++    {
++        int sample = 0;
++        Qt68AudioPull source(960, [&](QSpan<float> out) {
++            QCOMPARE(out.size() % 2, 0);
++            QVERIFY(out.size() <= 512);
++            for (float& value : out)
++                value = float(sample++);
++        });
++        QVERIFY(source.isSequential());
++        QCOMPARE(source.bytesAvailable(), 960 * 2 * qint64(sizeof(float)));
++        constexpr qint64 bytes = 513 * 2 * sizeof(float);
++        QByteArray storage(bytes + 1, '\0');
++        QCOMPARE(source.read(storage.data() + 1, bytes), bytes);
++        QCOMPARE(sample, 1026);
++        for (int index = 0; index < sample; ++index) {
++            float value;
++            std::memcpy(&value, storage.constData() + 1 + index * sizeof(float), sizeof(float));
++            QCOMPARE(value, float(index));
++        }
++    }
++
++    void doesNotPrefetchOrDiscardPartialFrames()
++    {
++        int sample = 0;
++        Qt68AudioPull source(960, [&](QSpan<float> out) {
++            for (float& value : out)
++                value = float(sample++);
++        });
++        char bytes[19]{};
++        QCOMPARE(source.read(bytes, 3), qint64(0));
++        QCOMPARE(sample, 0);
++        QCOMPARE(source.read(bytes, 19), qint64(16));
++        QCOMPARE(sample, 4);
++        QCOMPARE(source.read(bytes, 8), qint64(8));
++        QCOMPARE(sample, 6);
++        float value;
++        std::memcpy(&value, bytes, sizeof(float));
++        QCOMPARE(value, 4.0f);
++    }
++
++    void passesSilenceWithoutAllocatingSampleStorage()
++    {
++        int calls = 0;
++        Qt68AudioPull source(960, [&](QSpan<float> out) {
++            ++calls;
++            std::fill(out.begin(), out.end(), 0.0f);
++        });
++        QByteArray data(8192, '\x7f');
++        QCOMPARE(source.read(data.data(), data.size()), qint64(data.size()));
++        QCOMPARE(calls, 4);
++        QCOMPARE(data, QByteArray(8192, '\0'));
++    }
++};
++
++QTEST_GUILESS_MAIN(Qt68AudioPullTest)
++#include "qt68_audio_pull_test.moc"
+diff --git a/tests/unit/runtime_cache_test.cpp b/tests/unit/runtime_cache_test.cpp
+--- a/tests/unit/runtime_cache_test.cpp
++++ b/tests/unit/runtime_cache_test.cpp
+@@ -166,8 +166,7 @@
+     void rejectsLinkedCacheDirectory()
+     {
+         const auto target = m_dir->path() + QStringLiteral("/link target");
+-        QVERIFY(QDir().mkpath(target, QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+-                                          QFileDevice::ExeOwner));
++        QVERIFY(storage::makePrivateDirectory(target));
+         QVERIFY(QDir().rmdir(m_paths.cache));
+ #ifdef Q_OS_WIN
+         QProcess link;
+diff --git a/ui/presentation/backend/backend_host.cpp b/ui/presentation/backend/backend_host.cpp
+--- a/ui/presentation/backend/backend_host.cpp
++++ b/ui/presentation/backend/backend_host.cpp
+@@ -10,7 +10,7 @@
+ #include "now_playing_export.h"
+ 
+ #include <QDir>
+-#include <QFileDevice>
++#include <QFileInfo>
+ #include <QLoggingCategory>
+ #include <QStandardPaths>
+ #include <QTimer>
+@@ -26,13 +26,26 @@
+ // How long to wait after the backend reported a delayed close before quitting anyway.
+ constexpr int kGraceMs = 5000;
+ 
+-// Set permissions at creation: native ACLs on Windows, owner-only mode on Unix.
+-// Existing directories are checked, never chmodded through a symlink.
++// Qt 6.8 has no permission-taking mkpath. Create missing parents in order with
++// the existing POSIX mkdir(0700) primitive; never chmod an existing directory.
+ bool makePrivateDirectory(const QString& path)
+ {
+-    return QDir().mkpath(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+-                                   QFileDevice::ExeOwner) &&
+-           storage::isPrivateDirectory(path);
++    QStringList missing;
++    QFileInfo current(path);
++    while (!current.exists()) {
++        if (current.isSymLink())
++            return false;
++        missing.prepend(current.absoluteFilePath());
++        const auto parent = current.absolutePath();
++        if (parent == current.absoluteFilePath())
++            return false;
++        current.setFile(parent);
++    }
++    for (const auto& directory : missing) {
++        if (!storage::makePrivateDirectory(directory))
++            return false;
++    }
++    return storage::isPrivateDirectory(path);
+ }
+ 
+ } // namespace
+diff --git a/ui/presentation/sorted_songs_model.cpp b/ui/presentation/sorted_songs_model.cpp
+--- a/ui/presentation/sorted_songs_model.cpp
++++ b/ui/presentation/sorted_songs_model.cpp
+@@ -29,8 +29,7 @@
+     if (text == m_filterText)
+         return;
+     m_filterText = text;
+-    beginFilterChange();
+-    endFilterChange(QSortFilterProxyModel::Direction::Rows);
++    invalidateRowsFilter();
+     emit filterTextChanged();
+     emit countChanged();
+ }
+diff --git a/ui/window/AppWindow.qml b/ui/window/AppWindow.qml
+--- a/ui/window/AppWindow.qml
++++ b/ui/window/AppWindow.qml
+@@ -62,8 +62,6 @@
+     // the taskbar button of the active window does not minimize it, and Win+Down does
+     // nothing.
+     flags: titleBar === TitleBarMode.System ? Qt.Window
+-         : titleBar === TitleBarMode.Custom && macOS
+-           ? Qt.Window | Qt.ExpandedClientAreaHint | Qt.NoTitleBarBackgroundHint
+          : Qt.Window | Qt.FramelessWindowHint | Qt.WindowSystemMenuHint
+            | Qt.WindowMinMaxButtonsHint
+     // Translucent where the frame can have a shadow margin (Wayland): the alpha channel
