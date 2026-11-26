@@ -46,13 +46,17 @@ def main():
         packages.add(name)
         evidence[str(file)] = name
 
-    scanner = Path((args.build / "cirrus-qmlimportscanner.txt").read_text().strip())
-    configured_scanner = str(scanner)
-    scanner = scanner.resolve(strict=True)
-    if not scanner.is_relative_to("/usr"):
-        raise SystemExit(f"Non-system QML scanner: {scanner}")
-    qml = Path(output("qtpaths6", "--query", "QT_INSTALL_QML")).resolve(strict=True)
-    plugins = Path(output("qtpaths6", "--query", "QT_INSTALL_PLUGINS")).resolve(strict=True)
+    def system_tool(name):
+        configured = (args.build / f"cirrus-{name}.txt").read_text().strip()
+        tool = Path(configured).resolve(strict=True)
+        if not tool.is_relative_to("/usr"):
+            raise SystemExit(f"Non-system Qt tool: {tool}")
+        return configured, tool
+
+    configured_scanner, scanner = system_tool("qmlimportscanner")
+    configured_qtpaths, qtpaths = system_tool("qtpaths")
+    qml = Path(output(str(qtpaths), "--query", "QT_INSTALL_QML")).resolve(strict=True)
+    plugins = Path(output(str(qtpaths), "--query", "QT_INSTALL_PLUGINS")).resolve(strict=True)
     imports = json.loads(output(str(scanner), "-rootPath", str(args.source / "ui"),
                                 "-importPath", str(args.build / "qml"),
                                 "-importPath", str(qml)))
@@ -119,6 +123,7 @@ def main():
                         "native_machine": os.uname().machine,
                         "qt_version": output("pkg-config", "--modversion", "Qt6Core"),
                         "qml_scanner": str(scanner), "qml_scanner_configured": configured_scanner,
+                        "qtpaths": str(qtpaths), "qtpaths_configured": configured_qtpaths,
                         "qml_root": str(qml),
                         "plugins_root": str(plugins), "imports": imports, "files": evidence,
                         "unavailable_optional_imports": unavailable_optional}, indent=2) + "\n")

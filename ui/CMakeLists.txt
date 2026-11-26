@@ -5,9 +5,11 @@ set(QT_NO_PRIVATE_MODULE_WARNING ON)
 # the static modules see these targets.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # System Qt packages must retain the native window and diagnostic features.
-    find_package(Qt6 REQUIRED COMPONENTS GuiPrivate WaylandClientPrivate QmlTools)
+    find_package(Qt6 REQUIRED COMPONENTS GuiPrivate WaylandClientPrivate CoreTools QmlTools)
     file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/cirrus-qmlimportscanner.txt"
         CONTENT "$<TARGET_FILE:Qt6::qmlimportscanner>\n")
+    file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/cirrus-qtpaths.txt"
+        CONTENT "$<TARGET_FILE:Qt6::qtpaths>\n")
 else()
     find_package(Qt6 QUIET COMPONENTS GuiPrivate)
 endif()

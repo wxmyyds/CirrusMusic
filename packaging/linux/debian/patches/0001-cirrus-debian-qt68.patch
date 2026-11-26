@@ -943,18 +943,20 @@ diff --git a/tests/unit/runtime_cache_test.cpp b/tests/unit/runtime_cache_test.c
 diff --git a/ui/CMakeLists.txt b/ui/CMakeLists.txt
 --- a/ui/CMakeLists.txt
 +++ b/ui/CMakeLists.txt
-@@ -5,7 +5,11 @@
+@@ -5,9 +5,13 @@
  # the static modules see these targets.
  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
      # System Qt packages must retain the native window and diagnostic features.
--    find_package(Qt6 REQUIRED COMPONENTS GuiPrivate WaylandClientPrivate QmlTools)
+-    find_package(Qt6 REQUIRED COMPONENTS GuiPrivate WaylandClientPrivate CoreTools QmlTools)
 +    # Qt 6.8 exports private targets alongside the public module configs.
-+    find_package(Qt6 REQUIRED COMPONENTS WaylandClient QmlTools)
++    find_package(Qt6 REQUIRED COMPONENTS WaylandClient CoreTools QmlTools)
 +    if(NOT TARGET Qt6::GuiPrivate OR NOT TARGET Qt6::WaylandClientPrivate)
 +        message(FATAL_ERROR "Debian Qt private development headers/targets are required")
 +    endif()
      file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/cirrus-qmlimportscanner.txt"
          CONTENT "$<TARGET_FILE:Qt6::qmlimportscanner>\n")
+     file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/cirrus-qtpaths.txt"
+         CONTENT "$<TARGET_FILE:Qt6::qtpaths>\n")
  else()
 diff --git a/ui/app/PlaylistOrderPage.qml b/ui/app/PlaylistOrderPage.qml
 --- a/ui/app/PlaylistOrderPage.qml
