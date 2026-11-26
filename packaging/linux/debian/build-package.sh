@@ -19,7 +19,9 @@ make_deb() {
             printf '%s %s cirrus\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
         fi
     done | sort -u > "$temporary/debian/shlibs.local"
-    depends=$(cd "$temporary" && dpkg-shlibdeps -O -xcirrus \
+    # Use the same deployed-tree search path as ELF validation, not Qt installer's
+    # inherited SDK path (whose FFmpeg can have the same SONAME as Debian's).
+    depends=$(cd "$temporary" && LD_LIBRARY_PATH="$library_path" dpkg-shlibdeps -O -xcirrus \
         "${library_arguments[@]}" "${elf_arguments[@]}" | sed -n 's/^shlibs:Depends=//p')
     [[ -n $depends ]]
     for component in avformat avcodec avutil swresample; do

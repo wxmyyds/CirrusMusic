@@ -16,6 +16,8 @@ struct CirrusEac3 {
     AVPacket* packet = nullptr;
     AVFrame* frame = nullptr;
     SwrContext* convert = nullptr;
+    AVChannelLayout inputLayout{};
+    AVSampleFormat inputFormat = AV_SAMPLE_FMT_NONE;
     uint8_t* pcm = nullptr;
     unsigned capacity = 0;
     int rate = 0;
@@ -84,6 +86,7 @@ void cirrus_eac3_destroy(CirrusEac3* decoder)
     if (!decoder)
         return;
     swr_free(&decoder->convert);
+    av_channel_layout_uninit(&decoder->inputLayout);
     av_frame_free(&decoder->frame);
     av_packet_free(&decoder->packet);
     avcodec_free_context(&decoder->codec);
@@ -130,7 +133,14 @@ int cirrus_eac3_receive(CirrusEac3* decoder, const float** pcm, int* frames, int
     if (frame->sample_rate != decoder->rate || frame->ch_layout.nb_channels <= 0 ||
         frame->ch_layout.nb_channels > 8)
         return fail();
-    if (!decoder->convert) {
+    const auto inputFormat = AVSampleFormat(frame->format);
+    if (!decoder->convert || decoder->inputFormat != inputFormat ||
+        av_channel_layout_compare(&decoder->inputLayout, &frame->ch_layout) != 0) {
+        swr_free(&decoder->convert);
+        av_channel_layout_uninit(&decoder->inputLayout);
+        if (av_channel_layout_copy(&decoder->inputLayout, &frame->ch_layout) < 0)
+            return fail();
+        decoder->inputFormat = inputFormat;
         AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
         if (swr_alloc_set_opts2(&decoder->convert, &stereo, AV_SAMPLE_FMT_FLT, decoder->rate,
                                 &frame->ch_layout, AVSampleFormat(frame->format), decoder->rate, 0,
@@ -162,6 +172,8 @@ void cirrus_eac3_reset(CirrusEac3* decoder)
         return;
     avcodec_flush_buffers(decoder->codec);
     swr_free(&decoder->convert);
+    av_channel_layout_uninit(&decoder->inputLayout);
+    decoder->inputFormat = AV_SAMPLE_FMT_NONE;
     av_frame_unref(decoder->frame);
     av_packet_unref(decoder->packet);
 }
