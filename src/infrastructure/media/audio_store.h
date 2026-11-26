@@ -77,14 +77,15 @@ class AudioStream final : public ByteSource
 // Files are keyed by the source's identity: a provider md5 plus size (content-addressed,
 // checked against the finished file) or a stream name (stream-addressed, trusted once it
 // decodes). A source without either streams through a temporary file that is never kept.
-// Owner-thread object; AudioStream reads are thread-safe. Linux only for now: elsewhere, or
-// when the root fails the private-path checks, nothing is kept (every file is temporary).
+// Owner-thread object; AudioStream reads are thread-safe. Windows, Linux and macOS use
+// the same store with storage/private_files.h native permission checks. An absent or unsafe
+// root cannot retain audio; non-persistent streams use temporary files.
 class AudioStore : public QObject
 {
     Q_OBJECT
   public:
     struct Options {
-        QString root; // ~/.cache/Cirrus/audio, 0700
+        QString root; // Native cache location + /Cirrus/audio; private mode/ACL
         qint64 capacityBytes = 2LL * 1024 * 1024 * 1024;
         // As much as a stream may say (StreamResolver): a podcast program of hours is ~700 MB.
         qint64 maximumFileBytes = 1024LL * 1024 * 1024;
