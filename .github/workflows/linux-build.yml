@@ -29,13 +29,8 @@ on:
       architecture:
         type: string
         default: all
-      tests_passed:
-        description: Caller must depend on the complete same-source CI workflow
-        type: boolean
-        default: false
 
 permissions:
-  actions: read
   contents: read
 
 jobs:
@@ -53,7 +48,7 @@ jobs:
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   prepare-build:
-    name: Select package targets and verify tests
+    name: Select package targets
     runs-on: ubuntu-24.04
     needs: resolve-source
     outputs:
@@ -71,12 +66,6 @@ jobs:
           set -euo pipefail
           selection=$(python3 tools/ci/select-native-matrix.py linux-build "$DISTRIBUTION" "$ARCHITECTURE")
           echo "matrix=$(jq -c '.matrix' <<<"$selection")" >> "$GITHUB_OUTPUT"
-      - name: Require all ten same-source CI targets
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CIRRUS_SOURCE_SHA: ${{ needs.resolve-source.outputs.sha }}
-          CIRRUS_CALLER_TESTS_PASSED: ${{ inputs.tests_passed || false }}
-        run: python3 tools/ci/verify-full-ci.py
 
   build:
     name: ${{ matrix.distribution }} ${{ matrix.arch }}

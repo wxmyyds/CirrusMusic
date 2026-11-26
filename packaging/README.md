@@ -24,14 +24,14 @@ Linux 通用编译、部署、桌面资源和依赖安装直接放在 `packaging
 | 工作流 | 入口 | 职责 |
 | --- | --- | --- |
 | `ci.yml` | 所有分支 push、手动、可复用调用；PR 不触发 | Arch、Debian 13、Fedora 44 各 x86_64/ARM64，Windows、macOS 各 x86_64/ARM64，共十个原生测试目标；手动运行可选 `target` 和 `architecture`，push 仍测试完整矩阵 |
-| `linux-build.yml` | 手动、可复用调用 | Arch、Debian、Fedora × x86_64、ARM64，按 `distribution` 和 `architecture` 选择目标；手动构建强制要求同一完整源码 SHA 的十目标 CI 全部成功；Release 由已依赖成功 CI 的调用方触发 |
+| `linux-build.yml` | 手动、可复用调用 | Arch、Debian、Fedora × x86_64、ARM64，按 `distribution` 和 `architecture` 选择目标；不查询 CI 状态。Release 通过 `needs: [check, ci]` 保证测试成功后再启动构建 |
 | `windows-build.yml` | 手动、可复用调用 | 按 `architecture` 选择 x86_64、ARM64 两个原生构建目标，各输出 ZIP 和安装器 |
 | `macos-build.yml` | 手动、可复用调用 | 按 `architecture` 选择 ARM64、x86_64 两个原生构建目标，各输出 DMG |
 | `release.yml` | 手动选择 `ref`、`tag`、`publish` | 检查版本、Tag 和 Changelog 并固定源码提交 → CI 测试 → 并行构建三平台十个原生目标 → 汇合校验完整产物清单和 SHA-256 → 发布 |
 
 CI 分为 `linux-tests`、`windows-tests`、`macos-tests` 三个独立 job 定义，分别通过经校验的动态矩阵展开为 6、2、2 个原生任务。手动运行 `ci.yml` 时可用 `target` 选择 `all`、`linux`、`arch`、`debian`、`fedora`、`windows` 或 `macos`，并用 `architecture` 选择 `all`、`x86_64` 或 `arm64`；例如 `target=arch`、`architecture=x86_64` 只申请 Arch x86_64 原生 runner。分支 push 不受输入筛选，始终运行全部十个目标。
 
-生产构建继续按需手动运行，不随每次 push 自动启动。Linux 构建工作流在申请构建 runner 前，必须找到同一源码完整 SHA 对应的成功 CI 运行，并确认十个原生测试目标全部成功；Release 可复用此构建工作流，但其 `linux` job 已 `needs: [check, ci]` 并传入已通过测试的条件。Linux 手动参数为 `distribution=all|arch|debian|fedora` 与 `architecture=all|x86_64|arm64`；Windows/macOS 工作流各以 `architecture=all|x86_64|arm64` 筛选。输入值经共享脚本校验，非法组合直接失败，不会静默生成空矩阵。
+生产构建继续按需手动运行，不随每次 push 自动启动。独立 Linux 构建仅校验发行版/架构选择并固定要构建的完整源码 SHA，不查询 CI 状态；Release 仍由自身工作流依赖关系保证 CI 全部通过后才启动构建。Linux 手动参数为 `distribution=all|arch|debian|fedora` 与 `architecture=all|x86_64|arm64`；Windows/macOS 工作流各以 `architecture=all|x86_64|arm64` 筛选。输入值经共享脚本校验，非法组合直接失败，不会静默生成空矩阵。
 
 例如，在 Actions 手动选择工作流时选择相同字段；也可用 GitHub CLI：
 

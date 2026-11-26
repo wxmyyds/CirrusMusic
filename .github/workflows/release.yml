@@ -93,7 +93,6 @@ jobs:
       ref: ${{ needs.check.outputs.commit }}
       distribution: all
       architecture: all
-      tests_passed: true
 
   windows:
     name: Windows packages
