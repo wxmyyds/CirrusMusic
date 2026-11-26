@@ -23,8 +23,8 @@ Linux 通用编译、部署、桌面资源和依赖安装直接放在 `packaging
 
 | 工作流 | 入口 | 职责 |
 | --- | --- | --- |
-| `ci.yml` | master push、PR、手动、可复用调用 | Debian 13、Fedora 44 各 x86_64/ARM64，以及 Windows x86_64、macOS ARM64 六个测试 job；编译测试所需目标、QML lint、CTest，仅上传测试报告 |
-| `linux-build.yml` | 手动、可复用调用 | Arch、Debian、Fedora × x86_64、ARM64，矩阵展开为六个独立构建 job |
+| `ci.yml` | 所有分支 push、手动、可复用调用；PR 不触发 | Arch、Debian 13、Fedora 44 各 x86_64/ARM64，Windows、macOS 各 x86_64/ARM64，共十个原生测试 job；编译测试所需目标、QML lint、CTest、依赖审计，仅上传测试报告 |
+| `linux-build.yml` | 手动、可复用调用 | Arch、Debian、Fedora × x86_64、ARM64，矩阵展开为六个独立构建 job，仅上传安装包及对应库源码 |
 | `windows-build.yml` | 手动、可复用调用 | x86_64、ARM64 两个独立构建 job，各输出 ZIP 和安装器 |
 | `macos-build.yml` | 手动、可复用调用 | ARM64、x86_64 两个独立构建 job，各输出 DMG |
 | `release.yml` | 手动选择 `ref`、`tag`、`publish` | 检查版本、Tag 和 Changelog 并固定源码提交 → CI 测试 → 并行构建三平台十个原生目标 → 汇合校验完整产物清单和 SHA-256 → 发布 |
@@ -71,19 +71,19 @@ Arch ARM 镜像不是 Arch Linux ARM 官方发布镜像。当前固定 `base-dev
 - **Debian**：装到 `/opt/cirrus`，Qt、QtKeychain、FFmpeg 使用官方系统库；桌面集成和文档放到 `/usr/share`，`/usr/bin/cirrus` 链接到主程序。仅在独立应用构建工作树应用 `packaging/linux/debian/patches/0001-cirrus-debian-qt68.patch`：以现有 `mkdir(0700)` 安全原语按序创建缺失父目录，用旧版行过滤通知、字节/帧换算、列表输入兼容组件及独立音频事件线程的 `QIODevice` 推送接口适配 Qt 6.8。音频只在后端可写容量内生成 PCM，至多保存一个固定输出块的短写余量并计入延迟，关闭使用 `reset()` 避免暂停流 drain 阻塞；列表保留鼠标不拖动、触摸和滚轮可滚动的策略。主线最低 Qt 要求与其他平台实现不变；当 Debian 系统 Qt 达到这些 API 所需的 6.11 时，构建明确失败并要求移除补丁及接入，不静默切换路径。CI 对两个原生架构运行补丁后的完整测试、QML lint、音频短写/独立消费、私有虚拟 PulseAudio 暂停/关闭/重开及离屏列表输入测试。虚拟音频服务仅为测试构建依赖，不加入应用运行依赖。`dpkg-shlibdeps` 生成共享库和必要 Qt 私有 ABI 依赖；目标为 Debian 13。
 - **Fedora**：同一应用安装布局，使用 Fedora 官方 `ffmpeg-free` 开发库，不启用 RPM Fusion。仅在 Fedora 构建的独立工作树中应用 `packaging/linux/fedora/patches/0001-cirrus-fedora-eac3-backend.patch`，为 Cirrus 接入内置 E-AC-3 解码库；FFmpeg 上游源码不打补丁，非 Fedora 构建不应用这份补丁。由 `rpmbuild` 生成 RPM；保留系统库的自动 ABI 依赖，排除随包私有 SONAME 依赖，并禁止把私有库发布为全局 Provides。
 
-所有 Linux 目标通过系统 pkg-config 查找 FFmpeg，要求 5.1 起的新声道布局 API；不从 Qt SDK 或私有依赖前缀查找。依赖准备阶段核对四个开发模块的系统路径和包所有权，并用发行版 FFmpeg 实际解码 MP3、FLAC、MP4/AAC、fragmented MP4 和 MP4/FLAC 样本。
+所有 Linux 目标通过系统 pkg-config 查找 FFmpeg，要求 5.1 起的新声道布局 API；不从 Qt SDK 或私有依赖前缀查找。CI 核对四个开发模块的系统路径和包所有权，并用发行版 FFmpeg 实际解码 MP3、FLAC、MP4/AAC、fragmented MP4 和 MP4/FLAC 样本；这些样本测试不在构建工作流运行。
 
-Linux AudioEngine 集成测试与 Debian 音频后端回归共用一个私有 PulseAudio/null-sink 夹具，在无物理声卡的容器中执行播放、seek、暂停、衔接和停止用例。音频服务、会话 D-Bus 与运行目录均由测试进程独占，显式选择 PulseAudio 后端并验证唯一的虚拟输出；依赖或设备缺失直接失败。该服务仅作为构建/测试工具安装，不进入应用运行依赖。
+Linux AudioEngine 集成测试与 Debian 音频后端回归共用一个私有 PulseAudio/null-sink 夹具，在无物理声卡的容器中执行播放、seek、暂停、衔接和停止用例。音频服务、会话 D-Bus 与运行目录均由测试进程独占，显式选择 PulseAudio 后端并验证唯一的虚拟输出；依赖或设备缺失直接失败。测试所需的 PulseAudio、会话 D-Bus 及 QML/离屏模块由 CI 步骤显式准备；生产构建不再显式安装这些测试服务，应用运行依赖也不增加测试服务。
 
-公共播放代码、B 站 Dolby 请求与原有格式策略保持不变。Fedora 补丁按实际 codec ID 将 E-AC-3 交给 `libcirrus_eac3.so.1`，其余编码仍走原有系统 FFmpeg 路径，不进行失败重试或音源切换。该私有库由未修改的 FFmpeg 9.0.2 静态对象组成，配置仅启用 E-AC-3 及其上游强制的 AC-3/解析器依赖；应用入口只接受 E-AC-3，不把 AC-3 转给它。库以隐藏符号、版本脚本及本地绑定隔离内部 FFmpeg，边界仅传原始 packet 字节、时间戳及立体声 PCM，不交换 FFmpeg 对象。两个 Fedora 原生构建均运行应用补丁后的音频测试，正向验证 E-AC-3、seek/reset 和实际后端选择，同时核验普通 AAC/FLAC 仍走系统库。
+公共播放代码、B 站 Dolby 请求与原有格式策略保持不变。Fedora 补丁按实际 codec ID 将 E-AC-3 交给 `libcirrus_eac3.so.1`，其余编码仍走原有系统 FFmpeg 路径，不进行失败重试或音源切换。该私有库由未修改的 FFmpeg 9.0.2 静态对象组成，配置仅启用 E-AC-3 及其上游强制的 AC-3/解析器依赖；应用入口只接受 E-AC-3，不把 AC-3 转给它。库以隐藏符号、版本脚本及本地绑定隔离内部 FFmpeg，边界仅传原始 packet 字节、时间戳及立体声 PCM，不交换 FFmpeg 对象。CI 的两个 Fedora 原生测试 job 均运行应用补丁后的音频测试，正向验证 E-AC-3、seek/reset 和实际后端选择，同时核验普通 AAC/FLAC 仍走系统库。
 
-Debian/Fedora 不再下载或部署 Qt SDK、自编 QtKeychain、ICU、QML 模块及 Qt 插件。依赖准备核对系统 Qt/QtKeychain 的真实文件和发行版包所有权；打包检查包内没有这些共享库、插件/QML 目录、`qt.conf` 或独立 FFmpeg DSO。QML 导入由系统 `qmlimportscanner` 扫描，并按 Qt 自身 `qmldir` 的可选声明处理平台样式；源码显式导入和模块必需导入缺失仍会失败。OpenSSL TLS、SQLite、WebP/SVG、XCB/Wayland 和多媒体插件按文件所有权转换为原生运行包依赖，补足共享库扫描看不到的动态加载。各 Debian/Fedora 原生 job 还以独立 artifact 保存绑定完整源码提交的系统 Qt 版本、扫描器路径、QML/插件文件与原生包所有权证据，保留 7 天。ICU 由系统 Qt 依赖管理，Cirrus 不手写 ICU 版本；保留原生工具生成的必要 ABI 约束。四个 FFmpeg ELF 导入必须解析到系统库且进入 DEB/RPM 元数据。Fedora 仍单独检查唯一私有 E-AC-3 库的 C ABI、FFmpeg 符号隔离、独立性及 TEXTREL。保留全部 ELF 架构、缺库、构建目录泄漏、桌面文件与 AppStream 校验，只 strip 尚未去符号的文件。
+Debian/Fedora 不再下载或部署 Qt SDK、自编 QtKeychain、ICU、QML 模块及 Qt 插件。依赖准备核对系统 Qt/QtKeychain 的真实文件和发行版包所有权；打包检查包内没有这些共享库、插件/QML 目录、`qt.conf` 或独立 FFmpeg DSO。QML 导入由系统 `qmlimportscanner` 扫描，并按 Qt 自身 `qmldir` 的可选声明处理平台样式；源码显式导入和模块必需导入缺失仍会失败。OpenSSL TLS、SQLite、WebP/SVG、XCB/Wayland 和多媒体插件按文件所有权转换为原生运行包依赖，补足共享库扫描看不到的动态加载。CI 的六个 Linux 原生 job 将绑定完整源码提交的系统 Qt 版本、扫描器路径、QML/插件文件与原生包所有权证据合并到各自的 `test-results-Linux-*` 测试报告中，保留 3 天，不另建审计 artifact。生产构建复用同一依赖解析器生成 DEB/RPM 所需包名，不生成审计 JSON 或上传测试报告。ICU 由系统 Qt 依赖管理，Cirrus 不手写 ICU 版本；保留原生工具生成的必要 ABI 约束。四个 FFmpeg ELF 导入必须解析到系统库且进入 DEB/RPM 元数据。Fedora 仍单独检查唯一私有 E-AC-3 库的 C ABI、FFmpeg 符号隔离、独立性及 TEXTREL。保留全部 ELF 架构、缺库、构建目录泄漏、桌面文件与 AppStream 校验，只 strip 尚未去符号的文件。
 
 Arch 只保留 `packaging/linux/arch/` 的当前源码构建链路，旧上游 AUR 配方已移除。`packaging/linux/arch/cpkg/` 负责将同一份二进制产物接入 `arch-cloud-pkgs` 的统一 OCI 发布器，不在包仓库重新构建 Cirrus。
 
 ## 共享依赖与缓存
 
-`.github/actions/setup-qt` 仅为 Windows/macOS 从 `packaging/versions.sh` 读取 Qt 版本并安装 qtmultimedia、qtshadertools、qtimageformats 原生 SDK。全部 Linux 目标使用系统 Qt/QtKeychain；Debian/Fedora 测试与生产构建共用同一份应用补丁准备脚本。容器中的完整测试由非 root 用户运行，测试构建目录位于该用户 home，避免 GitHub 宿主挂载目录的异主祖先污染缓存安全测试；应用的所有者、权限和链接校验不变。
+`.github/actions/setup-qt` 仅为 Windows/macOS 从 `packaging/versions.sh` 读取 Qt 版本并安装 qtmultimedia、qtshadertools、qtimageformats 原生 SDK。全部 Linux 目标使用系统 Qt/QtKeychain；Linux CI 共用原生工作树准备脚本：Arch 使用未打补丁的源码，Debian/Fedora 应用各自的发行版补丁；生产构建保留同一份补丁准备入口。容器中的完整测试由非 root 用户运行，测试构建目录位于该用户 home，避免 GitHub 宿主挂载目录的异主祖先污染缓存安全测试；应用的所有者、权限和链接校验不变。
 
 | 库 | 随包目标的来源 |
 | --- | --- |

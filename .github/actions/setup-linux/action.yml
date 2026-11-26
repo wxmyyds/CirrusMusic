@@ -86,10 +86,6 @@ runs:
         path: ${{ env.CIRRUS_EAC3_FFMPEG_PREFIX }}
         key: ${{ steps.eac3.outputs.cache-primary-key }}
 
-    - name: Verify distribution FFmpeg and baseline audio formats
-      shell: bash
-      run: packaging/linux/verify-system-ffmpeg.sh
-
     - name: Export common build environment
       shell: bash
       run: |

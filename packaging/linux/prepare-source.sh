@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Apply application-only distro patches in a detached build worktree.
+# Prepare detached native source; apply the required application-only distro patches.
 set -euo pipefail
 [[ ${GITHUB_ACTIONS:-} == true ]] || { echo '该操作需要通过 GitHub Actions 执行。' >&2; exit 1; }
-distribution=${1:?usage: prepare-source.sh <debian|fedora> <x86_64|arm64>}
+distribution=${1:?usage: prepare-source.sh <arch|debian|fedora> <x86_64|arm64>}
 arch=${2:?missing architecture}
-case "$distribution" in debian|fedora) ;; *) exit 2 ;; esac
+case "$distribution" in arch|debian|fedora) ;; *) exit 2 ;; esac
 case "$arch" in x86_64|arm64) ;; *) exit 2 ;; esac
 original=$(cd "$(dirname "$0")/../.." && pwd)
 if [[ $distribution == debian ]]; then
@@ -23,7 +23,11 @@ mkdir -p "$original/build"
 git -C "$original" worktree add --detach "$patched" HEAD >&2
 shopt -s nullglob
 patches=("$original/packaging/linux/$distribution/patches/"*.patch)
-((${#patches[@]} > 0))
+if [[ $distribution == arch ]]; then
+    ((${#patches[@]} == 0))
+else
+    ((${#patches[@]} > 0))
+fi
 for patch in "${patches[@]}"; do
     sha256sum "$patch" >&2
     git -C "$patched" apply --check --whitespace=error-all "$patch"

@@ -18,9 +18,11 @@ def main():
     if os.environ.get("GITHUB_ACTIONS") != "true":
         raise SystemExit("该操作需要通过 GitHub Actions 执行。")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("distribution", choices=("debian", "fedora"))
+    parser.add_argument("distribution", choices=("arch", "debian", "fedora"))
     parser.add_argument("source", type=Path)
     parser.add_argument("build", type=Path)
+    parser.add_argument("--evidence", type=Path,
+                        help="Write the source-bound runtime audit report for CI")
     args = parser.parse_args()
     packages = set()
     evidence = {}
@@ -32,8 +34,10 @@ def main():
         if args.distribution == "debian":
             lines = output("dpkg-query", "--search", str(file)).splitlines()
             names = {line.rsplit(": ", 1)[0].split(":", 1)[0] for line in lines}
-        else:
+        elif args.distribution == "fedora":
             names = set(output("rpm", "--query", "--file", str(file), "--qf", "%{NAME}\n").splitlines())
+        else:
+            names = set(output("pacman", "--query", "--owns", "--quiet", str(file)).splitlines())
         if len(names) != 1:
             raise SystemExit(f"Ambiguous Qt runtime ownership: {file}: {names}")
         name = names.pop()
@@ -106,17 +110,18 @@ def main():
             owner(file)
     if not packages:
         raise SystemExit("No native Qt runtime dependencies found")
-    source_sha = output("git", "-C", str(args.source), "rev-parse", "HEAD")
-    if not re.fullmatch(r"[0-9a-f]{40}", source_sha):
-        raise SystemExit(f"Invalid source commit in Qt ownership evidence: {source_sha}")
-    (args.build / "system-qt-runtime-evidence.json").write_text(
-        json.dumps({"source_sha": source_sha, "distribution": args.distribution,
-                    "native_machine": os.uname().machine,
-                    "qt_version": output("pkg-config", "--modversion", "Qt6Core"),
-                    "qml_scanner": str(scanner), "qml_scanner_configured": configured_scanner,
-                    "qml_root": str(qml),
-                    "plugins_root": str(plugins), "imports": imports, "files": evidence,
-                    "unavailable_optional_imports": unavailable_optional}, indent=2) + "\n")
+    if args.evidence is not None:
+        source_sha = output("git", "-C", str(args.source), "rev-parse", "HEAD")
+        if not re.fullmatch(r"[0-9a-f]{40}", source_sha):
+            raise SystemExit(f"Invalid source commit in Qt ownership evidence: {source_sha}")
+        args.evidence.write_text(
+            json.dumps({"source_sha": source_sha, "distribution": args.distribution,
+                        "native_machine": os.uname().machine,
+                        "qt_version": output("pkg-config", "--modversion", "Qt6Core"),
+                        "qml_scanner": str(scanner), "qml_scanner_configured": configured_scanner,
+                        "qml_root": str(qml),
+                        "plugins_root": str(plugins), "imports": imports, "files": evidence,
+                        "unavailable_optional_imports": unavailable_optional}, indent=2) + "\n")
     (args.build / "system-qt-runtime-packages.txt").write_text("\n".join(sorted(packages)) + "\n")
     print("\n".join(sorted(packages)))
 

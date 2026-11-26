@@ -115,19 +115,6 @@ jobs:
           path: ${{ env.CCACHE_DIR }}
           key: ${{ env.CIRRUS_CCACHE_KEY }}
 
-      - name: Upload system Qt ownership evidence
-        if: matrix.distribution == 'debian' || matrix.distribution == 'fedora'
-        uses: actions/upload-artifact@v7
-        with:
-          name: cirrus-system-qt-${{ matrix.distribution }}-${{ matrix.arch }}
-          retention-days: 7
-          overwrite: ${{ github.run_attempt > 1 }}
-          path: |
-            build/${{ matrix.distribution }}-source-${{ matrix.arch }}/build/package-${{ matrix.distribution }}-${{ matrix.arch }}/system-qt-runtime-evidence.json
-            build/${{ matrix.distribution }}-source-${{ matrix.arch }}/build/package-${{ matrix.distribution }}-${{ matrix.arch }}/system-qt-runtime-packages.txt
-            build/${{ matrix.distribution }}-source-${{ matrix.arch }}/build/package-${{ matrix.distribution }}-${{ matrix.arch }}/cirrus-qmlimportscanner.txt
-          if-no-files-found: error
-
       - name: Upload native package
         uses: actions/upload-artifact@v7
         with:

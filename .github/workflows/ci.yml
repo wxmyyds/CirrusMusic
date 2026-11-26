@@ -3,8 +3,7 @@ name: CI
 
 on:
   push:
-    branches: [master]
-  pull_request:
+    branches: ['**']
   workflow_dispatch:
     inputs:
       ref:
@@ -31,6 +30,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - distribution: arch
+            arch: x86_64
+            runner: ubuntu-24.04
+            image: archlinux:base-devel
+          - distribution: arch
+            arch: arm64
+            runner: ubuntu-24.04-arm
+            # Same pinned native ARM64 image as the production Linux build.
+            image: menci/archlinuxarm@sha256:89dd0b1da3cab11ef9a0f12481794cf31fd2cb7377ced80aa2041d3a5cae757d
           - distribution: debian
             arch: x86_64
             runner: ubuntu-24.04
@@ -65,6 +73,7 @@ jobs:
         run: |
           set -euo pipefail
           case "$DISTRIBUTION" in
+            arch) pacman -Syu --noconfirm --needed git ca-certificates tar gzip ;;
             debian)
               apt-get update
               DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git ca-certificates tar gzip
@@ -84,7 +93,20 @@ jobs:
           arch: ${{ matrix.arch }}
           cache-scope: tests
 
-      - name: Prepare patched source as unprivileged user
+      - name: Install native test services
+        run: |
+          set -euo pipefail
+          case "$DISTRIBUTION" in
+            arch) pacman -S --noconfirm --needed pulseaudio dbus ;;
+            debian)
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+                pulseaudio dbus qt6-qpa-plugins qml6-module-qttest
+              ;;
+            fedora) dnf install -y pulseaudio dbus-daemon ;;
+            *) exit 2 ;;
+          esac
+
+      - name: Prepare native test source as unprivileged user
         run: |
           set -euo pipefail
           useradd --create-home cirrus-builder
@@ -94,6 +116,9 @@ jobs:
           # Private-cache tests require root/current-user ownership on every ancestor.
           # GitHub's /__w bind mount belongs to the host runner's different UID.
           echo "CIRRUS_TEST_BUILD_DIR=/home/cirrus-builder/build/tests" >> "$GITHUB_ENV"
+
+      - name: Verify system FFmpeg audio fixtures
+        run: runuser -u cirrus-builder -- packaging/linux/verify-system-ffmpeg.sh
 
       - name: Configure native test build
         run: |
@@ -111,6 +136,12 @@ jobs:
 
       - name: QML lint
         run: runuser -u cirrus-builder -- cmake --build "$CIRRUS_TEST_BUILD_DIR" --target all_qmllint
+
+      - name: Audit system Qt runtime dependencies
+        run: |
+          runuser -u cirrus-builder -- python3 "$CIRRUS_SOURCE_DIR/packaging/linux/qt-runtime-dependencies.py" \
+            "$DISTRIBUTION" "$CIRRUS_SOURCE_DIR" "$CIRRUS_TEST_BUILD_DIR" \
+            --evidence "$CIRRUS_TEST_BUILD_DIR/system-qt-runtime-evidence.json"
 
       - name: Run all native tests
         run: |
@@ -136,6 +167,9 @@ jobs:
             ${{ env.CIRRUS_TEST_BUILD_DIR }}/junit.xml
             ${{ env.CIRRUS_TEST_BUILD_DIR }}/Testing/Temporary/LastTest.log
             ${{ env.CIRRUS_TEST_BUILD_DIR }}/Testing/Temporary/LastTestsFailed.log
+            ${{ env.CIRRUS_TEST_BUILD_DIR }}/system-qt-runtime-evidence.json
+            ${{ env.CIRRUS_TEST_BUILD_DIR }}/system-qt-runtime-packages.txt
+            ${{ env.CIRRUS_TEST_BUILD_DIR }}/cirrus-qmlimportscanner.txt
           if-no-files-found: warn
 
   tests:
@@ -147,9 +181,15 @@ jobs:
           - platform: Windows
             runner: windows-2022
             arch: x86_64
+          - platform: Windows
+            runner: windows-11-arm
+            arch: arm64
           - platform: macOS
             runner: macos-15
             arch: arm64
+          - platform: macOS
+            runner: macos-15-intel
+            arch: x86_64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     defaults:
