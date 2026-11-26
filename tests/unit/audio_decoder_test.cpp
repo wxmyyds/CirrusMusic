@@ -73,8 +73,9 @@ class AudioDecoderTest : public QObject
     void decodesTheWholeFile_data()
     {
         QTest::addColumn<QString>("format");
-        QTest::newRow("mp3") << QStringLiteral("mp3");
-        QTest::newRow("flac") << QStringLiteral("flac");
+        QTest::addColumn<qint64>("encodedFrames");
+        QTest::newRow("mp3") << QStringLiteral("mp3") << qint64{21 * 1152};
+        QTest::newRow("flac") << QStringLiteral("flac") << ToneFrames;
     }
 
     // MP4/fMP4 audio: AAC (moov after mdat and fragmented) and E-AC-3, the Bilibili CDN's
@@ -112,6 +113,7 @@ class AudioDecoderTest : public QObject
     void decodesTheWholeFile()
     {
         QFETCH(QString, format);
+        QFETCH(qint64, encodedFrames);
         test::RangeServer server{fixture(QStringLiteral("tone.") + format)};
         QVERIFY(!server.body.isEmpty());
         auto s = store(server);
@@ -126,7 +128,19 @@ class AudioDecoderTest : public QObject
         });
         QVERIFY(opened);
         QCOMPARE(rate, 44100);
-        QVERIFY(std::abs(duration - 500) <= 30);
+        // FFmpeg 6.1 includes MP3 encoder delay/padding in the stream duration;
+        // newer demuxers subtract it. Check the two exact fixture-derived values,
+        // independently of the decoded, gapless sample count below.
+        const qint64 pcmMs = ToneFrames * 1000 / rate;
+        const qint64 encodedMs = (encodedFrames * 1000 + rate / 2) / rate;
+        qInfo() << "Stream duration (ms):" << duration << "PCM:" << pcmMs
+                << "encoded:" << encodedMs;
+        QVERIFY2(
+            duration == pcmMs || duration == encodedMs,
+            qPrintable(QStringLiteral("Unexpected stream duration: %1 ms; expected %2 or %3 ms")
+                           .arg(duration)
+                           .arg(pcmMs)
+                           .arg(encodedMs)));
         // Exact: the MP3 encoder's delay and padding are trimmed (gapless).
         QCOMPARE(frames, ToneFrames);
     }
