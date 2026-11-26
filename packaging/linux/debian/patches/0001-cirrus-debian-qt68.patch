@@ -825,7 +825,6 @@ new file mode 100644
 +#include <QtQml/QQmlEngine>
 +#include <QtQml/qqml.h>
 +#include <QtQuick/QQuickView>
-+#include <QtQuick/QSGRendererInterface>
 +#include <QtTest/QTest>
 +
 +#include <memory>
@@ -862,7 +861,7 @@ new file mode 100644
 +        m_view = std::make_unique<QQuickView>();
 +        m_view->setResizeMode(QQuickView::SizeViewToRootObject);
 +        auto* component = new QQmlComponent(m_view->engine(), m_view.get());
-+        const QUrl url(QStringLiteral("inline:qt68_touch_list_view_test.qml"));
++        const QUrl url(QStringLiteral("qrc:/qt68_touch_list_view_test.qml"));
 +        component->setData(R"QML(
 +import QtQuick
 +import Cirrus.ShimTest 1.0
@@ -893,6 +892,7 @@ new file mode 100644
 +}
 +)QML",
 +                           url);
++        QTRY_VERIFY_WITH_TIMEOUT(component->status() != QQmlComponent::Loading, 5000);
 +        QVERIFY2(component->isReady(), qPrintable(component->errorString()));
 +        QObject* root = component->create();
 +        QVERIFY2(root, qPrintable(component->errorString()));
@@ -908,6 +908,7 @@ new file mode 100644
 +        QVERIFY(m_list->acceptTouchEvents());
 +        // Start away from both boundaries, so clamping cannot hide a drag.
 +        m_list->setContentY(400);
++        m_list->forceLayout();
 +        QCOMPARE(m_list->contentY(), qreal(400));
 +        QVERIFY(QGuiApplication::styleHints()->startDragDistance() < 60);
 +    }
@@ -981,7 +982,6 @@ new file mode 100644
 +    qputenv("QT_QUICK_BACKEND", "software");
 +    qputenv("QSG_RENDER_LOOP", "basic");
 +    QGuiApplication app(argc, argv);
-+    QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);
 +    // Deterministic application preferences, independent of host configuration.
 +    app.styleHints()->setStartDragDistance(10);
 +    app.styleHints()->setWheelScrollLines(3);
