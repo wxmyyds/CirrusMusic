@@ -43,6 +43,7 @@ def main():
         evidence[str(file)] = name
 
     scanner = Path((args.build / "cirrus-qmlimportscanner.txt").read_text().strip())
+    configured_scanner = str(scanner)
     scanner = scanner.resolve(strict=True)
     if not scanner.is_relative_to("/usr"):
         raise SystemExit(f"Non-system QML scanner: {scanner}")
@@ -105,8 +106,16 @@ def main():
             owner(file)
     if not packages:
         raise SystemExit("No native Qt runtime dependencies found")
+    source_sha = output("git", "-C", str(args.source), "rev-parse", "HEAD")
+    if not re.fullmatch(r"[0-9a-f]{40}", source_sha):
+        raise SystemExit(f"Invalid source commit in Qt ownership evidence: {source_sha}")
     (args.build / "system-qt-runtime-evidence.json").write_text(
-        json.dumps({"imports": imports, "files": evidence,
+        json.dumps({"source_sha": source_sha, "distribution": args.distribution,
+                    "native_machine": os.uname().machine,
+                    "qt_version": output("pkg-config", "--modversion", "Qt6Core"),
+                    "qml_scanner": str(scanner), "qml_scanner_configured": configured_scanner,
+                    "qml_root": str(qml),
+                    "plugins_root": str(plugins), "imports": imports, "files": evidence,
                     "unavailable_optional_imports": unavailable_optional}, indent=2) + "\n")
     (args.build / "system-qt-runtime-packages.txt").write_text("\n".join(sorted(packages)) + "\n")
     print("\n".join(sorted(packages)))
