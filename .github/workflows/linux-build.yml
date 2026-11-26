@@ -8,48 +8,82 @@ on:
         description: Source ref to build (empty uses the selected workflow commit)
         type: string
         default: ''
+      distribution:
+        description: Linux distribution packages to build
+        type: choice
+        options: [all, arch, debian, fedora]
+        default: all
+      architecture:
+        description: Native package architecture to build
+        type: choice
+        options: [all, x86_64, arm64]
+        default: all
   workflow_call:
     inputs:
       ref:
         type: string
         default: ''
+      distribution:
+        type: string
+        default: all
+      architecture:
+        type: string
+        default: all
+      tests_passed:
+        description: Caller must depend on the complete same-source CI workflow
+        type: boolean
+        default: false
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
+  resolve-source:
+    name: Resolve exact package source
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  prepare-build:
+    name: Select package targets and verify tests
+    runs-on: ubuntu-24.04
+    needs: resolve-source
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - id: select
+        name: Validate and select native package matrix
+        env:
+          DISTRIBUTION: ${{ inputs.distribution || 'all' }}
+          ARCHITECTURE: ${{ inputs.architecture || 'all' }}
+        run: |
+          set -euo pipefail
+          selection=$(python3 tools/ci/select-native-matrix.py linux-build "$DISTRIBUTION" "$ARCHITECTURE")
+          echo "matrix=$(jq -c '.matrix' <<<"$selection")" >> "$GITHUB_OUTPUT"
+      - name: Require all ten same-source CI targets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CIRRUS_SOURCE_SHA: ${{ needs.resolve-source.outputs.sha }}
+          CIRRUS_CALLER_TESTS_PASSED: ${{ inputs.tests_passed || false }}
+        run: python3 tools/ci/verify-full-ci.py
+
   build:
     name: ${{ matrix.distribution }} ${{ matrix.arch }}
+    needs: [resolve-source, prepare-build]
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - distribution: arch
-            arch: x86_64
-            runner: ubuntu-24.04
-            image: archlinux:base-devel
-          - distribution: arch
-            arch: arm64
-            runner: ubuntu-24.04-arm
-            # Menci/docker-archlinuxarm, base-devel-20261124.45339717499.
-            # Community-maintained Arch Linux ARM; pinned ARM64 manifest.
-            image: menci/archlinuxarm@sha256:89dd0b1da3cab11ef9a0f12481794cf31fd2cb7377ced80aa2041d3a5cae757d
-          - distribution: debian
-            arch: x86_64
-            runner: ubuntu-24.04
-            image: debian:13
-          - distribution: debian
-            arch: arm64
-            runner: ubuntu-24.04-arm
-            image: debian:13
-          - distribution: fedora
-            arch: x86_64
-            runner: ubuntu-24.04
-            image: registry.fedoraproject.org/fedora:44
-          - distribution: fedora
-            arch: arm64
-            runner: ubuntu-24.04-arm
-            image: registry.fedoraproject.org/fedora:44
+      matrix: ${{ fromJSON(needs.prepare-build.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
     container:
       image: ${{ matrix.image }}
@@ -79,7 +113,7 @@ jobs:
 
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.ref || github.sha }}
+          ref: ${{ needs.resolve-source.outputs.sha }}
           persist-credentials: false
 
       - uses: ./.github/actions/setup-linux
@@ -100,7 +134,7 @@ jobs:
           fi
 
       - name: Collect corresponding bundled-library sources once
-        if: matrix.distribution == 'debian' && matrix.arch == 'x86_64'
+        if: matrix.collect_sources == true
         run: |
           set -euo pipefail
           version=$(sed -nE 's/^project\(CirrusMusic VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)

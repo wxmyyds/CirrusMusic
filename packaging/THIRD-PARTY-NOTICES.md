@@ -21,7 +21,6 @@ in the package's `lib/` or `lib64/`, next to `Cirrus.exe`, or in the macOS Frame
 | OpenSSL | 3 | Apache-2.0 (`licenses/Apache-2.0.txt`) | Cryptography for the service protocol |
 | zlib | 1.x | Zlib (below) | Decompression |
 | Zstandard (zstd) | 1.5 | BSD-3-Clause (below) | Compressing the listening logs |
-| MiSans (Xiaomi) | 4.009 | MiSans font license (`licenses/MiSans-LICENSE.txt`) | Interface font, unmodified |
 | Material Symbols (Google) | 2.973 | Apache-2.0 | Icons; subset to the glyphs Cirrus uses |
 | material-color-utilities (Google) | `5b3618b` | Apache-2.0 | Colour schemes |
 | m3shapes | `8a6fe89` | Apache-2.0 | Shapes and morphing |

@@ -37,7 +37,6 @@ install(FILES
         "${PROJECT_SOURCE_DIR}/third_party/licenses/GPL-3.0-only.txt"
         "${PROJECT_SOURCE_DIR}/third_party/licenses/LGPL-2.1-or-later.txt"
         "${PROJECT_SOURCE_DIR}/third_party/licenses/LGPL-3.0-only.txt"
-        "${PROJECT_SOURCE_DIR}/ui/theme/fonts/MiSans-LICENSE.txt"
     DESTINATION "${cirrus_doc_dir}/licenses")
 install(FILES "${PROJECT_SOURCE_DIR}/third_party/qrcodegen/LICENSE"
     DESTINATION "${cirrus_doc_dir}/licenses" RENAME qrcodegen-MIT.txt)

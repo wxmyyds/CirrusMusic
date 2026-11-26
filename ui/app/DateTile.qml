@@ -21,9 +21,6 @@ Rectangle {
         text: Qt.formatDate(tile.day, "d")
         color: Theme.color.onPrimaryContainer
         font: Fonts.font(tile.small ? 500 : 200, size)
-        // The digits only: MiSans's line box is much taller than its figures.
-        lineHeightMode: Text.FixedHeight
-        lineHeight: Math.round(size * 0.9)
         Accessible.ignored: true
     }
     Text {

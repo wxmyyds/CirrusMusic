@@ -23,17 +23,26 @@ Linux 通用编译、部署、桌面资源和依赖安装直接放在 `packaging
 
 | 工作流 | 入口 | 职责 |
 | --- | --- | --- |
-| `ci.yml` | 所有分支 push、手动、可复用调用；PR 不触发 | Arch、Debian 13、Fedora 44 各 x86_64/ARM64，Windows、macOS 各 x86_64/ARM64，共十个原生测试 job；编译测试所需目标、QML lint、CTest、依赖审计，仅上传测试报告 |
-| `linux-build.yml` | 手动、可复用调用 | Arch、Debian、Fedora × x86_64、ARM64，矩阵展开为六个独立构建 job，仅上传安装包及对应库源码 |
-| `windows-build.yml` | 手动、可复用调用 | x86_64、ARM64 两个独立构建 job，各输出 ZIP 和安装器 |
-| `macos-build.yml` | 手动、可复用调用 | ARM64、x86_64 两个独立构建 job，各输出 DMG |
+| `ci.yml` | 所有分支 push、手动、可复用调用；PR 不触发 | Arch、Debian 13、Fedora 44 各 x86_64/ARM64，Windows、macOS 各 x86_64/ARM64，共十个原生测试目标；手动运行可选 `target` 和 `architecture`，push 仍测试完整矩阵 |
+| `linux-build.yml` | 手动、可复用调用 | Arch、Debian、Fedora × x86_64、ARM64，按 `distribution` 和 `architecture` 选择目标；手动构建强制要求同一完整源码 SHA 的十目标 CI 全部成功；Release 由已依赖成功 CI 的调用方触发 |
+| `windows-build.yml` | 手动、可复用调用 | 按 `architecture` 选择 x86_64、ARM64 两个原生构建目标，各输出 ZIP 和安装器 |
+| `macos-build.yml` | 手动、可复用调用 | 按 `architecture` 选择 ARM64、x86_64 两个原生构建目标，各输出 DMG |
 | `release.yml` | 手动选择 `ref`、`tag`、`publish` | 检查版本、Tag 和 Changelog 并固定源码提交 → CI 测试 → 并行构建三平台十个原生目标 → 汇合校验完整产物清单和 SHA-256 → 发布 |
 
-CI 分为 `linux-tests`、`windows-tests`、`macos-tests` 三个独立 job 定义，分别通过矩阵展开为 6、2、2 个原生任务，各自仅准备本平台依赖、测试及报告。
+CI 分为 `linux-tests`、`windows-tests`、`macos-tests` 三个独立 job 定义，分别通过经校验的动态矩阵展开为 6、2、2 个原生任务。手动运行 `ci.yml` 时可用 `target` 选择 `all`、`linux`、`arch`、`debian`、`fedora`、`windows` 或 `macos`，并用 `architecture` 选择 `all`、`x86_64` 或 `arm64`；例如 `target=arch`、`architecture=x86_64` 只申请 Arch x86_64 原生 runner。分支 push 不受输入筛选，始终运行全部十个目标。
 
-构建工作流没有 `package`、`format` 或平台开关；CI 不再承担打包任务。旧 Linux portable/AppImage 打包链路已移除。独立工作流的 `ref` 留空时使用所选工作流提交；Release 始终向 CI 和三个 build 工作流传入同一个完整提交 SHA。
+生产构建继续按需手动运行，不随每次 push 自动启动。Linux 构建工作流在申请构建 runner 前，必须找到同一源码完整 SHA 对应的成功 CI 运行，并确认十个原生测试目标全部成功；Release 可复用此构建工作流，但其 `linux` job 已 `needs: [check, ci]` 并传入已通过测试的条件。Linux 手动参数为 `distribution=all|arch|debian|fedora` 与 `architecture=all|x86_64|arm64`；Windows/macOS 工作流各以 `architecture=all|x86_64|arm64` 筛选。输入值经共享脚本校验，非法组合直接失败，不会静默生成空矩阵。
 
-在 Actions 选择 **Linux build / Windows build / macOS build → Run workflow**，选择工作流所在分支，并按需填写源码 `ref`。每次构建该平台的全部目标架构。新文件尚未在默认分支注册时，可通过已注册的 Release 工作流在功能分支上以 `publish=false` 调用和验证。
+例如，在 Actions 手动选择工作流时选择相同字段；也可用 GitHub CLI：
+
+```sh
+gh workflow run ci.yml --ref feat/debian-system-qt -f target=arch -f architecture=x86_64
+gh workflow run linux-build.yml --ref feat/debian-system-qt -f distribution=arch -f architecture=x86_64
+gh workflow run windows-build.yml --ref feat/debian-system-qt -f architecture=arm64
+gh workflow run macos-build.yml --ref feat/debian-system-qt -f architecture=x86_64
+```
+
+`gh workflow run --ref` 选择工作流所在分支；CI 手动运行以此提交作为测试源码。三个独立构建工作流的可选输入 `ref` 指定实际被打包的源码，留空时使用该次工作流选定的提交。
 
 ## 产物
 
