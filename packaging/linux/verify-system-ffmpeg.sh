@@ -46,23 +46,3 @@ for fixture in tone.mp3 tone.flac tone_aac.m4a tone_fmp4.m4a tone_flac.m4a; do
     decode "$fixture"
     printf 'System FFmpeg fixture decoded: %s\n' "$fixture"
 done
-
-decoders=$("$ffmpeg" -hide_banner -decoders)
-if awk '$2 == "eac3" { found=1 } END { exit !found }' <<< "$decoders"; then
-    decode tone_eac3.m4a
-    printf '%s\n' 'System FFmpeg fixture decoded: tone_eac3.m4a'
-else
-    # Official Fedora FFmpeg deliberately omits optional Dolby/E-AC-3 support.
-    # Verify rejection of the same fixture rather than skipping its test.
-    [[ $ID == fedora ]] || { printf '%s\n' 'Unexpected missing E-AC-3 decoder' >&2; exit 1; }
-    log=$(mktemp)
-    trap 'rm -f "$log"' EXIT
-    if decode tone_eac3.m4a >"$log" 2>&1; then
-        printf '%s\n' 'E-AC-3 decoded despite an absent decoder registration' >&2
-        exit 1
-    fi
-    cat "$log"
-    grep -qi 'eac3' "$log"
-    grep -qi 'decoder' "$log"
-    printf '%s\n' 'Official Fedora FFmpeg: optional E-AC-3 rejection verified'
-fi

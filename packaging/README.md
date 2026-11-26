@@ -21,7 +21,7 @@ Linux 通用编译、部署、桌面资源和依赖安装直接放在 `packaging
 
 | 工作流 | 入口 | 职责 |
 | --- | --- | --- |
-| `ci.yml` | master push、PR、手动、可复用调用 | Ubuntu 24.04、Fedora 44 的 x86_64，以及 Windows x86_64、macOS ARM64 四个测试 job；编译测试所需目标、QML lint、CTest，仅上传测试报告 |
+| `ci.yml` | master push、PR、手动、可复用调用 | Ubuntu 24.04 x86_64、Windows x86_64、macOS ARM64 三个测试 job；编译测试所需目标、QML lint、CTest，仅上传测试报告 |
 | `linux-build.yml` | 手动、可复用调用 | Arch、Debian、Fedora × x86_64、ARM64，矩阵展开为六个独立构建 job |
 | `windows-build.yml` | 手动、可复用调用 | x86_64、ARM64 两个独立构建 job，各输出 ZIP 和安装器 |
 | `macos-build.yml` | 手动、可复用调用 | ARM64、x86_64 两个独立构建 job，各输出 DMG |
@@ -69,9 +69,9 @@ Arch ARM 镜像不是 Arch Linux ARM 官方发布镜像。当前固定 `base-dev
 - **Debian**：装到 `/opt/cirrus`，自带 Qt/QtKeychain，FFmpeg 使用 Debian 官方共享库；桌面集成和文档放到 `/usr/share`，`/usr/bin/cirrus` 链接到主程序。`dpkg-shlibdeps` 从 Debian 包数据库生成外部 ABI 依赖，再添加证书、libsecret、图标主题依赖。目标是 Debian 13，不再声称兼容旧 Ubuntu 22.04 / Debian 12。
 - **Fedora**：同一应用安装布局，使用 Fedora 官方 `ffmpeg-free` 开发库，不启用 RPM Fusion。由 `rpmbuild` 生成 RPM；保留 FFmpeg 等外部库的自动 ABI 依赖，排除已随包部署的私有 SONAME 依赖，并禁止把私有库发布为全局 Provides。只产生一个对应原生架构的二进制 RPM。
 
-所有 Linux 目标通过系统 pkg-config 查找 FFmpeg，要求 5.1 起的新声道布局 API；不从 Qt SDK 或私有依赖前缀查找。依赖准备阶段核对四个开发模块的系统路径和包所有权，并用发行版 FFmpeg 实际解码 MP3、FLAC、MP4/AAC、fragmented MP4 和 MP4/FLAC 样本。Fedora 官方库不提供 E-AC-3 时执行并核验不支持该编码的结果，其余目标仍要求解码成功。
+所有 Linux 目标通过系统 pkg-config 查找 FFmpeg，要求 5.1 起的新声道布局 API；不从 Qt SDK 或私有依赖前缀查找。依赖准备阶段核对四个开发模块的系统路径和包所有权，并用发行版 FFmpeg 实际解码 MP3、FLAC、MP4/AAC、fragmented MP4 和 MP4/FLAC 样本。
 
-网易云链路只接受 MP3/FLAC；B 站正常音质选择为 AAC/FLAC，不主动选择 Dolby。Fedora 不支持只有 E-AC-3 的音轨；解码器在读取数据前报告 `UnsupportedFormat`，不重试其他编码或切换音源。不存在歌曲覆盖率统计，不能据此承诺所有 B 站音轨可播放。CI 在 Ubuntu 24.04 执行完整正向解码测试，并在 Fedora 44 容器执行完整测试，核验官方库缺少 E-AC-3 时的明确拒绝行为，不跳过该样本。
+网易云链路使用 MP3/FLAC，B 站辅助源使用普通 AAC/FLAC；请求不包含 Dolby 标志，解析时忽略 Dolby 音轨。所有平台统一拒绝 E-AC-3，不设置按平台切换的编码能力分支。测试保留有效 E-AC-3 样本，作为明确拒绝的负向用例；正常音轨、格式映射和音质选择仍完整验证。
 
 Debian/Fedora 部署排除未使用的 Qt FFmpeg 媒体播放插件及所有 FFmpeg 共享库；Qt 音频设备集成保留 GStreamer，实际歌曲解码仍只有 Cirrus 的 FFmpeg 解码器。部署后检查包内没有 FFmpeg，四个实际 ELF 导入均解析到系统库，生成的 DEB/RPM 元数据也必须包含四个运行库依赖。保留全部 ELF 架构、缺库与构建目录泄漏校验；删除旧 SDK FFmpeg 专用的 bzip2 SONAME 改写。只 strip 尚未去符号的文件。桌面文件与 AppStream 元数据在打包时验证。
 
@@ -84,7 +84,7 @@ Arch 只保留 `packaging/linux/arch/` 的当前源码构建链路，旧上游 A
 | 库 | 随包目标的来源 |
 | --- | --- |
 | Qt 6.11.2 | Qt 官方二进制；macOS `clang_64` 是同时含两个 CPU slice 的框架 |
-| FFmpeg | Linux 使用各发行版官方共享库；macOS 从固定 SHA-256 的 9.0.2 源码编译；Windows 由固定 baseline 的 vcpkg 构建。支持 MP3、FLAC、MP4/MOV AAC；E-AC-3 取决于系统库，Fedora 官方包不保证支持 |
+| FFmpeg | Linux 使用各发行版官方共享库；macOS 从固定 SHA-256 的 9.0.2 源码编译；Windows 由固定 baseline 的 vcpkg 构建。应用支持 MP3、FLAC，以及 MP4/fMP4 中的 AAC/FLAC |
 | QtKeychain 0.17.0 | 同一源码脚本，针对选定 Qt 构建；Windows 静态链接 |
 | OpenSSL、zlib、zstd | Linux 用对应发行版；Windows 用 vcpkg；macOS 用 Homebrew 的 OpenSSL/zstd 和系统 zlib |
 

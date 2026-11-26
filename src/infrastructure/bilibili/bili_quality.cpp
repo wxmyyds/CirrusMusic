@@ -12,8 +12,6 @@ namespace
 int minBitrateKbps(Quality quality)
 {
     switch (quality) {
-    case Quality::Dolby:
-        return 0;
     case Quality::HiRes:
         return 1000;
     case Quality::Lossless:
@@ -40,17 +38,13 @@ int upperBoundExclusive(Quality quality)
         return minBitrateKbps(Quality::High);
     case Quality::Low:
         return minBitrateKbps(Quality::Medium);
-    case Quality::Dolby:
     case Quality::HiRes:
         break;
     }
     return std::numeric_limits<int>::max();
 }
 
-QString normalizedTag(const AudioStream& stream)
-{
-    return stream.qualityTag.trimmed().toLower();
-}
+QString normalizedTag(const AudioStream& stream) { return stream.qualityTag.trimmed().toLower(); }
 
 bool matchesRegularBand(const AudioStream& stream, Quality quality)
 {
@@ -74,8 +68,8 @@ bool isLosslessLike(const AudioStream& stream)
 
 QList<Quality> degradeChain(Quality from)
 {
-    static const QList<Quality> order{Quality::Dolby, Quality::HiRes, Quality::Lossless,
-                                      Quality::High,  Quality::Medium, Quality::Low};
+    static const QList<Quality> order{Quality::HiRes, Quality::Lossless, Quality::High,
+                                      Quality::Medium, Quality::Low};
     const auto at = order.indexOf(from);
     return order.mid(at < 0 ? 0 : at);
 }
@@ -106,8 +100,6 @@ Quality qualityFromKey(const QString& key)
         return Quality::Medium;
     if (k == QStringLiteral("low"))
         return Quality::Low;
-    if (k == QStringLiteral("dolby"))
-        return Quality::Dolby;
     return Quality::High;
 }
 
@@ -151,9 +143,6 @@ std::optional<AudioStream> selectStream(const QList<AudioStream>& available, Qua
         return std::nullopt;
     };
 
-    if (preferred == Quality::Dolby)
-        if (const auto hit = taggedFirst(QStringLiteral("dolby")))
-            return hit;
     if (preferred == Quality::HiRes)
         if (const auto hit = taggedFirst(QStringLiteral("hires")))
             return hit;
@@ -164,9 +153,6 @@ std::optional<AudioStream> selectStream(const QList<AudioStream>& available, Qua
     for (const auto quality : degradeChain(preferred)) {
         std::optional<AudioStream> hit;
         switch (quality) {
-        case Quality::Dolby:
-            hit = taggedFirst(QStringLiteral("dolby"));
-            break;
         case Quality::HiRes:
             hit = taggedFirst(QStringLiteral("hires"));
             break;

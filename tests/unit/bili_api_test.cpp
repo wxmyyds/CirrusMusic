@@ -1,6 +1,6 @@
-#include "infrastructure/bilibili/bili_api.h"
 #include "../support/fake_http.h"
 #include "../support/synthetic_bilibili.h"
+#include "infrastructure/bilibili/bili_api.h"
 #include <QUrlQuery>
 
 #include <QSignalSpy>
@@ -41,7 +41,7 @@ class BiliApiTest : public QObject
         QVERIFY(!result.needPermission);
         QCOMPARE(fake->requests.size(), 5);
         const QUrlQuery query(fake->requests.last().url());
-        QCOMPARE(query.queryItemValue(QStringLiteral("fnval")), QStringLiteral("272"));
+        QCOMPARE(query.queryItemValue(QStringLiteral("fnval")), QStringLiteral("16"));
         QCOMPARE(query.queryItemValue(QStringLiteral("platform")), QStringLiteral("pc"));
         QCOMPARE(query.queryItemValue(QStringLiteral("fnver")), QStringLiteral("0"));
         QCOMPARE(query.queryItemValue(QStringLiteral("fourk")), QStringLiteral("0"));
@@ -57,8 +57,8 @@ class BiliApiTest : public QObject
         probe.body = QByteArrayLiteral("\0");
         probe.status = 206;
         probe.headers = {{"Content-Range", "bytes 0-0/4800000"}};
-        fake->plans = {test::biliJson(test::kBiliFingerprint), test::biliJson(test::kBiliNav),
-                       test::biliJson(test::kBiliSearch), test::biliJson(test::kBiliView),
+        fake->plans = {test::biliJson(test::kBiliFingerprint),    test::biliJson(test::kBiliNav),
+                       test::biliJson(test::kBiliSearch),         test::biliJson(test::kBiliView),
                        test::biliJson(test::kBiliPlayUrlUnsized), probe};
         QSignalSpy spy(&api, &BiliApi::resolved);
         QVERIFY(api.resolve(song(), Quality::High));
@@ -189,9 +189,13 @@ class BiliApiTest : public QObject
             "title":"Cooking Show","owner":{"name":"Chef"},"duration":600,
             "pages":[{"cid":789,"page":1,"part":"Episode 1","duration":600}]}})";
         const QByteArray empty = R"({"code":0,"data":{"result":[]}})";
-        fake->plans = {test::biliJson(test::kBiliFingerprint), test::biliJson(test::kBiliNav),
-                       test::biliJson(other), test::biliJson(viewOther), test::biliJson(empty),
-                       test::biliJson(empty), test::biliJson(empty)};
+        fake->plans = {test::biliJson(test::kBiliFingerprint),
+                       test::biliJson(test::kBiliNav),
+                       test::biliJson(other),
+                       test::biliJson(viewOther),
+                       test::biliJson(empty),
+                       test::biliJson(empty),
+                       test::biliJson(empty)};
         QSignalSpy spy(&api, &BiliApi::resolved);
         QVERIFY(api.resolve(song(), Quality::High));
         QTRY_COMPARE(spy.count(), 1);

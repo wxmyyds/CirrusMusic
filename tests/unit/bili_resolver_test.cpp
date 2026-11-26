@@ -1,5 +1,5 @@
-#include "infrastructure/bilibili/bili_stream_resolver.h"
 #include "../support/synthetic_bilibili.h"
+#include "infrastructure/bilibili/bili_stream_resolver.h"
 
 #include <QSignalSpy>
 #include <QTest>
@@ -44,10 +44,15 @@ class BiliResolverTest : public QObject
         QTest::addColumn<QByteArray>("mime");
         QTest::addColumn<QByteArray>("codec");
         QTest::addColumn<QString>("format");
-        QTest::newRow("aac") << QByteArray("audio/mp4") << QByteArray("mp4a.40.2") << QString("aac");
-        QTest::newRow("flac-mp4") << QByteArray("audio/mp4") << QByteArray("fLaC") << QString("flac-mp4");
+        QTest::newRow("aac") << QByteArray("audio/mp4") << QByteArray("mp4a.40.2")
+                             << QString("aac");
+        QTest::newRow("flac-mp4") << QByteArray("audio/mp4") << QByteArray("fLaC")
+                                  << QString("flac-mp4");
         QTest::newRow("flac") << QByteArray("audio/flac") << QByteArray("fLaC") << QString("flac");
-        QTest::newRow("dolby") << QByteArray("audio/mp4") << QByteArray("ec-3") << QString("eac3");
+        QTest::newRow("dolby-rejected")
+            << QByteArray("audio/mp4") << QByteArray("ec-3") << QString();
+        QTest::newRow("dolby-mime-rejected")
+            << QByteArray("audio/eac3") << QByteArray() << QString();
     }
 
     void sourceMetadata()
@@ -58,17 +63,23 @@ class BiliResolverTest : public QObject
         Catalog catalog;
         auto manager = std::make_unique<test::FakeGetManager>();
         auto playurl = test::kBiliPlayUrlSized;
-        playurl.replace("\"mimeType\":\"audio/mp4\"", "\"mimeType\":\"" + mime +
-                                                    "\",\"codecs\":\"" + codec + "\"");
+        playurl.replace("\"mimeType\":\"audio/mp4\"",
+                        "\"mimeType\":\"" + mime + "\",\"codecs\":\"" + codec + "\"");
         manager->plans = test::biliResolveSized();
         manager->plans.last() = test::biliJson(playurl);
-        bilibili::StreamResolver resolver(catalog, std::make_unique<bilibili::BiliApi>(std::move(manager)));
+        bilibili::StreamResolver resolver(catalog,
+                                          std::make_unique<bilibili::BiliApi>(std::move(manager)));
         QSignalSpy spy(&resolver, &IStreamResolver::completed);
         const SessionToken token{QUuid::createUuid(), 1};
         resolver.resolve(token, {{QStringLiteral("1")}, AudioQuality::Exhigh, true});
         emit catalog.completed(1, token, details());
         QTRY_COMPARE(spy.count(), 1);
         const auto result = qvariant_cast<StreamResult>(spy.first().at(2));
+        if (format.isEmpty()) {
+            QVERIFY(std::holds_alternative<PlaybackFailure>(result));
+            QCOMPARE(std::get<PlaybackFailure>(result).error, PlaybackError::UnsupportedFormat);
+            return;
+        }
         QVERIFY(std::holds_alternative<StreamSource>(result));
         const auto& source = std::get<StreamSource>(result);
         QCOMPARE(source.provider, SourceProvider::Bilibili);

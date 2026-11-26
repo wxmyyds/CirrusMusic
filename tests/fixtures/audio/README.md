@@ -11,10 +11,13 @@ so a test can seek past what has downloaded (`tst_audio_engine`).
 `fade.mp3`: 8.5 s, 22.05 kHz mono, 550 Hz: 0.5 s of silence, 4 s of tone, a fade-out of
 17 dB a second for 3 s, silence (a natural end, `tst_audio_engine`).
 
-`tone_aac.m4a`, `tone_fmp4.m4a`, `tone_eac3.m4a`: the same 0.5 s tone as MP4 audio, for the
+`tone_aac.m4a`, `tone_fmp4.m4a`: the same 0.5 s tone as MP4 audio, for the
 decoder's MP4 container paths (`tst_audio_decoder`). `tone_aac.m4a` has its `moov` after the
-`mdat`; `tone_fmp4.m4a` is fragmented (moof/mdat, no trailing moov); `tone_eac3.m4a` is E-AC-3.
-The codec is named by `format` (`aac`/`eac3`), never by the file suffix.
+`mdat`; `tone_fmp4.m4a` is fragmented (moof/mdat, no trailing moov). The codec is named by
+`format`, never by the file suffix.
+
+`tone_eac3.m4a` is the same tone encoded as E-AC-3. It is a negative fixture: the
+application consistently rejects Dolby audio, independent of the platform FFmpeg build.
 
 `tone_flac.m4a` wraps the existing `tone.flac` frames without encoding in an ISO BMFF
 container: `ftyp(isom/iso2/mp41)`, one `mdat`, then `moov` with a single `soun` track,

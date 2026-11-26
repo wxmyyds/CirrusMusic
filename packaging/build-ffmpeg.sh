@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds the FFmpeg that macOS packages bundle (packaging/README.md): shared, LGPL
 # (no --enable-gpl, no external libraries) and only what the audio decoder opens: the MP3 and
-# FLAC demuxers/decoders, plus the MP4 (mov) demuxer with its AAC and E-AC-3 decoders (the
+# FLAC demuxers/decoders, plus the MP4 (mov) demuxer with its AAC decoder (the
 # Bilibili CDN's audio/mp4). See src/infrastructure/media/audio_decoder.cpp.
 # Linux uses distribution FFmpeg; Windows uses the pinned vcpkg port.
 #
@@ -42,8 +42,8 @@ cd "$work/ffmpeg-$VERSION"
     --disable-avdevice --disable-avfilter --disable-swscale \
     --disable-everything \
     --enable-demuxer=mp3,flac,mov \
-    --enable-decoder=mp3,mp3float,flac,aac,eac3 \
-    --enable-parser=mpegaudio,flac,aac,ac3
+    --enable-decoder=mp3,mp3float,flac,aac \
+    --enable-parser=mpegaudio,flac,aac
 make -j"${JOBS:-$(getconf _NPROCESSORS_ONLN)}"
 make install
 

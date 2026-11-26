@@ -8,9 +8,9 @@
 namespace cirrus::bilibili
 {
 
-// The provider's quality ladder, lowest bitrate threshold per step. `Dolby` and `HiRes` are
-// tags rather than bitrate bands; `Lossless` accepts any FLAC.
-enum class Quality { Dolby, HiRes, Lossless, High, Medium, Low };
+// The ordinary audio quality ladder. HiRes is a tag rather than a bitrate band;
+// Lossless accepts any FLAC. The auxiliary source does not request Dolby.
+enum class Quality { HiRes, Lossless, High, Medium, Low };
 
 // From our own audio-quality setting ("standard"/"exhigh"/"lossless"/"hires"); unknown is High.
 Quality qualityFromKey(const QString& key);
@@ -24,8 +24,7 @@ std::optional<AudioStream> selectStream(const QList<AudioStream>& available, Qua
 // upos-* on bilivideo first, then bilivideo, then mountaintoys. Never changes the stream.
 QStringList prioritize(const QString& primary, const QStringList& backups);
 
-// The quality key that names a stream (for the cache token and logs): "dolby"/"hires"/
-// "lossless"/"high"/"medium"/"low".
+// The quality key for the cache token and logs: "hires"/"lossless"/"high"/"medium"/"low".
 QString qualityKeyOf(const AudioStream& stream);
 
 } // namespace cirrus::bilibili

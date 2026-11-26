@@ -13,7 +13,7 @@ Linux, next to `Cirrus.exe` on Windows or in `Cirrus.app/Contents/Frameworks` on
 | --- | --- | --- | --- |
 | Qt | 6.11 | LGPL-3.0-only (`licenses/LGPL-3.0-only.txt`, `licenses/GPL-3.0-only.txt`) | Application framework |
 | FFmpeg (Qt Multimedia, Windows/macOS) | 7.1 | LGPL-2.1-or-later (`licenses/LGPL-2.1-or-later.txt`) | Qt Multimedia backend |
-| FFmpeg (Cirrus decoder) | Distribution version on Linux; 9.0 on Windows/macOS | Bundled builds: LGPL-2.1-or-later (`licenses/LGPL-2.1-or-later.txt`); system builds: distribution package terms | Audio decoding (MP3, FLAC, AAC; E-AC-3 when available) |
+| FFmpeg (Cirrus decoder) | Distribution version on Linux; 9.0 on Windows/macOS | Bundled builds: LGPL-2.1-or-later (`licenses/LGPL-2.1-or-later.txt`); system builds: distribution package terms | Audio decoding (MP3, FLAC, AAC) |
 | QtKeychain | 0.17 | BSD-3-Clause (below) | Storing the sign-in in the system keyring |
 | OpenSSL | 3 | Apache-2.0 (`licenses/Apache-2.0.txt`) | Cryptography for the service protocol |
 | zlib | 1.x | Zlib (below) | Decompression |
@@ -29,8 +29,8 @@ Which libraries a package carries:
 
 - **deb and RPM** carry Qt and QtKeychain. FFmpeg, OpenSSL, zlib, zstd, libsecret and
   GStreamer runtime libraries come from the official distribution repositories. The
-  unused Qt FFmpeg media-player plugin is excluded. Official Fedora FFmpeg may omit
-  E-AC-3; MP3, FLAC and AAC remain required.
+  unused Qt FFmpeg media-player plugin is excluded. The application uses MP3, FLAC
+  and MP4 AAC/FLAC; it does not request or decode Dolby audio.
 - **Windows installer and zip, macOS dmg** carry Qt, both FFmpeg builds and
   QtKeychain (on Windows linked into `Cirrus.exe`). The Windows packages also carry OpenSSL,
   zlib, zstd and the Microsoft Visual C++ runtime; the macOS dmg also carries OpenSSL and
@@ -45,7 +45,7 @@ The bundled libraries are unmodified releases:
   Multimedia's FFmpeg 7.1 is part of them).
 - FFmpeg 9.0.2: <https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz>. macOS packages
   use the configuration in `packaging/build-ffmpeg.sh` of the Cirrus source (shared,
-  LGPL, MP3, FLAC, and MP4/MOV AAC/E-AC-3); Windows packages use vcpkg's `ffmpeg` port with the features
+  LGPL, MP3, FLAC, and MP4/MOV AAC); Windows packages use vcpkg's `ffmpeg` port with the features
   `avcodec`, `avformat` and `swresample` (no `gpl`).
 - Linux FFmpeg: the matching source packages from Arch Linux / Arch Linux ARM,
   Debian 13 and Fedora 44 official repositories; no private FFmpeg is shipped.

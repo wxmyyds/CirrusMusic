@@ -22,7 +22,7 @@ constexpr qint64 kPrerollMs = 300; // decode this much before a seek target
 
 // One accepted container/codec pair. The provider's `format` selects the demuxer, the codec
 // whitelist and the expected decoder; FFmpeg never probes anything else. MP3 and FLAC keep
-// their own demuxers; AAC and E-AC-3 arrive in an MP4/fMP4 container (the Bilibili CDN's
+// their own demuxers; AAC and FLAC can arrive in an MP4/fMP4 container (Bilibili's
 // audio/mp4), demuxed by "mov".
 struct FormatRule {
     const char* input;   // av_find_input_format name, null when unsupported
@@ -40,8 +40,6 @@ std::optional<FormatRule> ruleFor(const QString& format)
         return FormatRule{"mov", "flac", "mov", AV_CODEC_ID_FLAC};
     if (format == QStringLiteral("aac"))
         return FormatRule{"mov", "aac", "mov", AV_CODEC_ID_AAC};
-    if (format == QStringLiteral("eac3"))
-        return FormatRule{"mov", "eac3", "mov", AV_CODEC_ID_EAC3};
     return std::nullopt;
 }
 } // namespace

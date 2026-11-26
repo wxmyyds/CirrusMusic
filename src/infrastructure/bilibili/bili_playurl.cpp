@@ -30,9 +30,8 @@ QStringList stringList(const QJsonArray& array)
 
 std::optional<AudioStream> dashItem(const QJsonObject& object)
 {
-    const auto baseUrl = object.contains(QStringLiteral("baseUrl"))
-                             ? text(object, "baseUrl")
-                             : text(object, "base_url");
+    const auto baseUrl = object.contains(QStringLiteral("baseUrl")) ? text(object, "baseUrl")
+                                                                    : text(object, "base_url");
     if (baseUrl.isEmpty())
         return std::nullopt;
     QStringList backups;
@@ -43,9 +42,8 @@ std::optional<AudioStream> dashItem(const QJsonObject& object)
 
     AudioStream stream;
     stream.id = object.value(QStringLiteral("id")).toInt();
-    stream.mimeType = object.contains(QStringLiteral("mimeType"))
-                          ? text(object, "mimeType")
-                          : text(object, "mime_type");
+    stream.mimeType = object.contains(QStringLiteral("mimeType")) ? text(object, "mimeType")
+                                                                  : text(object, "mime_type");
     stream.codecs = text(object, "codecs");
     stream.bitrateKbps = int(std::clamp<qint64>(
         object.value(QStringLiteral("bandwidth")).toInteger() / 1000, 0, 2147483647));
@@ -88,9 +86,6 @@ PlayUrlMapping mapPlayUrl(const QJsonObject& data)
 
     const auto dash = objectOr(data, "dash");
     result.streams += dashArray(dash.value(QStringLiteral("audio")).toArray(), {});
-    const auto dolby = objectOr(dash, "dolby");
-    result.streams += dashArray(dolby.value(QStringLiteral("audio")).toArray(),
-                                QStringLiteral("dolby"));
     const auto flac = objectOr(dash, "flac");
     if (const auto single = dashItem(objectOr(flac, "audio")); single && !single->url.isEmpty()) {
         AudioStream stream = *single;

@@ -22,7 +22,6 @@ class BiliQualityTest : public QObject
         QCOMPARE(qualityFromKey(QStringLiteral("lossless")), Quality::Lossless);
         QCOMPARE(qualityFromKey(QStringLiteral("medium")), Quality::Medium);
         QCOMPARE(qualityFromKey(QStringLiteral("low")), Quality::Low);
-        QCOMPARE(qualityFromKey(QStringLiteral("dolby")), Quality::Dolby);
         QCOMPARE(qualityFromKey(QStringLiteral("exhigh")), Quality::High);
         QCOMPARE(qualityFromKey(QString()), Quality::High);
     }
@@ -68,7 +67,7 @@ class BiliQualityTest : public QObject
     void applicationQualitiesDoNotPreferDolby()
     {
         auto streams = mapPlayUrl(parse(cirrus::test::kDashDolbyFlac)).result.streams;
-        // The application maps its four quality choices to these values, never Dolby.
+        // Dolby entries are excluded before ordinary quality selection.
         for (const auto quality :
              {Quality::Medium, Quality::High, Quality::Lossless, Quality::HiRes}) {
             const auto selected = selectStream(streams, quality);
@@ -103,29 +102,39 @@ class BiliPlayUrlTest : public QObject
 {
     Q_OBJECT
   private slots:
-    void mapsDashDolbyAndFlac()
+    void mapsOrdinaryAudioAndIgnoresDolby()
     {
         const auto data = parse(cirrus::test::kDashDolbyFlac);
         const auto mapping = mapPlayUrl(data);
-        QVERIFY(mapping.result.streams.size() >= 3);
+        QCOMPARE(mapping.result.streams.size(), 2);
         QVERIFY(mapping.result.videoAvailable);
-        bool sawRegular = false, sawDolby = false, sawFlac = false;
+        bool sawRegular = false, sawFlac = false;
         for (const auto& s : mapping.result.streams) {
             if (s.id == 30280) {
                 sawRegular = true;
                 QCOMPARE(s.size, qint64(4800000));
                 QCOMPARE(s.md5, QByteArray("0123456789abcdef0123456789abcdef"));
             }
-            if (s.id == 30250) {
-                sawDolby = true;
-                QCOMPARE(s.qualityTag, QStringLiteral("dolby"));
-            }
+            QVERIFY(s.id != 30250);
+            QVERIFY(s.qualityTag != QStringLiteral("dolby"));
             if (s.id == 30251) {
                 sawFlac = true;
                 QCOMPARE(s.qualityTag, QStringLiteral("hires"));
             }
         }
-        QVERIFY(sawRegular && sawDolby && sawFlac);
+        QVERIFY(sawRegular && sawFlac);
+    }
+
+    void dolbyOnlyIsNotPlayable()
+    {
+        auto data = parse(cirrus::test::kDashDolbyFlac);
+        auto dash = data.value(QStringLiteral("dash")).toObject();
+        dash.remove(QStringLiteral("audio"));
+        dash.remove(QStringLiteral("flac"));
+        data.insert(QStringLiteral("dash"), dash);
+        const auto mapping = mapPlayUrl(data);
+        QVERIFY(mapping.result.videoAvailable);
+        QVERIFY(mapping.result.streams.isEmpty());
     }
 
     void nearestUrlFirst()

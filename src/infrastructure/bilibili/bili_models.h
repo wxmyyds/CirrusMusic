@@ -14,7 +14,7 @@ struct AudioStream {
     int id = 0;
     QString mimeType;
     int bitrateKbps = 0;
-    QString qualityTag; // "dolby", "hires" or empty (regular AAC)
+    QString qualityTag; // "hires" or empty (regular AAC)
     QString codecs;
     QString url;
     QStringList candidates;
@@ -24,7 +24,7 @@ struct AudioStream {
     friend bool operator==(const AudioStream&, const AudioStream&) = default;
 };
 
-// The playurl answer, already mapped: the regular DASH tracks, Dolby and FLAC/Hi-Res
+// The playurl answer, already mapped: the regular DASH tracks and FLAC/Hi-Res
 // separately (merged into `streams`), plus the progressive mp4 fallback's one track.
 // `videoAvailable`/`durationMs` only inform matching and the empty-audio retry.
 struct PlayUrlResult {

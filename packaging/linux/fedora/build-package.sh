@@ -41,7 +41,7 @@ Recommends: gnome-keyring
 
 %description
 Cirrus carries private Qt and QtKeychain libraries in /opt/cirrus.
-FFmpeg comes from official Fedora system packages; E-AC-3 is not required.
+FFmpeg comes from official Fedora system packages.
 It is not affiliated with NetEase or Bilibili.
 
 %install

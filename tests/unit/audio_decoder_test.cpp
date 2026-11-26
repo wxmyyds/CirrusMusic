@@ -77,15 +77,14 @@ class AudioDecoderTest : public QObject
         QTest::newRow("flac") << QStringLiteral("flac");
     }
 
-    // MP4/fMP4 audio: AAC (moov after mdat and fragmented) and E-AC-3, the Bilibili CDN's
-    // audio/mp4 formats. Same 0.5 s / 44.1 kHz / 22050 frames as the tones.
+    // Supported MP4/fMP4 audio: AAC (moov after mdat and fragmented) and FLAC.
+    // Same 0.5 s / 44.1 kHz / 22050 frames as the tones.
     void decodesMp4Audio_data()
     {
         QTest::addColumn<QString>("file");
         QTest::addColumn<QString>("format");
         QTest::newRow("aac") << QStringLiteral("tone_aac.m4a") << QStringLiteral("aac");
         QTest::newRow("aac-fmp4") << QStringLiteral("tone_fmp4.m4a") << QStringLiteral("aac");
-        QTest::newRow("eac3") << QStringLiteral("tone_eac3.m4a") << QStringLiteral("eac3");
         QTest::newRow("flac-mp4") << QStringLiteral("tone_flac.m4a") << QStringLiteral("flac-mp4");
     }
     void decodesMp4Audio()
@@ -103,21 +102,25 @@ class AudioDecoderTest : public QObject
             const auto all = ok ? decodeAll(decoder) : std::vector<float>();
             return std::tuple{ok, decoder.error(), decoder.sampleRate(), qint64(all.size() / 2)};
         });
-        if (format == QStringLiteral("eac3") &&
-            qEnvironmentVariableIntValue("CIRRUS_TEST_OPTIONAL_EAC3") == 1 && !opened) {
-            // Official Fedora FFmpeg omits this optional Dolby decoder. Execute
-            // and verify rejection; never skip the fixture or retry another codec.
-            QCOMPARE(error, std::optional(PlaybackError::UnsupportedFormat));
-            QCOMPARE(rate, 0);
-            QCOMPARE(frames, 0);
-            return;
-        }
         QVERIFY(opened);
         QVERIFY(!error);
         QCOMPARE(rate, 44100);
         // Lossy codecs pad: the count is near the source, not frame-exact.
         QVERIFY(std::abs(frames - ToneFrames) <= 2048);
     }
+    void rejectsEac3()
+    {
+        // A valid Dolby fixture is outside the application's supported formats,
+        // regardless of whether the platform FFmpeg happens to include its decoder.
+        auto file = media::LocalFileSource::open(QStringLiteral(AUDIO_FIXTURES "/tone_eac3.m4a"));
+        QVERIFY(file);
+        AudioDecoder decoder;
+        QVERIFY(!decoder.open(file, QStringLiteral("eac3")));
+        QCOMPARE(decoder.error(), std::optional(PlaybackError::UnsupportedFormat));
+        QCOMPARE(decoder.sampleRate(), 0);
+        QCOMPARE(decoder.position(), 0);
+    }
+
     void decodesTheWholeFile()
     {
         QFETCH(QString, format);
