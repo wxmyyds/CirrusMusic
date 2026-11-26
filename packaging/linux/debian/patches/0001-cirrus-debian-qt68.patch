@@ -149,10 +149,12 @@ diff --git a/src/infrastructure/media/qt68_audio_sink.h b/src/infrastructure/med
 new file mode 100644
 --- /dev/null
 +++ b/src/infrastructure/media/qt68_audio_sink.h
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,65 @@
 +#pragma once
 +#include "qt68_audio_pull.h"
 +#include "qt68_audio_thread.h"
++#include <QAudioDevice>
++#include <QAudioFormat>
 +#include <QAudioSink>
 +#include <memory>
 +
@@ -163,15 +165,16 @@ new file mode 100644
 +class Qt68AudioSink final
 +{
 +  public:
-+    Qt68AudioSink(const QAudioDevice& device, const QAudioFormat& format,
-+                  qsizetype periodFrames, Qt68AudioPull::Consumer consume)
++    Qt68AudioSink(const QAudioDevice& device, const QAudioFormat& format, qsizetype periodFrames,
++                  Qt68AudioPull::Consumer consume)
 +    {
-+        m_thread.invoke([this, device, format, periodFrames, consume = std::move(consume)]() mutable {
-+            m_sink = std::make_unique<QAudioSink>(device, format);
-+            m_sink->setBufferSize(format.bytesForFrames(periodFrames));
-+            m_source = std::make_unique<Qt68AudioPull>(periodFrames, std::move(consume));
-+            m_sink->start(m_source.get());
-+        });
++        m_thread.invoke(
++            [this, device, format, periodFrames, consume = std::move(consume)]() mutable {
++                m_sink = std::make_unique<QAudioSink>(device, format);
++                m_sink->setBufferSize(format.bytesForFrames(periodFrames));
++                m_source = std::make_unique<Qt68AudioPull>(periodFrames, std::move(consume));
++                m_sink->start(m_source.get());
++            });
 +    }
 +    ~Qt68AudioSink()
 +    {
@@ -180,9 +183,18 @@ new file mode 100644
 +            m_source.reset();
 +        });
 +    }
-+    void stop() { m_thread.invoke([this] { m_sink->stop(); }); }
-+    void suspend() { m_thread.invoke([this] { m_sink->suspend(); }); }
-+    void resume() { m_thread.invoke([this] { m_sink->resume(); }); }
++    void stop()
++    {
++        m_thread.invoke([this] { m_sink->stop(); });
++    }
++    void suspend()
++    {
++        m_thread.invoke([this] { m_sink->suspend(); });
++    }
++    void resume()
++    {
++        m_thread.invoke([this] { m_sink->resume(); });
++    }
 +    QtAudio::State state() const
 +    {
 +        QtAudio::State result = QtAudio::StoppedState;
@@ -192,9 +204,8 @@ new file mode 100644
 +    qint64 bufferFrames() const
 +    {
 +        qint64 result = 0;
-+        m_thread.invoke([this, &result] {
-+            result = m_sink->format().framesForBytes(m_sink->bufferSize());
-+        });
++        m_thread.invoke(
++            [this, &result] { result = m_sink->format().framesForBytes(m_sink->bufferSize()); });
 +        return result;
 +    }
 +
@@ -235,8 +246,8 @@ new file mode 100644
 +    }
 +    template <typename F> void invoke(F operation) const
 +    {
-+        const bool queued = QMetaObject::invokeMethod(
-+            m_context, std::move(operation), Qt::BlockingQueuedConnection);
++        const bool queued = QMetaObject::invokeMethod(m_context, std::move(operation),
++                                                      Qt::BlockingQueuedConnection);
 +        if (!queued)
 +            qFatal("Cannot invoke Debian audio event thread");
 +    }
@@ -246,6 +257,30 @@ new file mode 100644
 +    QObject* m_context;
 +};
 +} // namespace cirrus::media
+diff --git a/src/infrastructure/netease/api/session_api_client.cpp b/src/infrastructure/netease/api/session_api_client.cpp
+--- a/src/infrastructure/netease/api/session_api_client.cpp
++++ b/src/infrastructure/netease/api/session_api_client.cpp
+@@ -433,7 +433,7 @@
+     if (m_logSession.isEmpty())
+         m_logSession = QString::number(now) + u'#' +
+                        QString::number(100 + QRandomGenerator::global()->bounded(900)) +
+-                       u"#9.1.65#" + QString::fromLatin1(buildver);
++                       QStringLiteral("#9.1.65#") + QString::fromLatin1(buildver);
+     QList<ClientLogFile> files;
+     QStringList actions;
+     QHash<QString, qsizetype> fileOf;
+diff --git a/src/logging/logger.cpp b/src/logging/logger.cpp
+--- a/src/logging/logger.cpp
++++ b/src/logging/logger.cpp
+@@ -135,7 +135,7 @@
+         else if (c == u'\r')
+             out += u"\\r";
+         else if (c.unicode() < 0x20 && c != u'\t')
+-            out += u"\\x" + QString::number(c.unicode(), 16).rightJustified(2, u'0');
++            out += QStringLiteral("\\x") + QString::number(c.unicode(), 16).rightJustified(2, u'0');
+         else
+             out += c;
+     }
 diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
 --- a/tests/CMakeLists.txt
 +++ b/tests/CMakeLists.txt
@@ -260,6 +295,30 @@ diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
 +target_link_libraries(tst_qt68_audio_pull PRIVATE Qt6::Core Qt6::Test)
 +add_test(NAME qt68_audio_pull COMMAND tst_qt68_audio_pull)
 +set_tests_properties(qt68_audio_pull PROPERTIES TIMEOUT 15)
+diff --git a/tests/unit/listening_report_test.cpp b/tests/unit/listening_report_test.cpp
+--- a/tests/unit/listening_report_test.cpp
++++ b/tests/unit/listening_report_test.cpp
+@@ -293,7 +293,7 @@
+                 "flush_" +
+                 QByteArray(action == ListeningReportAction::ActiveClient ? "bi_" : "ua_")));
+             if (const auto path = qEnvironmentVariable("CIRRUS_NCBL_UPLOADS"); !path.isEmpty()) {
+-                QFile file(path + u'/' + QString::number(sent) + u".multipart");
++                QFile file(path + u'/' + QString::number(sent) + QStringLiteral(".multipart"));
+                 QVERIFY(file.open(QIODevice::WriteOnly));
+                 file.write(body);
+             }
+diff --git a/tests/unit/log_canary_test.cpp b/tests/unit/log_canary_test.cpp
+--- a/tests/unit/log_canary_test.cpp
++++ b/tests/unit/log_canary_test.cpp
+@@ -156,7 +156,7 @@
+         const QString text = logged();
+         QVERIFY(!text.contains(u"8000000123"));
+         QVERIFY(text.contains(u"session.phase from=Committing to=Authenticated"));
+-        QVERIFY(text.contains(u"account=" + log::account(u"8000000123").value));
++        QVERIFY(text.contains(QStringLiteral("account=") + log::account(u"8000000123").value));
+     }
+ };
+ QTEST_GUILESS_MAIN(LogCanaryTest)
 diff --git a/tests/unit/qt68_audio_pull_test.cpp b/tests/unit/qt68_audio_pull_test.cpp
 new file mode 100644
 --- /dev/null
@@ -429,6 +488,23 @@ diff --git a/ui/presentation/backend/backend_host.cpp b/ui/presentation/backend/
  }
  
  } // namespace
+diff --git a/ui/presentation/diagnostic_report.cpp b/ui/presentation/diagnostic_report.cpp
+--- a/ui/presentation/diagnostic_report.cpp
++++ b/ui/presentation/diagnostic_report.cpp
+@@ -69,11 +69,11 @@
+     {
+         if (!m_out.isEmpty())
+             m_out += u'\n';
+-        m_out += u'[' + title + u"]\n";
++        m_out += u'[' + title + QStringLiteral("]\n");
+     }
+     void line(const QString& key, const QString& value)
+     {
+-        m_out += key.leftJustified(22) + u": " + (value.isEmpty() ? u"-"_s : value) + u'\n';
++        m_out += key.leftJustified(22) + QStringLiteral(": ") + (value.isEmpty() ? u"-"_s : value) + u'\n';
+     }
+     void line(const QString& key, qint64 value) { line(key, QString::number(value)); }
+     void line(const QString& key, bool value) { line(key, value ? u"yes"_s : u"no"_s); }
 diff --git a/ui/presentation/sorted_songs_model.cpp b/ui/presentation/sorted_songs_model.cpp
 --- a/ui/presentation/sorted_songs_model.cpp
 +++ b/ui/presentation/sorted_songs_model.cpp

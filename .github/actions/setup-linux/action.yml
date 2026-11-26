@@ -44,7 +44,6 @@ runs:
         set -euo pipefail
         packaging/linux/verify-system-qt.sh
         {
-          echo "QT_ROOT_DIR=/usr"
           echo "QT_VERSION=$(pkg-config --modversion Qt6Core)"
         } >> "$GITHUB_ENV"
 
@@ -93,8 +92,6 @@ runs:
 
     - name: Export common build environment
       shell: bash
-      env:
-        DISTRIBUTION: ${{ inputs.distribution }}
       run: |
         set -euo pipefail
         {
@@ -112,7 +109,7 @@ runs:
       uses: actions/cache/restore@v6
       with:
         path: ${{ env.CCACHE_DIR }}
-        key: ccache-linux-${{ inputs.distribution }}-${{ inputs.arch }}-qt${{ env.QT_VERSION }}-${{ inputs.cache-scope }}-${{ hashFiles('packaging/*.sh', 'packaging/linux/install-build-deps.sh', '.github/actions/setup-linux/action.yml', '.github/actions/setup-qt/action.yml', '**/CMakeLists.txt', 'cmake/**') }}-${{ github.sha }}
+        key: ccache-linux-${{ inputs.distribution }}-${{ inputs.arch }}-qt${{ env.QT_VERSION }}-${{ inputs.cache-scope }}-${{ hashFiles('packaging/*.sh', 'packaging/linux/install-build-deps.sh', '.github/actions/setup-linux/action.yml', '**/CMakeLists.txt', 'cmake/**') }}-${{ github.sha }}
         restore-keys: |
           ccache-linux-${{ inputs.distribution }}-${{ inputs.arch }}-qt${{ env.QT_VERSION }}-${{ inputs.cache-scope }}-
 
