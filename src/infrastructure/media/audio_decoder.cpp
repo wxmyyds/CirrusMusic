@@ -22,12 +22,12 @@ constexpr qint64 kPrerollMs = 300; // decode this much before a seek target
 
 // One accepted container/codec pair. The provider's `format` selects the demuxer, the codec
 // whitelist and the expected decoder; FFmpeg never probes anything else. MP3 and FLAC keep
-// their own demuxers; AAC and FLAC can arrive in an MP4/fMP4 container (Bilibili's
+// their own demuxers; AAC and E-AC-3 arrive in an MP4/fMP4 container (the Bilibili CDN's
 // audio/mp4), demuxed by "mov".
 struct FormatRule {
-    const char* input;   // av_find_input_format name, null when unsupported
-    const char* codecs;  // avcodec whitelist
-    const char* demuxer; // avformat whitelist
+    const char* input;          // av_find_input_format name, null when unsupported
+    const char* codecs;         // avcodec whitelist
+    const char* demuxer;        // avformat whitelist
     AVCodecID expected;
 };
 std::optional<FormatRule> ruleFor(const QString& format)
@@ -40,6 +40,8 @@ std::optional<FormatRule> ruleFor(const QString& format)
         return FormatRule{"mov", "flac", "mov", AV_CODEC_ID_FLAC};
     if (format == QStringLiteral("aac"))
         return FormatRule{"mov", "aac", "mov", AV_CODEC_ID_AAC};
+    if (format == QStringLiteral("eac3"))
+        return FormatRule{"mov", "eac3", "mov", AV_CODEC_ID_EAC3};
     return std::nullopt;
 }
 } // namespace
@@ -119,8 +121,7 @@ bool AudioDecoder::open(std::shared_ptr<ByteSource> stream, const QString& forma
     const auto rule = ruleFor(format);
     const AVInputFormat* input = rule ? av_find_input_format(rule->input) : nullptr;
     const AVCodecID expected = rule ? rule->expected : AV_CODEC_ID_NONE;
-    const AVCodec* codec = rule ? avcodec_find_decoder(expected) : nullptr;
-    if (!rule || !input || !codec) {
+    if (!rule || !input) {
         failWith(PlaybackError::UnsupportedFormat);
         return false;
     }
@@ -160,7 +161,8 @@ bool AudioDecoder::open(std::shared_ptr<ByteSource> stream, const QString& forma
         if (int(i) != m_streamIndex)
             m_format->streams[i]->discard = AVDISCARD_ALL;
     const AVStream* audio = m_format->streams[m_streamIndex];
-    m_codec = avcodec_alloc_context3(codec);
+    const AVCodec* codec = avcodec_find_decoder(expected);
+    m_codec = codec ? avcodec_alloc_context3(codec) : nullptr;
     if (!m_codec || avcodec_parameters_to_context(m_codec, audio->codecpar) < 0 ||
         avcodec_open2(m_codec, codec, nullptr) < 0 || m_codec->sample_rate <= 0 ||
         m_codec->sample_rate > 768000 || m_codec->ch_layout.nb_channels <= 0 ||

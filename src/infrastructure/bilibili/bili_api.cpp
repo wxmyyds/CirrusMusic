@@ -80,7 +80,10 @@ BiliApi::BiliApi(std::unique_ptr<QNetworkAccessManager> manager, QObject* parent
 
 BiliApi::~BiliApi() = default;
 
-void BiliApi::setCookie(QByteArray cookie) { m_cookie = std::move(cookie).trimmed(); }
+void BiliApi::setCookie(QByteArray cookie)
+{
+    m_cookie = std::move(cookie).trimmed();
+}
 
 quint64 BiliApi::resolve(const SongTargetInfo& song, Quality preferred)
 {
@@ -95,16 +98,18 @@ quint64 BiliApi::resolve(const SongTargetInfo& song, Quality preferred)
     const auto id = request.id;
     if (request.queries.isEmpty()) {
         m_requests.insert(id, std::move(request));
-        QTimer::singleShot(0, this, [this, id] { fail(id, QStringLiteral("empty-query")); });
+        QTimer::singleShot(0, this, [this, id] {
+            fail(id, QStringLiteral("empty-query"));
+        });
         return id;
     }
     // Reuse the cached WBI key and the anonymous cookie when they are still good; only the
     // search/view/playurl requests then go out. Otherwise this request fetches its own (the
     // shared caches make the next one skip straight to search).
-    const bool mixinFresh =
-        !m_mixinKey.isEmpty() && QDateTime::currentMSecsSinceEpoch() - m_mixinAtMs < kMixinTtlMs;
-    request.stage =
-        mixinFresh ? Stage::Search : (effectiveCookie().isEmpty() ? Stage::Cookie : Stage::Mixin);
+    const bool mixinFresh = !m_mixinKey.isEmpty() &&
+                            QDateTime::currentMSecsSinceEpoch() - m_mixinAtMs < kMixinTtlMs;
+    request.stage = mixinFresh ? Stage::Search
+                               : (effectiveCookie().isEmpty() ? Stage::Cookie : Stage::Mixin);
     m_requests.insert(id, std::move(request));
     QTimer::singleShot(0, this, [this, id] { issue(id); });
     return id;
@@ -185,7 +190,7 @@ void BiliApi::issue(quint64 id)
         QUrlQuery query;
         query.addQueryItem(QStringLiteral("bvid"), it->bvid);
         query.addQueryItem(QStringLiteral("cid"), QString::number(it->cid));
-        query.addQueryItem(QStringLiteral("fnval"), QString::number(kFnvalDash));
+        query.addQueryItem(QStringLiteral("fnval"), QString::number(kFnvalDashDolby));
         query.addQueryItem(QStringLiteral("fnver"), QStringLiteral("0"));
         query.addQueryItem(QStringLiteral("fourk"), QStringLiteral("0"));
         query.addQueryItem(QStringLiteral("otype"), QStringLiteral("json"));

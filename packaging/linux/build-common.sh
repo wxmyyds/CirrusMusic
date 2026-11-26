@@ -89,14 +89,15 @@ while IFS= read -r -d '' path; do
 done < <(find "$stage/opt/cirrus" -type f -print0)
 ((${#elves[@]} > 0))
 
-# Linux packages must not contain either application or Qt SDK FFmpeg libraries.
+# No loose FFmpeg DSOs or Qt FFmpeg media plugin. Fedora's isolated EAC3 bridge
+# contains static private objects and is validated separately by its entrypoint.
 mapfile -t bundled_ffmpeg < <(find "$stage/opt/cirrus" \
     \( -name 'libavcodec.so*' -o -name 'libavformat.so*' -o -name 'libavutil.so*' \
        -o -name 'libavfilter.so*' -o -name 'libavdevice.so*' \
        -o -name 'libswresample.so*' -o -name 'libswscale.so*' \
        -o -name 'libpostproc.so*' -o -name '*ffmpeg*.so*' -o -name '*FFmpeg*.so*' \) -print)
 if ((${#bundled_ffmpeg[@]})); then
-    printf 'Bundled FFmpeg is forbidden on Linux: %s\n' "${bundled_ffmpeg[@]}" >&2
+    printf 'Unexpected loose FFmpeg library or plugin: %s\n' "${bundled_ffmpeg[@]}" >&2
     exit 1
 fi
 declare -A system_ffmpeg=()

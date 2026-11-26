@@ -1,8 +1,40 @@
 #!/usr/bin/env bash
 # Native fedora package entrypoint; shared compilation stays in ../build-common.sh.
 set -euo pipefail
+[[ ${GITHUB_ACTIONS:-} == true ]] || { echo '该操作需要通过 GitHub Actions 执行。' >&2; exit 1; }
+source /etc/os-release
+[[ $ID == fedora && $VERSION_ID == 44 ]]
+original=$(cd "$(dirname "$0")/../../.." && pwd)
+case "${1:?missing architecture}" in x86_64|arm64) ;; *) exit 1 ;; esac
+patched="$original/build/fedora-source-$1"
+[[ ! -e $patched ]]
+mkdir -p "$original/build"
+# Patch only Cirrus, in a detached build worktree. Upstream FFmpeg stays unmodified.
+git -C "$original" worktree add --detach "$patched" HEAD
+patch_file="$original/packaging/linux/fedora/0001-cirrus-fedora-eac3-backend.patch"
+sha256sum "$patch_file"
+git -C "$patched" apply --check "$patch_file"
+git -C "$patched" apply "$patch_file"
+git -C "$patched" diff --stat
 distribution=fedora
-source "$(dirname "$0")/../build-common.sh"
+source "$patched/packaging/linux/build-common.sh"
+
+# Exercise the actual patched packet-to-PCM path on each native Fedora architecture.
+# These are mandatory positive EAC3 tests, including seek/reset and backend identity;
+# ordinary AAC/FLAC must still use the system decoder.
+codec_tests="$build/codec-tests"
+PKG_CONFIG_PATH="$deps/lib/pkgconfig" cmake -S "$root" -B "$codec_tests" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$qt;$deps" \
+    -DPKG_CONFIG_EXECUTABLE="$CIRRUS_PKG_CONFIG_EXECUTABLE" \
+    -DOPENSSL_ROOT_DIR="$CIRRUS_OPENSSL_ROOT" \
+    -DBUILD_TESTING=ON -DCIRRUS_BUILD_GALLERY=OFF -DCIRRUS_DEPLOY_QT=OFF
+cmake --build "$codec_tests" --target tst_audio_decoder --parallel "${JOBS:-4}"
+QT_QPA_PLATFORM=offscreen QT_MEDIA_BACKEND=gstreamer \
+    ctest --test-dir "$codec_tests" --no-tests=error --verbose -R '^audio_decoder$' \
+    --output-junit "$build/fedora-codec-tests.xml"
+mapfile -t eac3_backends < <(find "$stage/opt/cirrus" -type f -name 'libcirrus_eac3.so.*')
+((${#eac3_backends[@]} == 1))
+"$root/packaging/linux/fedora/verify-eac3-backend.sh" "${eac3_backends[0]}"
 
 make_rpm() {
     local top="$build/rpmbuild" spec="$build/cirrus.spec" sonames="$build/private-sonames.txt"
@@ -41,7 +73,8 @@ Recommends: gnome-keyring
 
 %description
 Cirrus carries private Qt and QtKeychain libraries in /opt/cirrus.
-FFmpeg comes from official Fedora system packages.
+Ordinary audio uses official Fedora FFmpeg system libraries.
+E-AC-3 uses an isolated, private, minimal FFmpeg backend.
 It is not affiliated with NetEase or Bilibili.
 
 %install

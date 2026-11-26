@@ -45,13 +45,17 @@ QString formatOf(const AudioStream& stream)
     const auto codecs = stream.codecs.toLower();
     if (codecs.contains(QStringLiteral("flac")))
         return mime == QStringLiteral("audio/flac") ? QStringLiteral("flac")
-                                                    : QStringLiteral("flac-mp4");
+                                                     : QStringLiteral("flac-mp4");
+    if (codecs.contains(QStringLiteral("ec-3")))
+        return QStringLiteral("eac3");
     if (codecs.startsWith(QStringLiteral("mp4a.")))
         return QStringLiteral("aac");
     if (!codecs.isEmpty())
         return {};
     if (mime == QStringLiteral("audio/flac") || mime == QStringLiteral("audio/x-flac"))
         return QStringLiteral("flac");
+    if (mime == QStringLiteral("audio/eac3"))
+        return QStringLiteral("eac3");
     if (mime == QStringLiteral("audio/mp4") || mime == QStringLiteral("video/mp4"))
         return QStringLiteral("aac");
     return {};
@@ -191,8 +195,8 @@ void StreamResolver::resolved(quint64 apiId, BiliApi::Result result)
     if (!result.stream) {
         // A withheld song is NeedPermission; anything else is the provider simply having no
         // usable match (or a transport/parse failure), never a fallback trigger.
-        fail(ours,
-             result.needPermission ? PlaybackError::NeedPermission : PlaybackError::Unavailable);
+        fail(ours, result.needPermission ? PlaybackError::NeedPermission
+                                         : PlaybackError::Unavailable);
         return;
     }
     auto& stream = *result.stream;
@@ -205,21 +209,24 @@ void StreamResolver::resolved(quint64 apiId, BiliApi::Result result)
         fail(ours, PlaybackError::UnsupportedFormat);
         return;
     }
-    const auto url =
-        media::approvedMediaUrl(SourceProvider::Bilibili, QUrl(stream.url, QUrl::StrictMode));
+    const auto url = media::approvedMediaUrl(SourceProvider::Bilibili,
+                                              QUrl(stream.url, QUrl::StrictMode));
     if (!url) {
         fail(ours, PlaybackError::UnsafeSource);
         return;
     }
-    MediaSource base{*url, qualityKeyOf(stream), format, stream.size,
+    MediaSource base{*url,
+                     qualityKeyOf(stream),
+                     format,
+                     stream.size,
                      QDeadlineTimer(kUrlLifetimeMs)};
     base.provider = SourceProvider::Bilibili;
     base.identity = StreamKey{streamKeyOf(stream, result.bvid, result.cid)};
     base.referer = QString::fromLatin1(kBiliReferer);
     base.userAgent = QString::fromLatin1(kBiliUserAgent);
-    base.bili =
-        BiliStreamMeta{result.bvid, result.cid,
-                       stream.id > 0 ? QString::number(stream.id) : QString{}, stream.qualityTag};
+    base.bili = BiliStreamMeta{result.bvid, result.cid,
+                               stream.id > 0 ? QString::number(stream.id) : QString{},
+                               stream.qualityTag};
     log::debug(lcApi, "bili.source",
                {{"song", it->query.song.value},
                 {"bvid", result.bvid},
@@ -243,7 +250,10 @@ void StreamResolver::finish(quint64 id, StreamResult result)
     emit completed(id, context, std::move(result));
 }
 
-void StreamResolver::fail(quint64 id, PlaybackError error) { finish(id, PlaybackFailure{error}); }
+void StreamResolver::fail(quint64 id, PlaybackError error)
+{
+    finish(id, PlaybackFailure{error});
+}
 
 void StreamResolver::cancel(quint64 id)
 {

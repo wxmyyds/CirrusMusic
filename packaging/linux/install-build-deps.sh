@@ -45,7 +45,7 @@ case "$distribution" in
     fedora)
         [[ $ID == fedora && $VERSION_ID == 44 ]]
         "${privilege[@]}" dnf install -y \
-            gcc gcc-c++ make cmake ccache ninja-build patchelf pkgconf-pkg-config file binutils \
+            gcc gcc-c++ make cmake ccache ninja-build nasm patchelf pkgconf-pkg-config file binutils \
             git /usr/bin/curl ca-certificates tar xz gzip zstd python3 python3-pip \
             openssl-devel zlib-devel libzstd-devel libsecret-devel \
             ffmpeg-free libavformat-free-devel libavcodec-free-devel libavutil-free-devel libswresample-free-devel \

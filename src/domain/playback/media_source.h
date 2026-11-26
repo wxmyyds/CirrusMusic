@@ -38,7 +38,7 @@ struct BiliStreamMeta {
     QString bvid;
     QString cid;
     QString streamId;
-    QString qualityTag; // "hires" or empty
+    QString qualityTag; // "hires", "dolby" or empty
     friend bool operator==(const BiliStreamMeta&, const BiliStreamMeta&) = default;
 };
 

@@ -19,7 +19,7 @@ class ByteSource;
 // One audio stream decoded to interleaved stereo float at its own sample rate, read through
 // a ByteSource (the AudioStore's stream; blocking: run it on a decoder thread). Only the
 // demuxer and codec named by the provider's format are allowed: FFmpeg never probes other
-// formats. MP3 and FLAC keep their own demuxers; "aac" and "flac-mp4" use MP4/fMP4
+// formats. MP3 and FLAC keep their own demuxers; "aac" and "eac3" are demuxed from MP4/fMP4
 // (the provider's audio/mp4). Start/end padding (MP3 encoder delay, LAME header) is trimmed by
 // libavcodec.
 class AudioDecoder final
@@ -30,7 +30,7 @@ class AudioDecoder final
     AudioDecoder(const AudioDecoder&) = delete;
     AudioDecoder& operator=(const AudioDecoder&) = delete;
 
-    // `format`: "mp3", "flac", "aac" (MP4/AAC), or "flac-mp4". False on failure;
+    // `format`: "mp3", "flac", "aac" (MP4/AAC) or "eac3" (MP4/E-AC-3). False on failure;
     // error() says why.
     bool open(std::shared_ptr<ByteSource> stream, const QString& format);
     [[nodiscard]] int sampleRate() const { return m_rate; }

@@ -88,7 +88,46 @@ runs:
         path: ${{ env.DEPS }}
         key: ${{ steps.deps.outputs.cache-primary-key }}
 
-    - name: Verify distribution FFmpeg and supported audio formats
+    - name: Identify isolated Fedora EAC3 dependency build
+      if: inputs.distribution == 'fedora'
+      id: eac3-identity
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "CIRRUS_EAC3_FFMPEG_PREFIX=$GITHUB_WORKSPACE/build-fedora-eac3" >> "$GITHUB_ENV"
+        fingerprint=$(rpm -q gcc gcc-c++ glibc-devel binutils nasm | sha256sum | cut -d' ' -f1)
+        echo "toolchain=$fingerprint" >> "$GITHUB_OUTPUT"
+
+    - name: Restore isolated Fedora EAC3 dependency
+      if: inputs.distribution == 'fedora'
+      id: eac3
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ env.CIRRUS_EAC3_FFMPEG_PREFIX }}
+        key: fedora44-eac3-${{ inputs.arch }}-${{ steps.eac3-identity.outputs.toolchain }}-${{ hashFiles('packaging/versions.sh', 'packaging/linux/fedora/build-eac3-ffmpeg.sh') }}
+
+    - name: Build isolated Fedora EAC3 dependency
+      if: inputs.distribution == 'fedora' && steps.eac3.outputs.cache-hit != 'true'
+      shell: bash
+      run: packaging/linux/fedora/build-eac3-ffmpeg.sh "$CIRRUS_EAC3_FFMPEG_PREFIX"
+
+    - name: Verify isolated Fedora EAC3 dependency identity
+      if: inputs.distribution == 'fedora'
+      shell: bash
+      run: |
+        set -euo pipefail
+        source packaging/versions.sh
+        read -r version digest native < "$CIRRUS_EAC3_FFMPEG_PREFIX/complete"
+        [[ $version == "$FFMPEG_VERSION" && $digest == "$FFMPEG_SHA256" && $native == "$(uname -m)" ]]
+
+    - name: Save isolated Fedora EAC3 dependency
+      if: inputs.distribution == 'fedora' && steps.eac3.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ env.CIRRUS_EAC3_FFMPEG_PREFIX }}
+        key: ${{ steps.eac3.outputs.cache-primary-key }}
+
+    - name: Verify distribution FFmpeg and baseline audio formats
       shell: bash
       run: packaging/linux/verify-system-ffmpeg.sh
 

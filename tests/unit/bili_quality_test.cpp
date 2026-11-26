@@ -9,7 +9,10 @@ using namespace cirrus::bilibili;
 
 namespace
 {
-QJsonObject parse(const QByteArray& json) { return QJsonDocument::fromJson(json).object(); }
+QJsonObject parse(const QByteArray& json)
+{
+    return QJsonDocument::fromJson(json).object();
+}
 } // namespace
 
 class BiliQualityTest : public QObject
@@ -22,6 +25,7 @@ class BiliQualityTest : public QObject
         QCOMPARE(qualityFromKey(QStringLiteral("lossless")), Quality::Lossless);
         QCOMPARE(qualityFromKey(QStringLiteral("medium")), Quality::Medium);
         QCOMPARE(qualityFromKey(QStringLiteral("low")), Quality::Low);
+        QCOMPARE(qualityFromKey(QStringLiteral("dolby")), Quality::Dolby);
         QCOMPARE(qualityFromKey(QStringLiteral("exhigh")), Quality::High);
         QCOMPARE(qualityFromKey(QString()), Quality::High);
     }
@@ -64,27 +68,6 @@ class BiliQualityTest : public QObject
         QVERIFY(!selectStream({}, Quality::High).has_value());
     }
 
-    void applicationQualitiesDoNotPreferDolby()
-    {
-        auto streams = mapPlayUrl(parse(cirrus::test::kDashDolbyFlac)).result.streams;
-        // Dolby entries are excluded before ordinary quality selection.
-        for (const auto quality :
-             {Quality::Medium, Quality::High, Quality::Lossless, Quality::HiRes}) {
-            const auto selected = selectStream(streams, quality);
-            QVERIFY(selected);
-            QVERIFY(selected->qualityTag != QStringLiteral("dolby"));
-        }
-        // The ordinary AAC remains selectable even when no FLAC/Hi-Res track exists.
-        streams.removeIf(
-            [](const AudioStream& stream) { return stream.qualityTag == QStringLiteral("hires"); });
-        for (const auto quality :
-             {Quality::Medium, Quality::High, Quality::Lossless, Quality::HiRes}) {
-            const auto selected = selectStream(streams, quality);
-            QVERIFY(selected);
-            QCOMPARE(selected->id, 30280);
-        }
-    }
-
     void selectionDegradesDownTheLadder()
     {
         QList<AudioStream> onlyLow;
@@ -102,39 +85,29 @@ class BiliPlayUrlTest : public QObject
 {
     Q_OBJECT
   private slots:
-    void mapsOrdinaryAudioAndIgnoresDolby()
+    void mapsDashDolbyAndFlac()
     {
         const auto data = parse(cirrus::test::kDashDolbyFlac);
         const auto mapping = mapPlayUrl(data);
-        QCOMPARE(mapping.result.streams.size(), 2);
+        QVERIFY(mapping.result.streams.size() >= 3);
         QVERIFY(mapping.result.videoAvailable);
-        bool sawRegular = false, sawFlac = false;
+        bool sawRegular = false, sawDolby = false, sawFlac = false;
         for (const auto& s : mapping.result.streams) {
             if (s.id == 30280) {
                 sawRegular = true;
                 QCOMPARE(s.size, qint64(4800000));
                 QCOMPARE(s.md5, QByteArray("0123456789abcdef0123456789abcdef"));
             }
-            QVERIFY(s.id != 30250);
-            QVERIFY(s.qualityTag != QStringLiteral("dolby"));
+            if (s.id == 30250) {
+                sawDolby = true;
+                QCOMPARE(s.qualityTag, QStringLiteral("dolby"));
+            }
             if (s.id == 30251) {
                 sawFlac = true;
                 QCOMPARE(s.qualityTag, QStringLiteral("hires"));
             }
         }
-        QVERIFY(sawRegular && sawFlac);
-    }
-
-    void dolbyOnlyIsNotPlayable()
-    {
-        auto data = parse(cirrus::test::kDashDolbyFlac);
-        auto dash = data.value(QStringLiteral("dash")).toObject();
-        dash.remove(QStringLiteral("audio"));
-        dash.remove(QStringLiteral("flac"));
-        data.insert(QStringLiteral("dash"), dash);
-        const auto mapping = mapPlayUrl(data);
-        QVERIFY(mapping.result.videoAvailable);
-        QVERIFY(mapping.result.streams.isEmpty());
+        QVERIFY(sawRegular && sawDolby && sawFlac);
     }
 
     void nearestUrlFirst()

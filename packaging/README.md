@@ -21,7 +21,7 @@ Linux 通用编译、部署、桌面资源和依赖安装直接放在 `packaging
 
 | 工作流 | 入口 | 职责 |
 | --- | --- | --- |
-| `ci.yml` | master push、PR、手动、可复用调用 | Ubuntu 24.04 x86_64、Windows x86_64、macOS ARM64 三个测试 job；编译测试所需目标、QML lint、CTest，仅上传测试报告 |
+| `ci.yml` | master push、PR、手动、可复用调用 | Ubuntu 24.04、Fedora 44 的 x86_64，以及 Windows x86_64、macOS ARM64 四个测试 job；编译测试所需目标、QML lint、CTest，仅上传测试报告 |
 | `linux-build.yml` | 手动、可复用调用 | Arch、Debian、Fedora × x86_64、ARM64，矩阵展开为六个独立构建 job |
 | `windows-build.yml` | 手动、可复用调用 | x86_64、ARM64 两个独立构建 job，各输出 ZIP 和安装器 |
 | `macos-build.yml` | 手动、可复用调用 | ARM64、x86_64 两个独立构建 job，各输出 DMG |
@@ -46,7 +46,7 @@ Linux 通用编译、部署、桌面资源和依赖安装直接放在 `packaging
 | macOS ARM64 | `Cirrus-<版本>-macos-arm64.dmg` | `cirrus-macos-arm64` |
 | macOS x86_64 | `Cirrus-<版本>-macos-x86_64.dmg` | `cirrus-macos-x86_64` |
 
-十组目标共十二个二进制安装包。Debian x86_64 job 还收集一份 `Cirrus-<版本>-library-sources.tar.xz`，包含固定版本的 FFmpeg、QtKeychain 原始源码，供全部随包部署目标共用；其中 FFmpeg 源码用于 macOS，Linux 不编译或随包部署 FFmpeg。
+十组目标共十二个二进制安装包。Debian x86_64 job 还收集一份 `Cirrus-<版本>-library-sources.tar.xz`，包含固定版本的 FFmpeg、QtKeychain 原始源码，供全部随包部署目标共用；其中 FFmpeg 原始源码供 macOS 和 Fedora 的最小 E-AC-3 库共用。
 
 版本唯一来源为 `CMakeLists.txt` 中的 `project(CirrusMusic VERSION x.y.z)`；Release 标签必须为 `vx.y.z`，说明来自 [resources/CHANGELOG.md](../resources/CHANGELOG.md) 的唯一版本章节；该文件只保留当前待发布版本。版本号相同的分支包可能包含不同提交，下载时核对运行来源和提交 SHA。
 
@@ -67,13 +67,13 @@ Arch ARM 镜像不是 Arch Linux ARM 官方发布镜像。当前固定 `base-dev
 
 - **Arch**：对检出提交做 `git archive`，以 SHA-256 验证源码，渲染 `packaging/linux/arch/PKGBUILD.in` 后调用 `makepkg`。装到 `/usr`，不打包系统 Qt/FFmpeg。配方同时支持 `x86_64`、`aarch64`，检查包版本、实际架构、桌面资源和许可证。关闭 LTO 和额外 debug 包；依赖 Arch 滚动仓库，Qt 私有接口升级后需要重新构建。
 - **Debian**：装到 `/opt/cirrus`，自带 Qt/QtKeychain，FFmpeg 使用 Debian 官方共享库；桌面集成和文档放到 `/usr/share`，`/usr/bin/cirrus` 链接到主程序。`dpkg-shlibdeps` 从 Debian 包数据库生成外部 ABI 依赖，再添加证书、libsecret、图标主题依赖。目标是 Debian 13，不再声称兼容旧 Ubuntu 22.04 / Debian 12。
-- **Fedora**：同一应用安装布局，使用 Fedora 官方 `ffmpeg-free` 开发库，不启用 RPM Fusion。由 `rpmbuild` 生成 RPM；保留 FFmpeg 等外部库的自动 ABI 依赖，排除已随包部署的私有 SONAME 依赖，并禁止把私有库发布为全局 Provides。只产生一个对应原生架构的二进制 RPM。
+- **Fedora**：同一应用安装布局，使用 Fedora 官方 `ffmpeg-free` 开发库，不启用 RPM Fusion。仅在 Fedora 构建的独立工作树中应用 `packaging/linux/fedora/0001-cirrus-fedora-eac3-backend.patch`，为 Cirrus 接入内置 E-AC-3 解码库；FFmpeg 上游源码不打补丁，非 Fedora 构建不应用这份补丁。由 `rpmbuild` 生成 RPM；保留系统库的自动 ABI 依赖，排除随包私有 SONAME 依赖，并禁止把私有库发布为全局 Provides。
 
 所有 Linux 目标通过系统 pkg-config 查找 FFmpeg，要求 5.1 起的新声道布局 API；不从 Qt SDK 或私有依赖前缀查找。依赖准备阶段核对四个开发模块的系统路径和包所有权，并用发行版 FFmpeg 实际解码 MP3、FLAC、MP4/AAC、fragmented MP4 和 MP4/FLAC 样本。
 
-网易云链路使用 MP3/FLAC，B 站辅助源使用普通 AAC/FLAC；请求不包含 Dolby 标志，解析时忽略 Dolby 音轨。所有平台统一拒绝 E-AC-3，不设置按平台切换的编码能力分支。测试保留有效 E-AC-3 样本，作为明确拒绝的负向用例；正常音轨、格式映射和音质选择仍完整验证。
+公共播放代码、B 站 Dolby 请求与原有格式策略保持不变。Fedora 补丁按实际 codec ID 将 E-AC-3 交给 `libcirrus_eac3.so.1`，其余编码仍走原有系统 FFmpeg 路径，不进行失败重试或音源切换。该私有库由未修改的 FFmpeg 9.0.2 静态对象组成，配置仅启用 E-AC-3 及其上游强制的 AC-3/解析器依赖；应用入口只接受 E-AC-3，不把 AC-3 转给它。库以隐藏符号、版本脚本及本地绑定隔离内部 FFmpeg，边界仅传原始 packet 字节、时间戳及立体声 PCM，不交换 FFmpeg 对象。两个 Fedora 原生构建均运行应用补丁后的音频测试，正向验证 E-AC-3、seek/reset 和实际后端选择，同时核验普通 AAC/FLAC 仍走系统库。
 
-Debian/Fedora 部署排除未使用的 Qt FFmpeg 媒体播放插件及所有 FFmpeg 共享库；Qt 音频设备集成保留 GStreamer，实际歌曲解码仍只有 Cirrus 的 FFmpeg 解码器。部署后检查包内没有 FFmpeg，四个实际 ELF 导入均解析到系统库，生成的 DEB/RPM 元数据也必须包含四个运行库依赖。保留全部 ELF 架构、缺库与构建目录泄漏校验；删除旧 SDK FFmpeg 专用的 bzip2 SONAME 改写。只 strip 尚未去符号的文件。桌面文件与 AppStream 元数据在打包时验证。
+Debian/Fedora 部署排除未使用的 Qt FFmpeg 媒体播放插件及所有 FFmpeg 共享库；Qt 音频设备集成保留 GStreamer，实际歌曲解码仍只有 Cirrus 的 FFmpeg 解码器。部署后检查包内没有独立的 FFmpeg 共享库或 Qt FFmpeg 插件，四个实际 ELF 导入均解析到系统库，生成的 DEB/RPM 元数据也必须包含四个运行库依赖。Fedora 另检查唯一的私有 E-AC-3 库：只导出规定的 C ABI，不动态引用或导出 FFmpeg 符号、不依赖系统 FFmpeg，并拒绝 TEXTREL。保留全部 ELF 架构、缺库与构建目录泄漏校验；删除旧 SDK FFmpeg 专用的 bzip2 SONAME 改写。只 strip 尚未去符号的文件。桌面文件与 AppStream 元数据在打包时验证。
 
 Arch 只保留 `packaging/linux/arch/` 的当前源码构建链路，旧上游 AUR 配方已移除。`packaging/linux/arch/cpkg/` 负责将同一份二进制产物接入 `arch-cloud-pkgs` 的统一 OCI 发布器，不在包仓库重新构建 Cirrus。
 
@@ -84,7 +84,7 @@ Arch 只保留 `packaging/linux/arch/` 的当前源码构建链路，旧上游 A
 | 库 | 随包目标的来源 |
 | --- | --- |
 | Qt 6.11.2 | Qt 官方二进制；macOS `clang_64` 是同时含两个 CPU slice 的框架 |
-| FFmpeg | Linux 使用各发行版官方共享库；macOS 从固定 SHA-256 的 9.0.2 源码编译；Windows 由固定 baseline 的 vcpkg 构建。应用支持 MP3、FLAC，以及 MP4/fMP4 中的 AAC/FLAC |
+| FFmpeg | Linux 主解码器使用各发行版官方共享库；仅 Fedora 通过应用构建补丁增加隔离的最小 E-AC-3 库。macOS 从固定 SHA-256 的 9.0.2 源码编译；Windows 由固定 baseline 的 vcpkg 构建，保持原有配置 |
 | QtKeychain 0.17.0 | 同一源码脚本，针对选定 Qt 构建；Windows 静态链接 |
 | OpenSSL、zlib、zstd | Linux 用对应发行版；Windows 用 vcpkg；macOS 用 Homebrew 的 OpenSSL/zstd 和系统 zlib |
 

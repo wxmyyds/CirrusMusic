@@ -86,7 +86,9 @@ if(CIRRUS_DEPLOY_QT)
             INCLUDE_PLUGINS qwayland
             EXCLUDE_PLUGIN_TYPES designer qmltooling egldeviceintegrations
             PRE_EXCLUDE_REGEXES
-                "^lib(avcodec|avformat|avutil|avfilter|avdevice|swresample|swscale|postproc)[.]so([.]|$)")
+                "^libavcodec[.]so" "^libavformat[.]so" "^libavutil[.]so"
+                "^libavfilter[.]so" "^libavdevice[.]so" "^libswresample[.]so"
+                "^libswscale[.]so" "^libpostproc[.]so")
     elseif(WIN32)
         # windeployqt aborts on plugins Windows does not have (qwayland), so the Linux
         # list stays out. Verbose: a failure then says where it stopped. The MSVC runtime

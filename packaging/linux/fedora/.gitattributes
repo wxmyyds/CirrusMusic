@@ -1,0 +1,3 @@
+# Unified-diff context lines need their leading space, including empty lines.
+# Check actual added code with git apply --check --whitespace=error-all.
+*.patch -whitespace
