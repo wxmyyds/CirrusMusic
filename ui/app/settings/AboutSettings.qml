@@ -87,7 +87,14 @@ SettingsGroup {
             case UpdateCheck.Downloaded:
                 return qsTr("%1 已下载").arg(App.updates.latestVersion);
             case UpdateCheck.DownloadFailed:
-                return qsTr("下载失败，可以重试或到发布页下载");
+                switch (App.updates.downloadFailure) {
+                case UpdateCheck.DownloadDamaged:
+                    return qsTr("下载的文件和发布的不一致，已删除；可以重试或到发布页下载");
+                case UpdateCheck.DownloadUnsaved:
+                    return qsTr("下载的文件存不下来，请检查磁盘空间");
+                default:
+                    return qsTr("下载中断，可以重试或到发布页下载");
+                }
             }
             switch (status) {
             case UpdateCheck.Checking:
@@ -102,6 +109,8 @@ SettingsGroup {
                     return qsTr("GitHub 暂时拒绝了请求，请稍后再试");
                 case UpdateCheck.Invalid:
                     return qsTr("检查失败：GitHub 的回复无法识别");
+                case UpdateCheck.Server:
+                    return qsTr("检查失败：GitHub 暂时出错，请稍后再试");
                 default:
                     return qsTr("检查失败：网络不可用");
                 }

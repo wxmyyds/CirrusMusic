@@ -26,8 +26,20 @@ class CommentWriteRequests;
 }
 
 enum class BackendState { Dormant, Starting, Ready, Failed, Stopping, Stopped };
-enum class StartupError { None, Configuration, Storage, GuestBootstrap };
-CIRRUS_LOG_ENUM(StartupError, None, Configuration, Storage, GuestBootstrap)
+// Storage is the database failing in general; the last three say why it can't be opened:
+// written by a newer version (never downgraded), no disk space left, held by another
+// process. All but GuestBootstrap are fatal.
+enum class StartupError {
+    None,
+    Configuration,
+    Storage,
+    GuestBootstrap,
+    NewerStorage,
+    StorageFull,
+    StorageLocked
+};
+CIRRUS_LOG_ENUM(StartupError, None, Configuration, Storage, GuestBootstrap, NewerStorage,
+                StorageFull, StorageLocked)
 enum class AccountAction {
     BeginLogin,
     Restore,

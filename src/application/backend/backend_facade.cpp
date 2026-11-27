@@ -124,8 +124,8 @@ void BackendFacade::deliver(BackendEvent event)
         event.generation != m_generation)
         return;
     if (event.kind == Kind::Started && m_state == BackendState::Starting) {
-        const bool fatal = event.startupError == StartupError::Configuration ||
-                           event.startupError == StartupError::Storage;
+        const bool fatal = event.startupError != StartupError::None &&
+                           event.startupError != StartupError::GuestBootstrap;
         setState(fatal ? BackendState::Failed : BackendState::Ready);
         if (m_state == BackendState::Ready || m_state == BackendState::Failed)
             emit started(event.startupError);

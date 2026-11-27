@@ -92,7 +92,12 @@ class BackendWorker final : public QObject
                     if (m_closing)
                         return;
                     if (error != storage::StorageError::None) {
-                        startup(StartupError::Storage);
+                        startup(
+                            error == storage::StorageError::NewerSchema ? StartupError::NewerStorage
+                            : error == storage::StorageError::InsufficientSpace
+                                ? StartupError::StorageFull
+                            : error == storage::StorageError::Locked ? StartupError::StorageLocked
+                                                                     : StartupError::Storage);
                         return;
                     }
                     m_installation = std::make_unique<storage::InstallationStore>(*m_database);

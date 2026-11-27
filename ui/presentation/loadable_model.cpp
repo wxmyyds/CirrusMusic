@@ -92,6 +92,13 @@ LoadError LoadableModel::describe(const Failure& failure, int* state) const
     error.kind = failure.kind;
     error.retryAfterMs = failure.retryAfterMs.value_or(0);
     int mapped = loadstate::Error;
+    // No backend: nothing loads, whatever the request (and retrying won't help).
+    if (const App* app = App::instance(); app && !app->startupProblem().isEmpty()) {
+        error.message = app->startupProblem();
+        if (state)
+            *state = mapped;
+        return error;
+    }
     switch (failure.kind) {
     case failure::Network:
     case failure::Timeout: {

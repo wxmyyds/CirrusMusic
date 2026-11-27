@@ -418,15 +418,27 @@ Item {
         }
     }
 
+    // Everything failed: said by why. The backend not started, the network (any section
+    // offline or a network failure), or the service.
     StateMessage {
+        readonly property bool noBackend: App.startupProblem !== ""
+        readonly property bool network: {
+            for (const m of [daily, recent, dailyPlaylists, recommended, charts, newAlbums, artists])
+                if (m.state === LoadState.Offline || m.error.kind === Failure.Network
+                        || m.error.kind === Failure.Timeout)
+                    return true;
+            return false;
+        }
         anchors.centerIn: parent
         width: Math.min(parent.width - 48, 480)
         visible: page.allFailed
-        glyph: Symbols.wifi_off
+        glyph: noBackend ? Symbols.error : network ? Symbols.wifi_off : Symbols.cloud_off
         tone: Md.Neutral
-        title: qsTr("连不上网易云音乐")
-        message: qsTr("检查网络后重试。")
-        actionText: qsTr("重试")
+        title: noBackend ? qsTr("Cirrus 没能启动") : network ? qsTr("连不上网易云音乐")
+                                                             : qsTr("首页没有加载出来")
+        message: noBackend ? App.startupProblem : network ? qsTr("检查网络后重试。")
+                                                          : qsTr("网易云音乐暂时没有回应，稍后重试。")
+        actionText: noBackend ? "" : qsTr("重试")
         actionGlyph: Symbols.refresh
         onActionTriggered: page.refresh()
     }
