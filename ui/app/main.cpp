@@ -182,8 +182,9 @@ int main(int argc, char* argv[])
 
     // A second launch shows the running app's window instead.
     cirrus::ui::SingleInstance instance;
-    if (!instance.claim(link))
-        return 0;
+    const auto claim = instance.claim(link);
+    if (claim != cirrus::ui::SingleInstance::ClaimResult::Started)
+        return claim == cirrus::ui::SingleInstance::ClaimResult::Activated ? 0 : 1;
     startLog();
     cirrus::log::info(lcApp, "app.platform",
                       {{"qpa", QGuiApplication::platformName()},

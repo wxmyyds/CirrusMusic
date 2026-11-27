@@ -492,6 +492,52 @@ class TogetherSessionTest : public QObject
         const auto c = h.take(TogetherKind::Play);
         QCOMPARE(std::get<TogetherPlay>(c.request.action).target.value, "7");
     }
+    void replaceOutcomesCommitOnlyAcknowledgedLists()
+    {
+        for (const auto outcome : {TogetherOutcome::Rejected, TogetherOutcome::Unknown}) {
+            Harness h;
+            h.createActive();
+            QSignalSpy ended(&h.together, &TogetherSession::ended);
+            const int playsBefore = h.count(TogetherKind::Play);
+            QVERIFY(h.player.replaceQueue({{"7"}, {"8"}}));
+            const auto replace = h.take(TogetherKind::ReplaceQueue);
+            h.publish(PlaybackState::Playing, 1000);
+            QTest::qWait(20); // The changed song is queued behind the pending replacement.
+            QCOMPARE(h.count(TogetherKind::Play), playsBefore);
+
+            TogetherResult result;
+            result.outcome = outcome;
+            result.error = outcome == TogetherOutcome::Rejected ? TogetherError::ProviderRejected
+                                                                 : TogetherError::Network;
+            h.reply(replace, result);
+            QCOMPARE(ended.size(), 1);
+            QCOMPARE(ended.first().first().value<TogetherSession::Reason>(),
+                     outcome == TogetherOutcome::Rejected ? TogetherSession::Reason::Rejected
+                                                          : TogetherSession::Reason::Failed);
+            QTest::qWait(20);
+            QCOMPARE(h.together.state(), TogetherSession::State::Idle);
+            QCOMPARE(h.count(TogetherKind::Play), playsBefore);
+        }
+
+        Harness acknowledged;
+        acknowledged.createActive();
+        QSignalSpy listSent(&acknowledged.together, &TogetherSession::listSent);
+        const int playsBefore = acknowledged.count(TogetherKind::Play);
+        QVERIFY(acknowledged.player.replaceQueue({{"7"}, {"8"}}));
+        const auto replace = acknowledged.take(TogetherKind::ReplaceQueue);
+        acknowledged.publish(PlaybackState::Playing, 1000);
+        QTest::qWait(20);
+        QCOMPARE(acknowledged.count(TogetherKind::Play), playsBefore);
+        acknowledged.reply(replace, Harness::ok());
+        QTRY_COMPARE(listSent.size(), 1);
+        const auto play = acknowledged.take(TogetherKind::Play);
+        QCOMPARE(std::get<TogetherPlay>(play.request.action).target.value, "7");
+
+        QVERIFY(acknowledged.player.replaceQueue({{"9"}, {"10"}}));
+        const auto next = acknowledged.take(TogetherKind::ReplaceQueue);
+        QCOMPARE(std::get<TogetherReplaceQueue>(next.request.action).versions,
+                 (QList<TogetherVersion>{{kMe, 2}}));
+    }
     void joinsAndPlaysTheRoomsList()
     {
         Harness h;

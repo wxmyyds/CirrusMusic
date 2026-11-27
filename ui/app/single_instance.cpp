@@ -59,19 +59,31 @@ bool validToken(const QByteArray& token)
 } // namespace
 
 SingleInstance::SingleInstance(QObject* parent) : QObject(parent) {}
+SingleInstance::SingleInstance(QString runtimeDirectory, QObject* parent)
+    : QObject(parent), m_runtimeDirectory(std::move(runtimeDirectory))
+{
+}
 
 SingleInstance::~SingleInstance() = default;
 
-bool SingleInstance::claim(const QString& link)
+SingleInstance::ClaimResult SingleInstance::claim(const QString& link)
 {
-    const QString dir = runtimeDir();
+    const QString dir = m_runtimeDirectory.isEmpty() ? runtimeDir() : m_runtimeDirectory;
+    if (!QDir().mkpath(dir)) {
+        log::warn(lcApp, "app.single_instance_runtime_failed", {"dir", log::path(dir)});
+        return ClaimResult::Failed;
+    }
+    QFile::setPermissions(dir,
+                          QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
     const QString name = serverName(dir);
     m_lock = std::make_unique<QLockFile>(dir + QStringLiteral("/instance.lock"));
     // Stale only when its process is gone, never by age.
     m_lock->setStaleLockTime(0);
     if (m_lock->tryLock(100)) {
-        listen(name);
-        return true;
+        if (listen(name))
+            return ClaimResult::Started;
+        m_lock.reset();
+        return ClaimResult::Failed;
     }
 
     QLocalSocket socket;
@@ -84,17 +96,20 @@ bool SingleInstance::claim(const QString& link)
                       link.toLatin1();
         else if (validToken(token))
             message += ' ' + token;
-        socket.write(message + '\n');
-        socket.waitForBytesWritten(kWaitMs);
+        message += '\n';
+        if (socket.write(message) != message.size() || !socket.waitForBytesWritten(kWaitMs)) {
+            log::warn(lcApp, "app.single_instance_send_failed", {"err", socket.error()});
+            return ClaimResult::Failed;
+        }
         socket.disconnectFromServer();
-        return false;
+        return ClaimResult::Activated;
     }
-    log::warn(lcApp, "app.single_instance_stale", {"lock", log::path(m_lock->fileName())});
+    log::warn(lcApp, "app.single_instance_unavailable", {"lock", log::path(m_lock->fileName())});
     m_lock.reset();
-    return true;
+    return ClaimResult::Failed;
 }
 
-void SingleInstance::listen(const QString& name)
+bool SingleInstance::listen(const QString& name)
 {
     // A socket file left by a crashed run.
     QLocalServer::removeServer(name);
@@ -108,8 +123,13 @@ void SingleInstance::listen(const QString& name)
             QTimer::singleShot(kWaitMs, socket, &QLocalSocket::abort);
         }
     });
-    if (!m_server->listen(name))
+    if (!m_server->listen(name)) {
         log::warn(lcApp, "app.single_instance_listen_failed", {"err", m_server->serverError()});
+        delete m_server;
+        m_server = nullptr;
+        return false;
+    }
+    return true;
 }
 
 void SingleInstance::read(QLocalSocket* socket)

@@ -915,24 +915,50 @@ void TogetherSession::sendReplace()
         ++mine->version;
     else
         versions.append({m_me, 0});
-    m_display = list.display;
-    m_random = list.random;
-    m_mode = list.mode;
-    m_versions = versions;
     log::info(lcTogether, "together.replace", {"songs", list.display.size()});
+    const auto generation = m_generation;
+    const auto context = m_context;
+    const auto candidate = list;
     m_replacing = send(TogetherReplaceQueue{m_room, list, versions, m_seq++},
-                       [this](const TogetherResult& r) {
+                       [this, generation, context, candidate, versions](const TogetherResult& r) {
                            m_replacing = 0;
-                           if (m_state != State::Active)
+                           if (m_state != State::Active || m_generation != generation ||
+                               m_context != context)
                                return;
-                           if (r.outcome != TogetherOutcome::Acknowledged)
+                           if (r.outcome != TogetherOutcome::Acknowledged) {
                                log::warn(lcTogether, "together.replace_failed",
                                          {{"outcome", r.outcome}, {"error", r.error}});
-                           else
-                               emit listSent();
-                           if (m_afterReplace)
-                               sendPlay(*std::exchange(m_afterReplace, std::nullopt));
+                               end(roomOver(r) ? Reason::RoomEnded
+                                               : (r.outcome == TogetherOutcome::Rejected
+                                                      ? Reason::Rejected
+                                                      : Reason::Failed),
+                                   false);
+                               return;
+                           }
+                           m_display = candidate.display;
+                           m_random = candidate.random;
+                           m_mode = candidate.mode;
+                           m_versions = versions;
+                           const QPointer<TogetherSession> self(this);
+                           emit listSent();
+                           if (!self || m_state != State::Active || m_generation != generation ||
+                               m_context != context)
+                               return;
+                           if (m_afterReplace) {
+                               auto play = std::exchange(m_afterReplace, std::nullopt);
+                               if (roomOrder().contains(play->target))
+                                   sendPlay(*play);
+                           }
+                           if (!self || m_state != State::Active || m_generation != generation ||
+                               m_context != context)
+                               return;
+                           const auto current = localList();
+                           if (current.display != candidate.display ||
+                               current.random != candidate.random || current.mode != candidate.mode)
+                               m_replaceTimer.start(m_timing.replaceMs);
                        });
+    if (!m_replacing)
+        end(Reason::Failed, false);
 }
 
 // ---- the local queue described ----

@@ -1,4 +1,4 @@
-find_package(Qt6 REQUIRED COMPONENTS Test Sql)
+find_package(Qt6 REQUIRED COMPONENTS Test Sql Network)
 # For tests that include openssl_primitives.h (cirrus_netease_protocol links it privately).
 find_package(OpenSSL 3 REQUIRED COMPONENTS Crypto)
 
@@ -108,6 +108,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(tst_mpris PRIVATE cirrus_presentation cirrus_logging Qt6::DBus Qt6::Test)
     add_test(NAME mpris COMMAND tst_mpris)
     set_tests_properties(mpris PROPERTIES TIMEOUT 15)
+
+    qt_add_executable(tst_single_instance unit/single_instance_test.cpp
+        ../ui/app/single_instance.cpp ../ui/app/single_instance.h
+        ../ui/presentation/app_link.cpp ../ui/presentation/app_link.h)
+    target_include_directories(tst_single_instance PRIVATE ../ui/app ../ui/presentation)
+    target_link_libraries(tst_single_instance PRIVATE cirrus_logging Qt6::Network Qt6::Test)
+    add_test(NAME single_instance COMMAND tst_single_instance)
+    set_tests_properties(single_instance PROPERTIES TIMEOUT 15)
 endif()
 
 qt_add_executable(tst_music unit/music_test.cpp)
