@@ -15,7 +15,7 @@ index d9ab4e2..5168b3d 100644
 +# Fedora-only application build patch.
 +include("${PROJECT_SOURCE_DIR}/packaging/linux/fedora/eac3-backend.cmake")
 diff --git a/src/infrastructure/media/audio_decoder.cpp b/src/infrastructure/media/audio_decoder.cpp
-index 038b79a..c0508a2 100644
+index 038b79a..41d82c8 100644
 --- a/src/infrastructure/media/audio_decoder.cpp
 +++ b/src/infrastructure/media/audio_decoder.cpp
 @@ -1,5 +1,6 @@
@@ -88,7 +88,7 @@ index 038b79a..c0508a2 100644
      }
      m_packet = av_packet_alloc();
      m_frame = av_frame_alloc();
-@@ -205,6 +221,12 @@ bool AudioDecoder::open(std::shared_ptr<ByteSource> stream, const QString& forma
+@@ -205,6 +221,13 @@ bool AudioDecoder::open(std::shared_ptr<ByteSource> stream, const QString& forma
  
  void AudioDecoder::convert(const AVFrame* frame, qint64 skip)
  {
@@ -96,12 +96,13 @@ index 038b79a..c0508a2 100644
 +        const auto& samples = m_fedoraEac3->samples();
 +        const auto drop = std::min<size_t>(size_t(std::max<qint64>(skip, 0)) * 2, samples.size());
 +        m_pending.insert(m_pending.end(), samples.begin() + qsizetype(drop), samples.end());
++        m_decodedFrames = m_decodedFrames || !samples.empty();
 +        return;
 +    }
      const int count = swr_get_out_samples(m_convert, frame->nb_samples);
      if (count <= 0)
          return;
-@@ -230,19 +252,22 @@ void AudioDecoder::convert(const AVFrame* frame, qint64 skip)
+@@ -230,19 +253,22 @@ void AudioDecoder::convert(const AVFrame* frame, qint64 skip)
  bool AudioDecoder::decodeSome()
  {
      while (!m_error && !m_interrupted) {
@@ -129,7 +130,7 @@ index 038b79a..c0508a2 100644
                          av_frame_unref(m_frame);
                          continue;
                      }
-@@ -277,8 +302,9 @@ bool AudioDecoder::decodeSome()
+@@ -277,8 +303,9 @@ bool AudioDecoder::decodeSome()
          if (read == AVERROR_EOF) {
              m_again = 0;
              m_inputDone = true;
@@ -141,7 +142,7 @@ index 038b79a..c0508a2 100644
                  failWith(PlaybackError::Decode);
                  return false;
              }
-@@ -290,7 +316,8 @@ bool AudioDecoder::decodeSome()
+@@ -290,7 +317,8 @@ bool AudioDecoder::decodeSome()
          }
          m_again = 0;
          if (m_packet->stream_index == m_streamIndex) {
@@ -151,7 +152,7 @@ index 038b79a..c0508a2 100644
              if (sent == AVERROR_INVALIDDATA || sent == AVERROR(EAGAIN))
                  m_linear = false; // skipped packets cannot certify the entire file
              // A damaged frame is skipped, as players do; anything else is fatal.
-@@ -354,8 +381,12 @@ bool AudioDecoder::seek(qint64 ms)
+@@ -354,8 +382,12 @@ bool AudioDecoder::seek(qint64 ms)
      m_format->flags &= ~AVFMT_FLAG_FAST_SEEK;
      if (sought < 0 || m_interrupted)
          return false;

@@ -141,6 +141,7 @@ class UpdateCheck : public QObject
     QFile* m_downloadFile = nullptr;
     QCryptographicHash m_downloadHash{QCryptographicHash::Sha256};
     qint64 m_received = 0;
+    bool m_downloadWriteFailed = false;
     QElapsedTimer m_downloadClock;
     QString m_installer;      // the downloaded and checked file
     QString m_installerArmed; // installUpdate() asked for it

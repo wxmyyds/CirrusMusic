@@ -270,6 +270,7 @@ void UpdateCheck::downloadInstaller()
     const updates::Asset asset = *m_release.asset;
     removeDownloads();
     m_installer.clear();
+    m_downloadWriteFailed = false;
     const QString folder = downloadFolder();
     delete m_downloadFile;
     m_downloadFile = new QFile(folder + u'/' + asset.name + QStringLiteral(".part"), this);
@@ -298,8 +299,14 @@ void UpdateCheck::downloadInstaller()
     connect(reply, &QNetworkReply::readyRead, this, [this, reply, size = asset.size] {
         const QByteArray data = reply->readAll();
         m_received += data.size();
-        // Never more than GitHub said the file has.
-        if (m_received > size || m_downloadFile->write(data) != data.size()) {
+        // Never more than GitHub said the file has; keep a local write error distinct
+        // from the reply abort it causes, so the user gets storage guidance.
+        if (m_received > size) {
+            reply->abort();
+            return;
+        }
+        if (m_downloadFile->write(data) != data.size()) {
+            m_downloadWriteFailed = true;
             reply->abort();
             return;
         }
@@ -324,7 +331,9 @@ void UpdateCheck::downloadFinished(QNetworkReply* reply)
     const bool canceled = reply->error() == QNetworkReply::OperationCanceledError &&
                           m_received <= asset.size && m_download == NoDownload;
     QString reason;
-    if (reply->error() != QNetworkReply::NoError)
+    if (m_downloadWriteFailed)
+        reason = QStringLiteral("file");
+    else if (reply->error() != QNetworkReply::NoError)
         reason = m_received > asset.size ? QStringLiteral("size") : QStringLiteral("network");
     else if (m_received != asset.size)
         reason = QStringLiteral("size");
@@ -341,7 +350,10 @@ void UpdateCheck::downloadFinished(QNetworkReply* reply)
                    {"received_kb", m_received / 1024},
                    log::fieldIf(reply->error() != QNetworkReply::NoError, "err",
                                 log::message(reply->errorString()))});
-        downloadFailed(reason == u"network" ? DownloadInterrupted : DownloadDamaged);
+        const auto failure = reason == u"network" ? DownloadInterrupted
+                             : reason == u"file" ? DownloadUnsaved
+                                                  : DownloadDamaged;
+        downloadFailed(failure);
         return;
     }
     const QString path = QFileInfo(part).absolutePath() + u'/' + asset.name;
