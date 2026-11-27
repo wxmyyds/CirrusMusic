@@ -123,22 +123,29 @@ void readPlaylists(QPointer<MusicRequests> requests, std::shared_ptr<PlaylistsRe
             }
             const auto& page = *outcome.value;
             // A page's rows may repeat the first page's extra ones; each playlist once.
+            bool truncated = false;
             for (const auto& item : page.items) {
                 if (!state->keys.contains(item.key)) {
+                    if (state->items.size() == kMostPlaylists) {
+                        truncated = true;
+                        break;
+                    }
                     state->keys.insert(item.key);
                     state->items.append(item);
                 }
             }
-            const int next = int(page.next.value_or(state->offset + kPage));
-            const bool advanced = next > state->offset;
-            state->offset = next;
-            const bool more = advanced && page.hasMore.value_or(page.items.size() >= kPage) &&
-                              !page.items.isEmpty() && state->items.size() < kMostPlaylists &&
-                              state->offset < kMostPlaylists;
-            if (more)
+            const qint64 next = page.next.value_or(state->offset + kPage);
+            const bool advanced = next > state->offset && next < kMostPlaylists;
+            const bool hasMore = page.hasMore.value_or(!page.items.isEmpty());
+            const bool more = !outcome.partial && !truncated && advanced && hasMore &&
+                              !page.items.isEmpty() && state->items.size() < kMostPlaylists;
+            if (more) {
+                state->offset = int(next);
                 readPlaylists(requests, state, reply);
-            else
-                reply({state->items, false, std::nullopt});
+            } else {
+                // Hitting a bound or failing to advance must not prove absence.
+                reply({state->items, outcome.partial || truncated || hasMore, std::nullopt});
+            }
         }),
         playlistsPageOf);
 }

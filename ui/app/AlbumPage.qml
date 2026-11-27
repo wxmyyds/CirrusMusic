@@ -165,6 +165,7 @@ SongCollectionPage {
     actionsContent: Flow {
         spacing: 8
         PageAction {
+            visible: pageModel.subscribedKnown
             iconOnly: page.twoPane
             size: page.paneActionSize
             glyph: pageModel.subscribed ? Symbols.bookmark_added : Symbols.bookmark_add

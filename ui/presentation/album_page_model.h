@@ -1,5 +1,6 @@
 #pragma once
 
+#include "account_membership.h"
 #include "loadable_model.h"
 #include "types.h"
 
@@ -32,8 +33,8 @@ class AlbumPageModel : public LoadableModel
     // "12 首 · 48 分钟"; the length only when every song's is known.
     Q_PROPERTY(QString countText READ countText NOTIFY headerChanged)
     Q_PROPERTY(qint64 commentCount READ commentCount NOTIFY headerChanged) // -1 when unknown
-    // Saved by the account. Setting it saves or unsaves (optimistic; reverted with a
-    // `notice` on failure).
+    // Account library evidence; writes wait for confirmation and re-read membership.
+    Q_PROPERTY(bool subscribedKnown READ subscribedKnown NOTIFY subscribedChanged)
     Q_PROPERTY(bool subscribed READ subscribed WRITE setSubscribed NOTIFY subscribedChanged)
     Q_PROPERTY(cirrus::ui::SongListModel* songs READ songs CONSTANT)
 
@@ -52,7 +53,8 @@ class AlbumPageModel : public LoadableModel
     [[nodiscard]] QString releaseText() const;
     [[nodiscard]] QString countText() const;
     [[nodiscard]] qint64 commentCount() const { return m_page.info.commentCount; }
-    [[nodiscard]] bool subscribed() const { return m_page.info.subscribed; }
+    [[nodiscard]] bool subscribedKnown() const { return m_membership.evidence().saved.has_value(); }
+    [[nodiscard]] bool subscribed() const { return m_membership.evidence().saved == true; }
     void setSubscribed(bool subscribed);
     [[nodiscard]] SongListModel* songs() const { return m_songs; }
 
@@ -72,6 +74,7 @@ class AlbumPageModel : public LoadableModel
   private:
     QString m_key;
     AlbumPage m_page;
+    AccountMembership m_membership;
     SongListModel* m_songs;
     Request m_subscribeRequest;
 };

@@ -186,6 +186,7 @@ SongCollectionPage {
     actionsContent: Flow {
         spacing: 8
         PageAction {
+            visible: pageModel.followedKnown
             iconOnly: page.twoPane
             size: page.paneActionSize
             glyph: pageModel.followed ? Symbols.how_to_reg : Symbols.person_add

@@ -16,6 +16,8 @@
 #include "application/playback/playback_observation_publisher.h"
 #include "application/ports/playback.h"
 #include "backend_catalog.h"
+#include "backend_library.h"
+#include "account_membership.h"
 #include "backend_playback.h"
 #include "infrastructure/bootstrap/xeapi_key_vault.h"
 #include "infrastructure/cache/resource_cache_service.h"
@@ -279,6 +281,7 @@ class BackendRuntimeTest : public QObject
     }
     void startLoginCloseRestore();
     void heartbeatRequestCanceledOnSessionChange();
+    void detailIdentityAndPlaylistLibraryBounds();
     void musicQueriesThroughThread();
     void discoveryThroughThread();
     void libraryThroughThread();
@@ -1177,6 +1180,77 @@ void BackendRuntimeTest::startLoginCloseRestore()
     next.close();
     QTRY_COMPARE(closedAgain.size(), 1);
     QCOMPARE(state->requests.load(), 4); // QR key/check/identity + restored identity only
+}
+
+void BackendRuntimeTest::detailIdentityAndPlaylistLibraryBounds()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto state = std::make_shared<SharedState>();
+    Gate gate;
+    const BackendConfig config{directory.filePath("state.sqlite"), "synthetic-detail-identity"};
+    seed(config.databasePath, *state);
+    auto plans = loginPlans();
+    plans.append(Plan{R"({"code":200,"playlist":{"id":42,"creator":{"userId":101,"nickname":"Public creator"},"tracks":[]}})"});
+    QJsonArray rows;
+    for (int id = 1; id <= 1001; ++id)
+        rows.append(QJsonObject{{"id", id}, {"creator", QJsonObject{{"userId", 101}}}});
+    const auto response = [](const QJsonArray& items, bool more) {
+        return Plan{QJsonDocument(QJsonObject{{"code", 200}, {"playlist", items}, {"more", more}})
+                        .toJson(QJsonDocument::Compact)};
+    };
+    plans.append(response(rows, false)); // The source must clip and mark partial.
+    rows.removeLast();
+    plans.append(response(rows, false)); // Exactly at the bound, proven complete.
+    plans.append(response(rows, true));  // At the bound, with more still unread.
+    BackendRuntime runtime(config, factories(state, gate, std::move(plans)));
+    ui::BackendCatalog catalog(runtime);
+    ui::BackendLibrary library(runtime);
+    auto& facade = runtime.facade();
+    QSignalSpy started(&facade, &BackendFacade::started),
+        stopped(&facade, &BackendFacade::stopped),
+        challenge(&facade, &BackendFacade::challengeReady),
+        signedIn(&facade, &BackendFacade::signedIn);
+    facade.start();
+    QTRY_COMPARE(started.size(), 1);
+    QVERIFY(facade.beginLogin());
+    QTRY_COMPARE(challenge.size(), 1);
+    QVERIFY(facade.poll());
+    QTRY_COMPARE(signedIn.size(), 1);
+    QCOMPARE(facade.snapshot().accountId, QString("101"));
+
+    std::optional<ui::Outcome<ui::PlaylistPage>> details;
+    auto detailRead = catalog.playlist("42", [&](ui::Outcome<ui::PlaylistPage> result) {
+        details = std::move(result);
+    });
+    QTRY_VERIFY(details.has_value());
+    QVERIFY(details->value);
+    QCOMPARE(details->value->info.creatorKey, QString("101"));
+    // Even a public creator id equal to the signed-in account never grants ownership.
+    QVERIFY(!details->value->info.own);
+    QVERIFY(!details->value->info.subscribed);
+    QVERIFY(!details->value->info.liked);
+
+    for (int scenario = 0; scenario < 3; ++scenario) {
+        std::optional<ui::Outcome<ui::ResultPage<ui::CollectionItem>>> result;
+        auto read = library.libraryCollections(
+            ui::collection::Playlist, {0, 100},
+            [&](ui::Outcome<ui::ResultPage<ui::CollectionItem>> reply) { result = std::move(reply); });
+        QTRY_VERIFY(result.has_value());
+        QVERIFY(result->value);
+        QCOMPARE(result->value->items.size(), qsizetype(1000));
+        QCOMPARE(result->partial, scenario != 1);
+        ui::MembershipScan absent(ui::collection::Playlist, "1001");
+        QVERIFY(!absent.accept(*result));
+        QCOMPARE(absent.evidence().saved, scenario == 1 ? std::optional<bool>{false}
+                                                       : std::nullopt);
+        ui::MembershipScan present(ui::collection::Playlist, "42");
+        QVERIFY(!present.accept(*result));
+        QCOMPARE(present.evidence().own, std::optional<bool>{true});
+    }
+    facade.close();
+    QTRY_COMPARE(stopped.size(), 1);
+    QCOMPARE(state->wrongThread.load(), 0);
 }
 
 void BackendRuntimeTest::heartbeatRequestCanceledOnSessionChange()

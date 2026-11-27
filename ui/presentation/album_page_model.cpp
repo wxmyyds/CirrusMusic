@@ -11,8 +11,10 @@ namespace cirrus::ui
 {
 
 AlbumPageModel::AlbumPageModel(QObject* parent)
-    : LoadableModel(parent), m_songs(new SongListModel(this))
+    : LoadableModel(parent), m_membership(this, [this] { emit subscribedChanged(); }),
+      m_songs(new SongListModel(this))
 {
+    followAccount();
 }
 
 void AlbumPageModel::setAlbumKey(const QString& key)
@@ -76,19 +78,18 @@ QString AlbumPageModel::countText() const
 
 void AlbumPageModel::setSubscribed(bool subscribed)
 {
-    if (subscribed == m_page.info.subscribed || m_page.info.key.isEmpty())
+    if (!subscribedKnown() || subscribed == this->subscribed() || m_page.info.key.isEmpty() ||
+        m_subscribeRequest.pending())
         return;
-    m_page.info.subscribed = subscribed;
-    emit subscribedChanged();
+    m_membership.forgetSaved();
     m_subscribeRequest = App::instance()->librarySource()->setAlbumSubscribed(
-        m_key, subscribed, [this, subscribed](Outcome<bool> outcome) {
+        m_key, subscribed, m_membership.guard<bool>([this, subscribed](Outcome<bool> outcome) {
             m_subscribeRequest.release();
-            if (outcome.value) {
+            refresh();
+            if (outcome.value && !outcome.failure) {
                 emit libraryChanged();
                 return;
             }
-            m_page.info.subscribed = !subscribed;
-            emit subscribedChanged();
             const bool signedOut = outcome.failure && outcome.failure->kind == failure::SignedOut;
             emit notice(signedOut ? noticed("album.subscribe_signed_out", tr("登录后才能收藏专辑"))
                         : maybeSaved(outcome)
@@ -96,22 +97,27 @@ void AlbumPageModel::setSubscribed(bool subscribed)
                         : subscribed
                             ? noticed("album.subscribe_failed", tr("没能收藏专辑，请稍后再试"))
                             : noticed("album.unsubscribe_failed", tr("没能取消收藏，请稍后再试")));
-        });
+        }));
 }
 
 Request AlbumPageModel::load()
 {
-    return App::instance()->catalog()->album(m_key, handle<AlbumPage>([this](AlbumPage page) {
-                                                 m_page = std::move(page);
-                                                 emit headerChanged();
-                                                 emit subscribedChanged();
-                                                 m_songs->reset(m_page.songKeys, m_page.songs);
-                                                 return m_page.songKeys.isEmpty();
-                                             }));
+    auto* app = App::instance();
+    m_membership.start(app->librarySource(), app->session(), collection::Album, m_key);
+    m_subscribeRequest.cancel();
+    return app->catalog()->album(
+        m_key, m_membership.guard<AlbumPage>(handle<AlbumPage>([this](AlbumPage page) {
+            m_page = std::move(page);
+            emit headerChanged();
+            emit subscribedChanged();
+            m_songs->reset(m_page.songKeys, m_page.songs);
+            return m_page.songKeys.isEmpty();
+        })));
 }
 
 void AlbumPageModel::clear()
 {
+    m_membership.clear();
     m_subscribeRequest.cancel();
     m_page = {};
     emit headerChanged();

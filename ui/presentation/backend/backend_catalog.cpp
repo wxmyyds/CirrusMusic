@@ -312,9 +312,8 @@ Request BackendCatalog::playlist(const QString& key, Reply<PlaylistPage> reply)
             info.playCount = details->playCount ? qint64(*details->playCount) : -1;
             info.subscriberCount = details->subscriberCount.value_or(-1);
             info.commentCount = details->commentCount.value_or(-1);
-            const QString account = m_session ? m_session() : QString();
-            info.own =
-                !account.isEmpty() && details->creator && details->creator->publicUserId == account;
+            // publicUserId links the creator's public profile. It carries no
+            // account ownership evidence; detail models query the account library.
             for (const auto& song : details->songs)
                 page.songs.append(songOf(song));
             // The whole index when the service proves it; else what came embedded.

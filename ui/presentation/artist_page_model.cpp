@@ -184,7 +184,8 @@ Request SimilarArtistsModel::load()
 void SimilarArtistsModel::clear() { m_items->reset({}); }
 
 ArtistPageModel::ArtistPageModel(QObject* parent)
-    : LoadableModel(parent), m_topSongs(new SongListModel(this)),
+    : LoadableModel(parent), m_membership(this, [this] { emit followedChanged(); }),
+      m_topSongs(new SongListModel(this)),
       m_songs(new ArtistSongsModel(this)), m_albums(new ArtistAlbumsModel(this)),
       m_introduction(new ArtistIntroductionModel(this)), m_similar(new SimilarArtistsModel(this))
 {
@@ -221,19 +222,18 @@ QString ArtistPageModel::countText() const
 
 void ArtistPageModel::setFollowed(bool followed)
 {
-    if (followed == m_info.followed || m_info.key.isEmpty())
+    if (!followedKnown() || followed == this->followed() || m_info.key.isEmpty() ||
+        m_followRequest.pending())
         return;
-    m_info.followed = followed;
-    emit followedChanged();
+    m_membership.forgetSaved();
     m_followRequest = App::instance()->librarySource()->setArtistFollowed(
-        m_key, followed, [this, followed](Outcome<bool> outcome) {
+        m_key, followed, m_membership.guard<bool>([this, followed](Outcome<bool> outcome) {
             m_followRequest.release();
-            if (outcome.value) {
+            refresh();
+            if (outcome.value && !outcome.failure) {
                 emit libraryChanged();
                 return;
             }
-            m_info.followed = !followed;
-            emit followedChanged();
             const bool signedOut = outcome.failure && outcome.failure->kind == failure::SignedOut;
             emit notice(signedOut ? noticed("artist.follow_signed_out", tr("登录后才能关注歌手"))
                         : maybeSaved(outcome)
@@ -241,28 +241,31 @@ void ArtistPageModel::setFollowed(bool followed)
                         : followed
                             ? noticed("artist.follow_failed", tr("没能关注，请稍后再试"))
                             : noticed("artist.unfollow_failed", tr("没能取消关注，请稍后再试")));
-        });
+        }));
 }
 
 Request ArtistPageModel::load()
 {
-    return App::instance()->catalog()->artist(m_key, handle<ArtistPage>([this](ArtistPage page) {
-                                                  m_info = page.info;
-                                                  emit headerChanged();
-                                                  emit followedChanged();
-                                                  QStringList keys;
-                                                  for (const SongInfo& song :
-                                                       std::as_const(page.topSongs))
-                                                      keys << song.key;
-                                                  m_topSongs->reset(keys, page.topSongs);
-                                                  // An artist without songs still has a page
-                                                  // (albums, introduction).
-                                                  return false;
-                                              }));
+    auto* app = App::instance();
+    m_membership.start(app->librarySource(), app->session(), collection::Artist, m_key);
+    m_followRequest.cancel();
+    return app->catalog()->artist(
+        m_key, m_membership.guard<ArtistPage>(handle<ArtistPage>([this](ArtistPage page) {
+            m_info = page.info;
+            emit headerChanged();
+            emit followedChanged();
+            QStringList keys;
+            for (const SongInfo& song : std::as_const(page.topSongs))
+                keys << song.key;
+            m_topSongs->reset(keys, page.topSongs);
+            // An artist without songs still has a page (albums, introduction).
+            return false;
+        })));
 }
 
 void ArtistPageModel::clear()
 {
+    m_membership.clear();
     m_followRequest.cancel();
     m_info = {};
     emit headerChanged();

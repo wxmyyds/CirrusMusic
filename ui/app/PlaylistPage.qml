@@ -22,7 +22,7 @@ SongCollectionPage {
     songs: pageModel.songs
     title: pageModel.title
     coverKey: pageModel.coverKey
-    removable: pageModel.own
+    removable: pageModel.ownKnown && pageModel.own
     actionSkeletons: [116, 88, 96]
     onRemoveRequested: keys => page.removeSongs(keys)
     emptyText: pageModel.own ? qsTr("这个歌单还没有歌。在歌曲的菜单里选择「收藏到歌单」就能加进来。")
@@ -150,7 +150,8 @@ SongCollectionPage {
                 x: titleText.width + 8
                 anchors.verticalCenter: parent.verticalCenter
                 // "我喜欢的音乐" keeps its title.
-                visible: pageModel.own && !pageModel.likedList
+                visible: pageModel.ownKnown && pageModel.own
+                         && pageModel.likedListKnown && !pageModel.likedList
                 variant: page.twoPane ? Md.Tonal : Md.Standard
                 glyph: Symbols.edit
                 text: qsTr("编辑歌单信息")
@@ -212,7 +213,7 @@ SongCollectionPage {
         spacing: 8
         // The account's liked songs: 心动模式 from their start (heartbeat-mode.md §7.2).
         PageAction {
-            visible: pageModel.likedList && page.playlistKey !== ""
+            visible: pageModel.likedListKnown && pageModel.likedList && page.playlistKey !== ""
                      && page.playlistKey === App.library.likedPlaylistKey
             enabled: !App.player.heartbeatLoading
             iconOnly: page.twoPane
@@ -223,7 +224,8 @@ SongCollectionPage {
         }
         // Someone else's playlist (P5).
         PageAction {
-            visible: !pageModel.own && App.library.canSavePlaylists
+            visible: pageModel.ownKnown && !pageModel.own
+                     && pageModel.subscribedKnown && App.library.canSavePlaylists
             iconOnly: page.twoPane
             size: page.paneActionSize
             glyph: pageModel.subscribed ? Symbols.bookmark_added : Symbols.bookmark_add
@@ -244,7 +246,7 @@ SongCollectionPage {
         }
         IconButton {
             id: moreButton
-            visible: pageModel.own
+            visible: pageModel.ownKnown && pageModel.own
             // In the pane: square and as tall as the play button, like the PageActions.
             variant: page.twoPane ? Md.Tonal : Md.Standard
             size: page.twoPane ? page.paneActionSize : Md.Small
@@ -257,20 +259,24 @@ SongCollectionPage {
             Menu {
                 id: moreMenu
                 MenuItem {
-                    visible: !pageModel.likedList
+                    visible: pageModel.ownKnown && pageModel.own
+                             && pageModel.likedListKnown && !pageModel.likedList
                     height: visible ? implicitHeight : 0
                     glyph: Symbols.edit
                     text: qsTr("编辑歌单信息")
                     onTriggered: editDialog.open()
                 }
                 MenuItem {
-                    enabled: page.hasSongs
+                    visible: pageModel.ownKnown && pageModel.own
+                    height: visible ? implicitHeight : 0
+                    enabled: page.hasSongs && pageModel.ownKnown && pageModel.own
                     glyph: Symbols.swap_vert
                     text: qsTr("调整歌曲顺序")
                     onTriggered: page.shell.openPlaylistOrder(page.playlistKey)
                 }
                 MenuItem {
-                    visible: !pageModel.likedList
+                    visible: pageModel.ownKnown && pageModel.own
+                             && pageModel.likedListKnown && !pageModel.likedList
                     height: visible ? implicitHeight : 0
                     glyph: Symbols.delete_
                     text: qsTr("删除歌单")
@@ -300,7 +306,9 @@ SongCollectionPage {
         title: qsTr("编辑歌单信息")
         acceptText: qsTr("保存")
         rejectText: qsTr("取消")
-        acceptEnabled: titleField.text.trim() !== ""
+        acceptEnabled: pageModel.ownKnown && pageModel.own
+                       && pageModel.likedListKnown && !pageModel.likedList
+                       && titleField.text.trim() !== ""
         initialFocusItem: titleField
         onAboutToShow: {
             titleField.text = pageModel.title;
@@ -337,6 +345,7 @@ SongCollectionPage {
                                    : qsTr("从歌单移除这首歌？")
         supportingText: qsTr("移除后可以在歌曲的菜单里重新收藏到「%1」。").arg(pageModel.title)
         acceptText: qsTr("移除")
+        acceptEnabled: pageModel.ownKnown && pageModel.own
         rejectText: qsTr("取消")
         onAccepted: pageModel.removeSongs(songKeys)
     }
@@ -346,6 +355,8 @@ SongCollectionPage {
         title: qsTr("删除歌单？")
         supportingText: qsTr("「%1」会被删除，无法恢复。歌曲本身不受影响。").arg(pageModel.title)
         acceptText: qsTr("删除")
+        acceptEnabled: pageModel.ownKnown && pageModel.own
+                       && pageModel.likedListKnown && !pageModel.likedList
         rejectText: qsTr("取消")
         onAccepted: pageModel.deletePlaylist()
     }

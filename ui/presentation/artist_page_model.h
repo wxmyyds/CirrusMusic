@@ -1,5 +1,6 @@
 #pragma once
 
+#include "account_membership.h"
 #include "loadable_model.h"
 #include "paged_model.h"
 #include "types.h"
@@ -149,8 +150,8 @@ class ArtistPageModel : public LoadableModel
     Q_PROPERTY(int albumCount READ albumCount NOTIFY headerChanged) // -1 when unknown
     // "单曲 86 · 专辑 40", leaving out unknown counts.
     Q_PROPERTY(QString countText READ countText NOTIFY headerChanged)
-    // Followed by the account. Setting it follows or unfollows (optimistic; reverted
-    // with a `notice` on failure).
+    // Account library evidence; writes wait for confirmation and re-read membership.
+    Q_PROPERTY(bool followedKnown READ followedKnown NOTIFY followedChanged)
     Q_PROPERTY(bool followed READ followed WRITE setFollowed NOTIFY followedChanged)
     // The popular songs (at most 50), for "播放热门歌曲".
     Q_PROPERTY(cirrus::ui::SongListModel* topSongs READ topSongs CONSTANT)
@@ -171,7 +172,8 @@ class ArtistPageModel : public LoadableModel
     [[nodiscard]] QString userKey() const { return m_info.userKey; }
     [[nodiscard]] int albumCount() const { return m_info.albumCount; }
     [[nodiscard]] QString countText() const;
-    [[nodiscard]] bool followed() const { return m_info.followed; }
+    [[nodiscard]] bool followedKnown() const { return m_membership.evidence().saved.has_value(); }
+    [[nodiscard]] bool followed() const { return m_membership.evidence().saved == true; }
     void setFollowed(bool followed);
     [[nodiscard]] SongListModel* topSongs() const { return m_topSongs; }
     [[nodiscard]] ArtistSongsModel* songs() const { return m_songs; }
@@ -195,6 +197,7 @@ class ArtistPageModel : public LoadableModel
   private:
     QString m_key;
     ArtistInfo m_info;
+    AccountMembership m_membership;
     SongListModel* m_topSongs;
     ArtistSongsModel* m_songs;
     ArtistAlbumsModel* m_albums;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "account_membership.h"
 #include "loadable_model.h"
 #include "types.h"
 
@@ -32,10 +33,13 @@ class PlaylistPageModel : public LoadableModel
     Q_PROPERTY(qint64 playCount READ playCount NOTIFY headerChanged)
     Q_PROPERTY(qint64 subscriberCount READ subscriberCount NOTIFY headerChanged)
     Q_PROPERTY(qint64 commentCount READ commentCount NOTIFY headerChanged)
+    Q_PROPERTY(bool ownKnown READ ownKnown NOTIFY headerChanged)
+    Q_PROPERTY(bool likedListKnown READ likedListKnown NOTIFY headerChanged)
+    Q_PROPERTY(bool subscribedKnown READ subscribedKnown NOTIFY subscribedChanged)
     Q_PROPERTY(bool own READ own NOTIFY headerChanged)
     // The account's "我喜欢的音乐" (own, but not renamed or deleted).
     Q_PROPERTY(bool likedList READ likedList NOTIFY headerChanged)
-    // Shows the new state at once; reverts when saving fails.
+    // Reads are account-scoped; writes wait for confirmation and re-read membership.
     Q_PROPERTY(bool subscribed READ subscribed WRITE setSubscribed NOTIFY subscribedChanged)
     // Songs the service has no details for (large playlists fetch details by batch).
     Q_PROPERTY(int missingCount READ missingCount NOTIFY missingCountChanged)
@@ -57,9 +61,12 @@ class PlaylistPageModel : public LoadableModel
     [[nodiscard]] qint64 playCount() const { return m_info.playCount; }
     [[nodiscard]] qint64 subscriberCount() const { return m_info.subscriberCount; }
     [[nodiscard]] qint64 commentCount() const { return m_info.commentCount; }
-    [[nodiscard]] bool own() const { return m_info.own; }
-    [[nodiscard]] bool likedList() const { return m_info.liked; }
-    [[nodiscard]] bool subscribed() const { return m_info.subscribed; }
+    [[nodiscard]] bool ownKnown() const { return m_membership.evidence().own.has_value(); }
+    [[nodiscard]] bool likedListKnown() const { return m_membership.evidence().liked.has_value(); }
+    [[nodiscard]] bool subscribedKnown() const { return m_membership.evidence().saved.has_value(); }
+    [[nodiscard]] bool own() const { return m_membership.evidence().own == true; }
+    [[nodiscard]] bool likedList() const { return m_membership.evidence().liked == true; }
+    [[nodiscard]] bool subscribed() const { return m_membership.evidence().saved == true; }
     void setSubscribed(bool subscribed);
     [[nodiscard]] int missingCount() const;
 
@@ -99,6 +106,7 @@ class PlaylistPageModel : public LoadableModel
 
     QString m_key;
     PlaylistInfo m_info;
+    AccountMembership m_membership;
     SongListModel* m_songs;
     Request m_subscribeRequest;
     SongDetailLoader* m_details;
