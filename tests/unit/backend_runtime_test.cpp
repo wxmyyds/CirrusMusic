@@ -1193,8 +1193,8 @@ void BackendRuntimeTest::heartbeatRequestCanceledOnSessionChange()
     auto options = factories(state, gate, std::move(plans));
     options.playback = [] { return std::make_unique<FakePlaybackBackend>(); };
     BackendRuntime runtime(config, std::move(options));
-    BackendCatalog catalog(runtime);
-    BackendPlayback playback(runtime, catalog);
+    cirrus::ui::BackendCatalog catalog(runtime);
+    cirrus::ui::BackendPlayback playback(runtime, catalog);
     auto& facade = runtime.facade();
     QSignalSpy started(&facade, &BackendFacade::started),
         challenge(&facade, &BackendFacade::challengeReady),
