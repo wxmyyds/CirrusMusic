@@ -21,6 +21,8 @@ AppWindow {
     Component.onCompleted: {
         if (App.settings.windowMaximized)
             window.showMaximized();
+        if (App.startupProblem !== "")
+            Qt.callLater(() => startupDialog.open());
     }
     onVisibilityChanged: {
         if (window.visibility === Window.Maximized)
