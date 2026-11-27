@@ -3,41 +3,19 @@ Subject: [PATCH] Fedora: isolate the private EAC3 decoder from system FFmpeg
 
 Apply only to the Cirrus Fedora build worktree. FFmpeg sources are unmodified.
 
---- a/src/infrastructure/media/audio_decoder.h
-+++ b/src/infrastructure/media/audio_decoder.h
-@@ -15,6 +15,7 @@
- namespace cirrus::media
- {
- class ByteSource;
-+class FedoraEac3Decoder;
- 
- // One audio stream decoded to interleaved stereo float at its own sample rate, read through
- // a ByteSource (the AudioStore's stream; blocking: run it on a decoder thread). Only the
-@@ -25,7 +26,7 @@
- class AudioDecoder final
- {
-   public:
--    AudioDecoder() = default;
-+    AudioDecoder();
-     ~AudioDecoder();
-     AudioDecoder(const AudioDecoder&) = delete;
-     AudioDecoder& operator=(const AudioDecoder&) = delete;
-@@ -34,6 +35,7 @@
-     // error() says why.
-     bool open(std::shared_ptr<ByteSource> stream, const QString& format);
-     [[nodiscard]] int sampleRate() const { return m_rate; }
-+    [[nodiscard]] bool usesBuiltinEac3() const { return bool(m_fedoraEac3); }
-     [[nodiscard]] qint64 durationMs() const { return m_durationMs; }
-     // Position of the next frame read() gives, in source frames.
-     [[nodiscard]] qint64 position() const { return m_position; }
-@@ -61,6 +63,7 @@
-     qint64 m_offset = 0; // byte position in the stream
-     AVIOContext* m_io = nullptr;
-     AVFormatContext* m_format = nullptr;
-+    std::unique_ptr<FedoraEac3Decoder> m_fedoraEac3;
-     AVCodecContext* m_codec = nullptr;
-     SwrContext* m_convert = nullptr;
-     AVPacket* m_packet = nullptr;
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index d9ab4e2..5168b3d 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -481,3 +481,6 @@ add_library(cirrus_backend STATIC
+ )
+ target_link_libraries(cirrus_backend PUBLIC cirrus_application
+     PRIVATE cirrus_bootstrap cirrus_netease_auth cirrus_netease_music cirrus_media cirrus_bilibili cirrus_listening_state cirrus_resource_cache)
++
++# Fedora-only application build patch.
++include("${PROJECT_SOURCE_DIR}/packaging/linux/fedora/eac3-backend.cmake")
+diff --git a/src/infrastructure/media/audio_decoder.cpp b/src/infrastructure/media/audio_decoder.cpp
+index 038b79a..c0508a2 100644
 --- a/src/infrastructure/media/audio_decoder.cpp
 +++ b/src/infrastructure/media/audio_decoder.cpp
 @@ -1,5 +1,6 @@
@@ -47,7 +25,7 @@ Apply only to the Cirrus Fedora build worktree. FFmpeg sources are unmodified.
  extern "C" {
  #include <libavcodec/avcodec.h>
  #include <libavformat/avformat.h>
-@@ -46,8 +47,11 @@
+@@ -46,8 +47,11 @@ std::optional<FormatRule> ruleFor(const QString& format)
  }
  } // namespace
  
@@ -59,7 +37,7 @@ Apply only to the Cirrus Fedora build worktree. FFmpeg sources are unmodified.
      swr_free(&m_convert);
      av_frame_free(&m_frame);
      av_packet_free(&m_packet);
-@@ -161,22 +165,34 @@
+@@ -169,22 +173,34 @@ bool AudioDecoder::open(std::shared_ptr<ByteSource> stream, const QString& forma
          if (int(i) != m_streamIndex)
              m_format->streams[i]->discard = AVDISCARD_ALL;
      const AVStream* audio = m_format->streams[m_streamIndex];
@@ -110,7 +88,7 @@ Apply only to the Cirrus Fedora build worktree. FFmpeg sources are unmodified.
      }
      m_packet = av_packet_alloc();
      m_frame = av_frame_alloc();
-@@ -197,6 +213,12 @@
+@@ -205,6 +221,12 @@ bool AudioDecoder::open(std::shared_ptr<ByteSource> stream, const QString& forma
  
  void AudioDecoder::convert(const AVFrame* frame, qint64 skip)
  {
@@ -123,7 +101,7 @@ Apply only to the Cirrus Fedora build worktree. FFmpeg sources are unmodified.
      const int count = swr_get_out_samples(m_convert, frame->nb_samples);
      if (count <= 0)
          return;
-@@ -217,17 +239,22 @@
+@@ -230,19 +252,22 @@ void AudioDecoder::convert(const AVFrame* frame, qint64 skip)
  bool AudioDecoder::decodeSome()
  {
      while (!m_error && !m_interrupted) {
@@ -131,6 +109,8 @@ Apply only to the Cirrus Fedora build worktree. FFmpeg sources are unmodified.
 +        const int got =
 +            m_fedoraEac3 ? m_fedoraEac3->receive() : avcodec_receive_frame(m_codec, m_frame);
          if (got == 0) {
+-            if (m_frame->decode_error_flags || (m_frame->flags & AV_FRAME_FLAG_CORRUPT))
+-                m_linear = false;
              qint64 skip = 0;
              if (m_dropUntil >= 0) {
                  const AVStream* stream = m_format->streams[m_streamIndex];
@@ -149,25 +129,29 @@ Apply only to the Cirrus Fedora build worktree. FFmpeg sources are unmodified.
                          av_frame_unref(m_frame);
                          continue;
                      }
-@@ -255,11 +282,15 @@
-             return false; // the stream failed or was interrupted under the demuxer
-         if (read < 0) {
+@@ -277,8 +302,9 @@ bool AudioDecoder::decodeSome()
+         if (read == AVERROR_EOF) {
+             m_again = 0;
              m_inputDone = true;
--            avcodec_send_packet(m_codec, nullptr); // drain
-+            if (m_fedoraEac3)
-+                m_fedoraEac3->send(nullptr);
-+            else
-+                avcodec_send_packet(m_codec, nullptr); // drain
-             continue;
+-            const int sent = avcodec_send_packet(m_codec, nullptr); // drain only real EOF
+-            if (sent < 0 && sent != AVERROR_EOF) {
++            const int sent = m_fedoraEac3 ? m_fedoraEac3->send(nullptr)
++                                          : avcodec_send_packet(m_codec, nullptr);
++            if (sent < 0 && sent != AVERROR_EOF && sent != AVERROR(EAGAIN)) {
+                 failWith(PlaybackError::Decode);
+                 return false;
+             }
+@@ -290,7 +316,8 @@ bool AudioDecoder::decodeSome()
          }
+         m_again = 0;
          if (m_packet->stream_index == m_streamIndex) {
 -            const int sent = avcodec_send_packet(m_codec, m_packet);
 +            const int sent = m_fedoraEac3 ? m_fedoraEac3->send(m_packet)
 +                                          : avcodec_send_packet(m_codec, m_packet);
+             if (sent == AVERROR_INVALIDDATA || sent == AVERROR(EAGAIN))
+                 m_linear = false; // skipped packets cannot certify the entire file
              // A damaged frame is skipped, as players do; anything else is fatal.
-             if (sent < 0 && sent != AVERROR_INVALIDDATA && sent != AVERROR(EAGAIN)) {
-                 av_packet_unref(m_packet);
-@@ -319,8 +350,12 @@
+@@ -354,8 +381,12 @@ bool AudioDecoder::seek(qint64 ms)
      m_format->flags &= ~AVFMT_FLAG_FAST_SEEK;
      if (sought < 0 || m_interrupted)
          return false;
@@ -182,18 +166,48 @@ Apply only to the Cirrus Fedora build worktree. FFmpeg sources are unmodified.
      m_pending.clear();
      m_inputDone = false;
      m_done = false;
---- a/src/CMakeLists.txt
-+++ b/src/CMakeLists.txt
-@@ -480,3 +480,6 @@
- )
- target_link_libraries(cirrus_backend PUBLIC cirrus_application
-     PRIVATE cirrus_bootstrap cirrus_netease_auth cirrus_netease_music cirrus_media cirrus_bilibili cirrus_listening_state cirrus_resource_cache)
-+
-+# Fedora-only application build patch.
-+include("${PROJECT_SOURCE_DIR}/packaging/linux/fedora/eac3-backend.cmake")
+diff --git a/src/infrastructure/media/audio_decoder.h b/src/infrastructure/media/audio_decoder.h
+index f042bab..a5a610b 100644
+--- a/src/infrastructure/media/audio_decoder.h
++++ b/src/infrastructure/media/audio_decoder.h
+@@ -15,6 +15,7 @@ struct SwrContext;
+ namespace cirrus::media
+ {
+ class ByteSource;
++class FedoraEac3Decoder;
+ 
+ // One audio stream decoded to interleaved stereo float at its own sample rate, read through
+ // a ByteSource (the AudioStore's stream; blocking: run it on a decoder thread). Only the
+@@ -25,7 +26,7 @@ class ByteSource;
+ class AudioDecoder final
+ {
+   public:
+-    AudioDecoder() = default;
++    AudioDecoder();
+     ~AudioDecoder();
+     AudioDecoder(const AudioDecoder&) = delete;
+     AudioDecoder& operator=(const AudioDecoder&) = delete;
+@@ -34,6 +35,7 @@ class AudioDecoder final
+     // error() says why.
+     bool open(std::shared_ptr<ByteSource> stream, const QString& format);
+     [[nodiscard]] int sampleRate() const { return m_rate; }
++    [[nodiscard]] bool usesBuiltinEac3() const { return bool(m_fedoraEac3); }
+     [[nodiscard]] qint64 durationMs() const { return m_durationMs; }
+     // Position of the next frame read() gives, in source frames.
+     [[nodiscard]] qint64 position() const { return m_position; }
+@@ -69,6 +71,7 @@ class AudioDecoder final
+     qint64 m_offset = 0; // byte position in the stream
+     AVIOContext* m_io = nullptr;
+     AVFormatContext* m_format = nullptr;
++    std::unique_ptr<FedoraEac3Decoder> m_fedoraEac3;
+     AVCodecContext* m_codec = nullptr;
+     SwrContext* m_convert = nullptr;
+     AVPacket* m_packet = nullptr;
+diff --git a/tests/unit/audio_decoder_test.cpp b/tests/unit/audio_decoder_test.cpp
+index 3975abf..a9bb324 100644
 --- a/tests/unit/audio_decoder_test.cpp
 +++ b/tests/unit/audio_decoder_test.cpp
-@@ -98,16 +98,25 @@
+@@ -128,16 +128,25 @@ class AudioDecoderTest : public QObject
          auto s = store(server);
          auto stream = s->open(source(server.body, format));
          QVERIFY(stream);

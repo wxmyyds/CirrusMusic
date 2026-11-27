@@ -325,7 +325,7 @@ set_tests_properties(playlist_order_revision PROPERTIES TIMEOUT 15)
 qt_add_executable(tst_account_membership unit/account_membership_test.cpp
     ../ui/presentation/account_membership.cpp)
 target_include_directories(tst_account_membership PRIVATE ../ui/presentation)
-target_link_libraries(tst_account_membership PRIVATE Qt6::Test Qt6::Qml)
+target_link_libraries(tst_account_membership PRIVATE Qt6::Test Qt6::Qml Qt6::Gui)
 add_test(NAME account_membership COMMAND tst_account_membership)
 set_tests_properties(account_membership PROPERTIES TIMEOUT 15)
 

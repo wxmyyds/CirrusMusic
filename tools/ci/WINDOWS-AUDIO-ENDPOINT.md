@@ -36,7 +36,7 @@ f6c8827 的 ARM64 与 x64 runner evidence 均记录 setup 签名 `Valid`、publi
 2. 下载固定 ZIP、校验哈希及可信签名后运行官方 setup `-i -h`。明确的非零退出码或 `3010` / `1641` 重启状态失败，不重试安装。
 3. 安装器两分钟内正常退出时，继续核对退出码。若它仍等待，脚本不会仅凭超时判成功：只有同一 Pack46 驱动的 PnP 状态、签名、内核服务和活动默认端点都通过，才终止仍等待的 setup 进程，并记录超时/终止状态；任何检查未通过仍失败。
 4. 依次刷新 `AudioEndpointBuilder`、`Audiosrv` 并确认 Running；不重启 runner、不修改 registry、不另行选择端点。
-5. 最多等待 60 秒，要求唯一 `CABLE Input (VB-Audio Virtual Cable)` render `AudioEndpoint` 状态为 `OK`；通过 `IMMDeviceEnumerator` 确认它是 Active 的 `eRender / eMultimedia` 默认端点。核对一个 `3.5.2.0`、已签名、问题码为零的 PnP 绑定及 Running 的 `VBAudioVACMME` 驱动服务。
+5. 最多等待 60 秒，要求至少一个状态为 `OK` 的 render `AudioEndpoint`，且其 `DEVPKEY_Device_Parent` 链在限定深度内到达上述已签名 Pack46 PnP 设备；不依赖 FriendlyName，因为 Windows Server runner 可能显示 `Speakers (VB-Audio Virtual Cable)`，ARM64 显示 `CABLE Input (VB-Audio Virtual Cable)`。通过 `IMMDeviceEnumerator` 确认当前 `eRender / eMultimedia` 默认端点的 MMDevice ID 恰好对应这些已验证 render endpoint 之一；默认端点未通过该身份关系检查时失败。
 6. 将实际 MMDevice ID 经 `GITHUB_ENV` 提供给 AudioEngine 测试。Windows Actions 每例都要求 Qt `QMediaDevices::defaultAudioOutput()` 存在、默认标志为真且 ID 匹配。
 7. 现有 AudioEngine 用例沿生产路径打开默认 `QAudioSink`，验证播放、结束、seek、暂停和衔接。音量为零策略与原有断言保留；这不是物理扬声器可听性测试。设备缺失直接失败，不使用 `QSKIP`、fake sink 或弱化断言。
 
@@ -54,7 +54,7 @@ f6c8827 的 ARM64 与 x64 runner evidence 均记录 setup 签名 `Valid`、publi
 
 - **Windows ARM64 job `140441577789`**：`prepare-windows-audio.ps1` 记录 `ready-for-qt-tests`；系统默认端点、签名驱动、问题码和运行服务检查均通过。AudioEngine CTest 通过，CI 日志记录这组真实默认端点用例完成。整份 job **仍失败**：`tst_backend_runtime.exe` 的 QtTest 用例报告 55 passed、0 failed，进程退出时发生 `0xc0000005`，附近符号为 `QtMultimediaPrivate::refreshWarmupClient`；CTest 因 `backend_runtime (SEGFAULT)` 失败。不能把该架构整个 job 称为通过。
 - **Windows x64 job `140441577860`**：setup 两分钟未退出，脚本在进入独立端点验收前失败。上传的 `setupapi.dev.log` 显示签名 catalog 通过 WHQL 验证、PnP 驱动安装和设备启动成功；但该版本脚本未记录后续端点默认状态，且没有 x64 AudioEngine 运行结果。不能从安装日志推断 Qt 播放成功。
-- 因上述阻塞，后续源码修改仅允许在超时后执行严格的端点与驱动检查；该修改尚无当前 SHA 的 Actions 证据。尤其 x64 的立即可用性仍待实际验证。
+- run [46007066286](https://github.com/wxmyyds/CirrusMusic/actions/runs/46007066286)，SHA `1c2e8a462077947d8c55f02631ec37e83f72c3b5`，实际执行了安装超时后的独立检查；Windows Server x64 暴露默认 render endpoint 名为 `Speakers (VB-Audio Virtual Cable)`，旧 name-based matcher 因期待 `CABLE Input ...` 而失败。该 run 因而没有 x64 Qt AudioEngine 结果。当前未提交的 matcher 改为沿 render endpoint 的 PnP parent chain 匹配已验证驱动 instance ID，再核默认 MMDevice ID；此身份关联改动尚未在 Actions 运行。
 
 ## 厂商重启建议
 
@@ -66,10 +66,10 @@ f6c8827 的 ARM64 与 x64 runner evidence 均记录 setup 签名 `Valid`、publi
 
 脚本尽可能在 `${RUNNER_TEMP}/cirrus-windows-audio-evidence/` 写出：
 
-- `endpoint.json`：实际 checkout 完整 SHA、OS/进程架构、包哈希、签名状态、publisher、证书 thumbprint、安装退出码、安装器超时/终止状态、服务、端点 ID、驱动和错误信息。
+- `endpoint.json`：实际 checkout 完整 SHA、OS/进程架构、包哈希、签名状态、publisher、证书 thumbprint、安装退出码、安装器超时/终止状态、服务、默认端点及其 PnP parent chain、驱动和错误信息。
 - `installer-stdout.txt`、`installer-stderr.txt` 与 Windows `setupapi.dev.log`。
 
-这些文件与测试报告随 `test-results-Windows-x86_64` / `test-results-Windows-arm64` artifact 保留 3 天；仅供测试审计，不影响产品包清单。不能以本机静态分析、签名元数据、旧 SHA 或 agent 推论代替新 SHA 的 Windows 原生 job 和实际 QtTest 报告。当前超时处理的修改尚未经过 Windows Actions；读取其后续完整 SHA 结果前，不宣称端点工作完成。
+这些文件与测试报告随 `test-results-Windows-x86_64` / `test-results-Windows-arm64` artifact 保留 3 天；仅供测试审计，不影响产品包清单。不能以本机静态分析、签名元数据、旧 SHA 或 agent 推论代替新 SHA 的 Windows 原生 job 和实际 QtTest 报告。SHA `1c2e8a462077947d8c55f02631ec37e83f72c3b5` 已运行安装超时后的检查，但 x64 在旧 FriendlyName 条件处失败；当前基于 PnP parent identity 的修正尚未经过 Actions。不能宣称端点工作完成。
 
 本地不安装驱动、不配置/编译/运行项目测试。PowerShell/PnP/COM/Qt 行为只以原生 Windows Actions 的实际证据为准。
 
@@ -79,4 +79,4 @@ f6c8827 的 ARM64 与 x64 runner evidence 均记录 setup 签名 `Valid`、publi
 
 Windows Server 2022 x64 的支持范围与 Windows 11 ARM64 不应相互推断；未来若 runner image、Pack46 字节或 setup 行为变化，必须按真实目标重新验证。
 
-**证据边界：**上述具体运行结果仅绑定标出的完整源码 SHA 与 run/job。当前 timeout follow-up 未运行，ARM64 job 有 backend_runtime 失败，x64 尚无 AudioEngine 证据；这份说明不代表整体修复验收完成。
+**证据边界：**上述具体运行结果仅绑定标出的完整源码 SHA 与 run/job。timeout follow-up 已在 `1c2e8a4...` 实际执行，但 x64 端点识别失败；同一 run 的 ARM64 端点准备通过后在编译阶段失败，未运行 QtTest。更改后的 PnP parent identity 匹配尚未由 Actions 验证；此前 `f6c8827...` 的 ARM64 AudioEngine 用例通过，但该 job 因 backend_runtime 崩溃失败。本文不代表整体修复验收完成。

@@ -44,6 +44,21 @@ function Assert-TrustedSignature([string] $Path, [string] $Publisher) {
     }
 }
 
+function Get-DeviceAncestors([string] $InstanceId) {
+    $ancestors = [System.Collections.Generic.List[string]]::new()
+    $current = $InstanceId
+    for ($depth = 0; $depth -lt 16; $depth++) {
+        $property = Get-PnpDeviceProperty -InstanceId $current -KeyName 'DEVPKEY_Device_Parent' `
+            -ErrorAction SilentlyContinue
+        $parent = if ($property) { [string]$property.Data } else { '' }
+        if ([string]::IsNullOrWhiteSpace($parent)) { break }
+        $ancestors.Add($parent)
+        if ($parent -ieq $current) { break }
+        $current = $parent
+    }
+    return $ancestors.ToArray()
+}
+
 try {
     if (!$IsWindows -or $env:GITHUB_ACTIONS -ne 'true' -or !$env:GITHUB_ENV) {
         throw 'This script requires a disposable Windows GitHub Actions runner'
@@ -147,28 +162,8 @@ namespace CirrusCI {
 }
 '@
 
-    # Only readiness is polled: never reinstall, accept a different device or retry
-    # a signature/network/installer failure. A different default is an explicit failure.
-    $deadline = [DateTime]::UtcNow.AddSeconds(60)
-    $ready = $false
-    do {
-        $audioEndpoints = @(Get-PnpDevice -PresentOnly | Where-Object { $_.Class -eq 'AudioEndpoint' })
-        $endpoints = @($audioEndpoints | Where-Object {
-            $_.InstanceId -like 'SWD\MMDEVAPI\{0.0.0.00000000}.*' -and
-            $_.FriendlyName -match '^CABLE Input \(VB-Audio Virtual Cable\)$' -and $_.Status -eq 'OK'
-        })
-        $defaultId = [CirrusCI.DefaultRender]::ActiveMultimediaId()
-        if ($endpoints.Count -eq 1 -and $defaultId) {
-            $endpointId = $endpoints[0].InstanceId.Substring('SWD\MMDEVAPI\'.Length)
-            $ready = $endpointId -ieq $defaultId
-        }
-        if (!$ready) { Start-Sleep -Seconds 2 }
-    } while (!$ready -and [DateTime]::UtcNow -lt $deadline)
-    $evidence.audioEndpoints = @($audioEndpoints | Select-Object InstanceId, FriendlyName, Status)
-    $evidence.renderEndpoints = @($endpoints | Select-Object InstanceId, FriendlyName, Status)
-    $evidence.defaultMultimediaRenderId = $defaultId
-    if (!$ready) { throw 'VB-CABLE render endpoint is not OK/Active and the multimedia default; reboot or default selection may be required' }
-
+    # Verify that a render endpoint is in the PnP parent chain of the exact signed Pack46
+    # device. Friendly names vary across Windows editions (Server may say "Speakers").
     $drivers = @(Get-CimInstance Win32_PnPSignedDriver | Where-Object {
         $_.HardWareID -eq 'VBAudioVACWDM'
     })
@@ -184,6 +179,42 @@ namespace CirrusCI {
     $loaded = Get-CimInstance Win32_SystemDriver -Filter "Name='VBAudioVACMME'"
     $evidence.loadedDriver = $loaded | Select-Object Name, State, PathName
     if (!$loaded -or $loaded.State -ne 'Running') { throw 'VB-CABLE kernel driver is not running' }
+
+    # Only readiness is polled: never reinstall or retry a failed signature/network/install.
+    $endpointPrefix = 'SWD\MMDEVAPI\'
+    $deadline = [DateTime]::UtcNow.AddSeconds(60)
+    $ready = $false
+    do {
+        $audioEndpoints = @(Get-PnpDevice -PresentOnly | Where-Object { $_.Class -eq 'AudioEndpoint' })
+        $renderEndpointCandidates = @()
+        foreach ($endpoint in $audioEndpoints) {
+            if ($endpoint.Status -ne 'OK' -or
+                $endpoint.InstanceId -notlike 'SWD\MMDEVAPI\{0.0.0.00000000}.*') { continue }
+            $parentPath = @(Get-DeviceAncestors $endpoint.InstanceId)
+            $endpointId = $endpoint.InstanceId.Substring($endpointPrefix.Length)
+            $renderEndpointCandidates += [pscustomobject]@{
+                InstanceId = $endpoint.InstanceId
+                EndpointId = $endpointId
+                FriendlyName = $endpoint.FriendlyName
+                Status = $endpoint.Status
+                ParentPath = $parentPath
+                BelongsToInstalledDriver = [bool](@($parentPath | Where-Object { $_ -ieq $device.InstanceId }).Count -gt 0)
+            }
+        }
+        $endpoints = @($renderEndpointCandidates | Where-Object { $_.BelongsToInstalledDriver })
+        $defaultId = [CirrusCI.DefaultRender]::ActiveMultimediaId()
+        $matchingDefault = @($endpoints | Where-Object { $_.EndpointId -ieq $defaultId })
+        $ready = $matchingDefault.Count -eq 1
+        if (!$ready) { Start-Sleep -Seconds 2 }
+    } while (!$ready -and [DateTime]::UtcNow -lt $deadline)
+    $evidence.audioEndpoints = @($audioEndpoints | Select-Object InstanceId, FriendlyName, Status)
+    $evidence.renderEndpointCandidates = $renderEndpointCandidates
+    $evidence.renderEndpoints = $endpoints
+    $evidence.defaultMultimediaRenderId = $defaultId
+    if (!$ready) {
+        throw 'No active multimedia default render endpoint is connected to the verified Pack46 driver'
+    }
+    $endpointId = $matchingDefault[0].EndpointId
 
     if ($setupProcess.HasExited) {
         $setupProcess.WaitForExit()

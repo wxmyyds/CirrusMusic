@@ -131,7 +131,6 @@ class AudioEngineTest : public QObject
             QCOMPARE(output.id().toLower(), expectedEndpoint.toLower());
         }
 #endif
-#endif
         m_dir = std::make_unique<QTemporaryDir>(QCoreApplication::applicationDirPath() +
                                                 QStringLiteral("/audio-engine-XXXXXX"));
         AudioStore::Options options;

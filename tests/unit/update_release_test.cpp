@@ -234,7 +234,8 @@ class UpdateReleaseTest : public QObject
         for (const auto& entry : kAssets) {
             const QString name = QString::fromLatin1(entry.name);
             const QString valid = downloadUrl(name).toString();
-            QStringList invalid{valid + u"?x=1", valid + u"#fragment"};
+            QStringList invalid{valid + QStringLiteral("?x=1"),
+                                valid + QStringLiteral("#fragment")};
             for (const auto& replacement : {
                      std::pair{u"https://"_s, u"http://"_s},
                      std::pair{u"github.com/"_s, u"example.com/"_s},
