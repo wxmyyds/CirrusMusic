@@ -118,8 +118,7 @@ class AudioEngineTest : public QObject
 #ifdef Q_OS_LINUX
         QVERIFY2(hasOutput, "Private PulseAudio output disappeared");
 #else
-        if (!hasOutput)
-            QSKIP("no audio output device");
+        QVERIFY2(hasOutput, "Native audio tests require a default system audio output device");
 #endif
         m_dir = std::make_unique<QTemporaryDir>(QCoreApplication::applicationDirPath() +
                                                 QStringLiteral("/audio-engine-XXXXXX"));
