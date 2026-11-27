@@ -44,7 +44,10 @@ class AudioEngine : public application::IPlaybackBackend
     void refresh(domain::LoadToken token, domain::MediaSource source) override;
 
   private:
+    friend class AudioEngineFailureTest;
     struct Producer;
+    void producerFailed(const std::shared_ptr<Producer>& producer, domain::LoadToken token,
+                        domain::PlaybackError error);
     struct Next {
         domain::MediaSource source;
         domain::LoadToken token;

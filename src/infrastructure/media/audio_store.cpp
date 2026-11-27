@@ -15,6 +15,7 @@
 #include <QTemporaryFile>
 #include <QThread>
 #include <QThreadPool>
+#include <QUuid>
 #include <algorithm>
 #include <chrono>
 
@@ -115,7 +116,12 @@ struct AudioStore::Download {
     int redirects = 0, retries = 0, handles = 0;
     qint64 prefetchLimit = -1; // >= 0: download only this much, nobody reads yet
     bool waitingUrl = false, verifying = false, discardOnClose = false;
-    bool verifiedComplete = false; // the whole file passed its md5 check
+    // Byte completeness lives in state->have. Trust requires an md5 match or a full
+    // linear decode; downloading every byte alone is never decode evidence.
+    bool verifiedComplete = false;
+    bool decodedComplete = false;
+    bool invalidated = false;
+    QString detachedPath; // rejected generation, kept until its last reader closes
     qint64 sinceMeta = 0;
     QTimer retryTimer, refreshTimer;
 };
@@ -136,6 +142,22 @@ AudioStream::~AudioStream()
                     store->release(id);
             },
             Qt::QueuedConnection);
+}
+void AudioStream::decoded()
+{
+    if (auto* store = m_store.data())
+        QMetaObject::invokeMethod(store, [store = m_store, id = m_id] {
+            if (store)
+                store->decodeResult(id, std::nullopt);
+        }, Qt::QueuedConnection);
+}
+void AudioStream::decodeFailed(PlaybackError error)
+{
+    if (auto* store = m_store.data())
+        QMetaObject::invokeMethod(store, [store = m_store, id = m_id, error] {
+            if (store)
+                store->decodeResult(id, error);
+        }, Qt::QueuedConnection);
 }
 qint64 AudioStream::size() const { return m_state->size; }
 bool AudioStream::complete() const
@@ -216,13 +238,13 @@ qint64 AudioStream::read(qint64 position, char* out, qint64 maximum)
             end = chunkEnd(s, chunk++);
         if (position >= s.activeStart && position < s.activeEnd)
             end = std::max(end, s.activeEnd);
-    }
-    if (!m_file) {
-        // Unbuffered: a buffered handle reads ahead past the download head into the
-        // file's unwritten (zero) bytes and later serves them from its buffer.
-        m_file = openPrivateFile(s.path, QIODevice::ReadOnly | QIODevice::Unbuffered);
-        if (!m_file)
-            return -1;
+        // Opening lazily and renaming a rejected generation share this lock. An old
+        // reader must never open a newer generation at the canonical cache path.
+        if (!m_file) {
+            m_file = openPrivateFile(s.path, QIODevice::ReadOnly | QIODevice::Unbuffered);
+            if (!m_file)
+                return -1;
+        }
     }
     if (!m_file->seek(position))
         return -1;
@@ -302,6 +324,11 @@ std::shared_ptr<AudioStream> AudioStore::open(const MediaSource& source, Playbac
 {
     Q_ASSERT(QThread::currentThread() == thread());
     Download* d = findByBase(baseFor(source));
+    if (d && d->invalidated) {
+        if (failure)
+            *failure = PlaybackError::Storage;
+        return {}; // failed to detach its file: never overwrite an open generation
+    }
     if (d) {
         log::debug(
             lcMedia, "audio.open_shared",
@@ -366,7 +393,10 @@ AudioStore::Download* AudioStore::create(const MediaSource& source, PlaybackErro
                                    state->have.size())) {
                     state->have = std::move(*bits);
                     d->verifiedComplete =
-                        json.value(QStringLiteral("complete")).toBool() && state->complete();
+                        json.value(QStringLiteral("complete")).toBool() && state->complete() &&
+                        (contentAddressed(source) ||
+                         json.value(QStringLiteral("decoded")).toBool());
+                    d->decodedComplete = !contentAddressed(source) && d->verifiedComplete;
                 }
             }
             if (d->writer->size() != source.size && !d->writer->resize(source.size))
@@ -770,25 +800,77 @@ void AudioStore::fail(Download& d, PlaybackError error)
         retire(d.id);
 }
 
+void AudioStore::decodeResult(quint64 id, std::optional<PlaybackError> error)
+{
+    Q_ASSERT(QThread::currentThread() == thread());
+    const auto d = m_downloads.value(id);
+    if (!d || d->invalidated || d->base.isEmpty() || contentAddressed(d->source))
+        return; // id identifies one generation, never a later download with the same key
+    if (error) {
+        // Only rejection of the encoded content invalidates a stream-addressed file.
+        // A format mismatch also makes this cache entry unusable for its declared source.
+        // Network, expiry, cancellation and storage failures do not reject its bytes.
+        if (*error == PlaybackError::Decode || *error == PlaybackError::UnsupportedFormat)
+            invalidate(*d);
+        return;
+    }
+    {
+        std::lock_guard guard(d->state->lock);
+        if (d->state->failure)
+            return;
+        d->decodedComplete = true;
+        if (!d->state->complete())
+            return;
+    }
+    completed(*d);
+}
+
+void AudioStore::invalidate(Download& d)
+{
+    Q_ASSERT(QThread::currentThread() == thread());
+    d.invalidated = true;
+    d.verifiedComplete = d.decodedComplete = false;
+    const auto base = d.base;
+    const auto detached = base + QStringLiteral(".rejected-") +
+                          QUuid::createUuid().toString(QUuid::WithoutBraces);
+    {
+        std::lock_guard guard(d.state->lock);
+        // Native private handles share delete on Windows too. Keep a name for readers
+        // which haven't opened their QFile yet, and prevent the next open from sharing
+        // or overwriting this generation. Its active readers/download retain ownership.
+        if (!QDir().rename(d.state->path, detached)) {
+            d.discardOnClose = true;
+            log::warn(lcMedia, "audio_cache.detach_failed", {"dl", d.id});
+        } else {
+            d.state->path = detached;
+            d.detachedPath = detached;
+            d.base.clear();
+        }
+    }
+    QFile::remove(base + QStringLiteral(".meta"));
+    QFile::remove(base + QStringLiteral(".analysis"));
+    log::warn(lcMedia, "audio_cache.decode_rejected", {"dl", d.id});
+    // Stop this rejected download without reacquiring it. Available bytes and reader
+    // handles survive; readers waiting for unavailable bytes receive the decode failure.
+    fail(d, PlaybackError::Decode);
+}
+
 void AudioStore::completed(Download& d)
 {
-    if (d.base.isEmpty() || d.verifying || d.verifiedComplete)
-        return; // a temporary file is complete as it is
-    d.verifying = true;
+    if (d.base.isEmpty() || d.verifying || d.verifiedComplete || d.invalidated)
+        return; // a temporary or rejected file cannot become trusted
     d.writer->flush();
     if (!contentAddressed(d.source)) {
-        // Stream-addressed (Bilibili): no digest to check. A finished file is trusted as it is;
-        // a damaged one fails to decode and asks for the address again on the next open.
-        d.verifying = false;
-        d.verifiedComplete = true;
-        log::debug(lcMedia, "audio.cached", {{"dl", d.id}, {"bytes", d.state->size}});
+        // Downloaded and decoded are separate facts. Evidence may arrive before the
+        // owner's final network notification, so either event can complete trust.
+        d.verifiedComplete = d.decodedComplete;
+        saveMeta(d);
         if (d.handles == 0 && d.prefetchLimit >= 0)
             retire(d.id);
-        else
-            saveMeta(d);
         enforceCapacity();
         return;
     }
+    d.verifying = true;
     const auto md5 = contentMd5(d.source);
     // Hash off the owner thread; up to the file limit.
     QThreadPool::globalInstance()->start([self = QPointer<AudioStore>(this), base = d.base,
@@ -860,6 +942,8 @@ void AudioStore::retire(quint64 id)
     d->retryTimer.stop();
     d->refreshTimer.stop();
     d->writer.reset(); // a temporary file goes with it
+    if (!d->detachedPath.isEmpty())
+        QFile::remove(d->detachedPath);
     if (d->base.isEmpty())
         return;
     if (d->discardOnClose) {
@@ -874,13 +958,13 @@ void AudioStore::retire(quint64 id)
 
 void AudioStore::saveMeta(const Download& d) const
 {
-    if (d.base.isEmpty())
+    if (d.base.isEmpty() || d.invalidated)
         return;
     QByteArray bits;
     {
         std::lock_guard lock(d.state->lock);
         auto have = d.state->have;
-        if (!d.verifiedComplete && !have.empty() &&
+        if (contentAddressed(d.source) && !d.verifiedComplete && !have.empty() &&
             std::all_of(have.begin(), have.end(), [](bool b) { return b; }))
             have.back() = false; // unverified: the last chunk comes again and triggers the check
         bits = packBits(have);
@@ -891,6 +975,7 @@ void AudioStore::saveMeta(const Download& d) const
                      {QStringLiteral("chunk"), m_options.chunkBytes},
                      {QStringLiteral("have"), QString::fromLatin1(bits.toBase64())},
                      {QStringLiteral("complete"), d.verifiedComplete},
+                     {QStringLiteral("decoded"), d.decodedComplete && d.verifiedComplete},
                      {QStringLiteral("lastUsed"), QDateTime::currentMSecsSinceEpoch()}};
     const auto path = d.base + QStringLiteral(".meta");
     QSaveFile file(path);

@@ -57,6 +57,8 @@ class AudioStream final : public ByteSource
     // that work again. Sticky so it can't slip past a read that hasn't started yet.
     void interrupt();
     void clearInterrupt();
+    void decoded() override;
+    void decodeFailed(domain::PlaybackError error) override;
     [[nodiscard]] bool complete() const;
     [[nodiscard]] std::optional<domain::PlaybackError> failure() const override;
 
@@ -75,8 +77,8 @@ class AudioStream final : public ByteSource
 
 // The persistent audio cache with streaming download (docs/tasks/audio-engine.md §4.1).
 // Files are keyed by the source's identity: a provider md5 plus size (content-addressed,
-// checked against the finished file) or a stream name (stream-addressed, trusted once it
-// decodes). A source without either streams through a temporary file that is never kept.
+// checked against the finished file) or a stream name (stream-addressed, trusted only
+// after a full linear decode through EOF and codec drain; a full download is unverified).
 // Owner-thread object; AudioStream reads are thread-safe. Windows, Linux and macOS use
 // the same store with storage/private_files.h native permission checks. An absent or unsafe
 // root cannot retain audio; non-persistent streams use temporary files.
@@ -132,6 +134,8 @@ class AudioStore : public QObject
   private:
     struct Download;
     friend class AudioStream;
+    void decodeResult(quint64 id, std::optional<domain::PlaybackError> error);
+    void invalidate(Download& download);
     void release(quint64 id);
     void want(quint64 id);
     void schedule(Download& download);

@@ -18,6 +18,10 @@ class ByteSource
     [[nodiscard]] virtual qint64 size() const = 0;
     // Up to `maximum` bytes at `position`: > 0 read, 0 at the end, -1 failed or interrupted.
     virtual qint64 read(qint64 position, char* out, qint64 maximum) = 0;
+    // Decoder evidence, reported on its reading thread. Success means an uninterrupted
+    // linear decode from the start through demux EOF and codec drain, with audio frames.
+    virtual void decoded() {}
+    virtual void decodeFailed(domain::PlaybackError) {}
     // Why reads fail for good; nullopt while they work (or were only interrupted).
     [[nodiscard]] virtual std::optional<domain::PlaybackError> failure() const = 0;
 };

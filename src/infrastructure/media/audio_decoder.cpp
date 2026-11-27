@@ -61,8 +61,11 @@ AudioDecoder::~AudioDecoder()
 
 void AudioDecoder::failWith(PlaybackError error)
 {
-    if (!m_error)
+    if (!m_error) {
         m_error = error;
+        if (m_stream && !m_interrupted)
+            m_stream->decodeFailed(error);
+    }
     m_done = true;
 }
 
@@ -79,8 +82,10 @@ int AudioDecoder::readPacket(void* opaque, uint8_t* buffer, int size)
         // A failed download is the reason, not the decoder; otherwise it was interrupted.
         if (const auto failure = self->m_stream->failure())
             self->failWith(*failure);
-        else
+        else {
+            self->m_linear = false;
             self->m_interrupted = true;
+        }
         return AVERROR_EXIT;
     }
     self->m_offset += got;
@@ -118,6 +123,7 @@ bool AudioDecoder::open(std::shared_ptr<ByteSource> stream, const QString& forma
     static std::once_flag quiet;
     std::call_once(quiet, [] { av_log_set_level(AV_LOG_ERROR); });
     m_stream = std::move(stream);
+    m_readFrame = &av_read_frame;
     const auto rule = ruleFor(format);
     const AVInputFormat* input = rule ? av_find_input_format(rule->input) : nullptr;
     const AVCodecID expected = rule ? rule->expected : AV_CODEC_ID_NONE;
@@ -144,11 +150,13 @@ bool AudioDecoder::open(std::shared_ptr<ByteSource> stream, const QString& forma
     m_format->format_whitelist = av_strdup(rule->demuxer);
     if (avformat_open_input(&m_format, nullptr, input, nullptr) < 0) {
         // avformat_open_input frees the context on failure.
-        failWith(PlaybackError::UnsupportedFormat);
+        if (!m_interrupted)
+            failWith(PlaybackError::UnsupportedFormat);
         return false;
     }
     if (avformat_find_stream_info(m_format, nullptr) < 0) {
-        failWith(PlaybackError::Decode);
+        if (!m_interrupted)
+            failWith(PlaybackError::Decode);
         return false;
     }
     m_streamIndex = av_find_best_stream(m_format, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
@@ -207,6 +215,11 @@ void AudioDecoder::convert(const AVFrame* frame, qint64 skip)
         swr_convert(m_convert, &out, count, const_cast<const uint8_t**>(frame->extended_data),
                     frame->nb_samples);
     m_pending.resize(at + size_t(std::max(made, 0)) * 2);
+    if (made < 0) {
+        failWith(PlaybackError::Decode);
+        return;
+    }
+    m_decodedFrames = m_decodedFrames || made > 0;
     if (skip > 0) {
         const auto drop = std::min<size_t>(size_t(skip) * 2, m_pending.size() - at);
         m_pending.erase(m_pending.begin() + qsizetype(at),
@@ -219,6 +232,8 @@ bool AudioDecoder::decodeSome()
     while (!m_error && !m_interrupted) {
         const int got = avcodec_receive_frame(m_codec, m_frame);
         if (got == 0) {
+            if (m_frame->decode_error_flags || (m_frame->flags & AV_FRAME_FLAG_CORRUPT))
+                m_linear = false;
             qint64 skip = 0;
             if (m_dropUntil >= 0) {
                 const AVStream* stream = m_format->streams[m_streamIndex];
@@ -240,6 +255,10 @@ bool AudioDecoder::decodeSome()
         }
         if (got == AVERROR_EOF) {
             m_done = true;
+            if (m_inputDone && m_linear && m_decodedFrames && !m_evidenceSent) {
+                m_evidenceSent = true;
+                m_stream->decoded();
+            }
             return false;
         }
         if (got != AVERROR(EAGAIN)) {
@@ -250,16 +269,30 @@ bool AudioDecoder::decodeSome()
             m_done = true;
             return false;
         }
-        const int read = av_read_frame(m_format, m_packet);
+        const int read = m_readFrame(m_format, m_packet);
         if (m_error || m_interrupted)
             return false; // the stream failed or was interrupted under the demuxer
-        if (read < 0) {
+        if (read == AVERROR(EAGAIN) && ++m_again <= 3)
+            continue; // bounded: a permanently unavailable demuxer must not spin
+        if (read == AVERROR_EOF) {
+            m_again = 0;
             m_inputDone = true;
-            avcodec_send_packet(m_codec, nullptr); // drain
+            const int sent = avcodec_send_packet(m_codec, nullptr); // drain only real EOF
+            if (sent < 0 && sent != AVERROR_EOF) {
+                failWith(PlaybackError::Decode);
+                return false;
+            }
             continue;
         }
+        if (read < 0) {
+            failWith(PlaybackError::Decode);
+            return false;
+        }
+        m_again = 0;
         if (m_packet->stream_index == m_streamIndex) {
             const int sent = avcodec_send_packet(m_codec, m_packet);
+            if (sent == AVERROR_INVALIDDATA || sent == AVERROR(EAGAIN))
+                m_linear = false; // skipped packets cannot certify the entire file
             // A damaged frame is skipped, as players do; anything else is fatal.
             if (sent < 0 && sent != AVERROR_INVALIDDATA && sent != AVERROR(EAGAIN)) {
                 av_packet_unref(m_packet);
@@ -296,6 +329,8 @@ void AudioDecoder::resume()
 
 bool AudioDecoder::seek(qint64 ms)
 {
+    m_linear = false; // reaching EOF after a seek says nothing about skipped packets
+    m_again = 0;
     if (m_error && *m_error != PlaybackError::Decode)
         return false; // a failed download can't seek
     m_error.reset();

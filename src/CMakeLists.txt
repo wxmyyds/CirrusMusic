@@ -403,6 +403,7 @@ add_library(cirrus_media STATIC
     infrastructure/media/audio_output.h
     infrastructure/media/audio_output.cpp
     infrastructure/media/audio_engine.h
+    infrastructure/media/audio_engine_producer_p.h
     infrastructure/media/audio_engine.cpp
     # Transitions between tracks (docs/tasks/automix.md).
     infrastructure/media/automix/automation.h

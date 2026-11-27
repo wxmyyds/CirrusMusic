@@ -51,6 +51,14 @@ class AudioDecoder final
     void resume();
 
   private:
+    friend class AudioDecoderTestAccess;
+    // Narrow packet-reader seam: production always uses av_read_frame. Tests still open
+    // and decode real fixtures, and can force demux return codes after a successful open.
+    int (*m_readFrame)(AVFormatContext*, AVPacket*) = nullptr;
+    bool m_linear = true;
+    bool m_decodedFrames = false;
+    bool m_evidenceSent = false;
+    int m_again = 0;
     static int readPacket(void* opaque, uint8_t* buffer, int size);
     static int64_t seekStream(void* opaque, int64_t offset, int whence);
     bool decodeSome();

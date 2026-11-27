@@ -1,4 +1,4 @@
-#include "audio_engine.h"
+#include "audio_engine_producer_p.h"
 #include "audio_decoder.h"
 #include "audio_output.h"
 #include "audio_store.h"
@@ -73,102 +73,7 @@ void logAnalysis(LoadToken token, const automix::Analysis& a, qint64 ms, bool ca
 }
 } // namespace
 
-// The decoder thread and what it shares with the owner.
-struct AudioEngine::Producer {
-    std::mutex lock;
-    std::condition_variable wake;
-    bool quit = false;
-    std::optional<qint64> seekTo;
-    std::optional<qint64> seeking; // the seek taken from seekTo, until it is made (lock)
-    qint64 baseMs = 0;             // the position output frame `startFrame` stands for (lock)
-    quint64 startFrame = 0;        // output frame (since the flush) the track starts at (lock)
-    quint64 seekSerial = 0;        // bumped when a seek took effect (lock)
-    // The next track, all under the lock. The owner hands it over; the producer goes on
-    // into it at the current track's end (gapless) or mixes it in over a transition
-    // (docs/tasks/automix.md). Once it plays (`crossed`), its audio starts at output frame
-    // `nextStartFrame` from its media time `nextBaseMs`, and it becomes the current track
-    // at frame `boundary`: the owner takes it over when playback gets there.
-    std::shared_ptr<AudioStream> nextStream;
-    QString nextFormat;
-    float nextGain = 1;        // its normalization gain
-    bool nextPreview = false;  // a preview clip: never mixed
-    bool nextSameFile = false; // the current file again (repeat one): not mixed with itself
-    bool crossed = false;
-    bool nextFailed = false; // it wouldn't open: the current track just ends
-    quint64 boundary = 0;
-    quint64 nextStartFrame = 0;
-    qint64 nextBaseMs = 0;
-    qint64 nextDurationMs = 0;
-    automix::Settings transition; // the owner's setting
-    // The analyses as far as they have come (the owner hands them over); `replan`: they
-    // or the setting changed, plan the transition again while it hasn't started.
-    std::shared_ptr<const automix::Analysis> curAnalysis, nextAnalysis;
-    std::vector<automix::Span> curVocals, nextVocals; // the sung lines
-    bool replan = false;
-    std::atomic<quint64> produced{0}; // frames into the ring since the last flush
-    std::atomic<bool> eof{false};
-    AudioOutput* output = nullptr; // outlives the thread: the owner joins first
-    int outRate = 0;
-    std::shared_ptr<AudioStream> stream;
-    QString format;
-    bool preview = false; // the current track is a preview clip
-    float trackGain = 1;  // and its normalization gain
-    // Volume normalization: on or off (the owner flips it); the decks slide to it.
-    std::atomic<bool> normalize{false};
-    std::thread thread;
-
-    [[nodiscard]] bool quitting()
-    {
-        std::lock_guard guard(lock);
-        return quit;
-    }
-    // Neither a seek nor a stop is waiting.
-    [[nodiscard]] bool undisturbed()
-    {
-        std::lock_guard guard(lock);
-        return !quit && !seekTo;
-    }
-    void run(AudioEngine* engine, LoadToken token, bool reopening);
-
-  private:
-    // The next track opened ahead, its transition planned, while the current one plays.
-    struct Upcoming {
-        std::shared_ptr<AudioStream> stream;
-        std::unique_ptr<AudioDecoder> decoder;
-        float gain = 1;
-        bool preview = false;
-        automix::Plan plan;
-    };
-    // A transition sounding: the next track's deck mixed in with the current one.
-    struct Mixing {
-        std::unique_ptr<automix::Deck> deck;
-        automix::Plan plan;
-        automix::Mixer mixer;
-        qint64 durationMs = 0;
-        quint64 startFrame = 0; // output frame its first frame went out at
-        qint64 offset = 0;      // frames of the overlap done
-        qint64 length = 0;      // the overlap in output frames
-    };
-    // Up to `frames` frames from `deck`, past interruptions no seek or stop is behind.
-    qsizetype pullFrom(automix::Deck& deck, float* out, qsizetype frames);
-    // Opens the next track ahead and plans the transition, when it is time.
-    void prepare(AudioEngine* engine);
-    void planAgain(AudioEngine* engine);
-    bool startMixing();
-    void mixSome(std::vector<float>& out);
-    // At the current track's end: the next one goes on in the same deck (gapless). False
-    // when there is none (or it won't open, or a seek or stop came in meanwhile).
-    bool crossNext();
-    // The next one came only after the current track's end was decoded: a deck of its own.
-    bool crossLate();
-
-    std::unique_ptr<automix::Deck> m_cur;
-    qint64 m_curDurationMs = 0;
-    quint64 m_curOrigin = 0; // output frame the current deck's first frame went out at
-    std::optional<Upcoming> m_upcoming;
-    std::optional<Mixing> m_mixing;
-    std::vector<float> m_other; // the next track's frames in an overlap
-};
+// The decoder thread and what it shares with the owner are in audio_engine_producer_p.h.
 
 qsizetype AudioEngine::Producer::pullFrom(automix::Deck& deck, float* out, qsizetype frames)
 {
@@ -204,6 +109,7 @@ void AudioEngine::Producer::prepare(AudioEngine* engine)
     QString format;
     float gain;
     bool nextIsPreview, sameFile;
+    LoadToken nextIdentity;
     automix::Settings settings;
     std::shared_ptr<const automix::Analysis> analysis, nextAnalysisNow;
     std::vector<automix::Span> vocals, nextVocalsNow;
@@ -212,6 +118,7 @@ void AudioEngine::Producer::prepare(AudioEngine* engine)
         if (!nextStream || crossed)
             return;
         next = nextStream;
+        nextIdentity = nextToken;
         format = nextFormat;
         gain = nextGain;
         nextIsPreview = nextPreview;
@@ -245,7 +152,8 @@ void AudioEngine::Producer::prepare(AudioEngine* engine)
         engine, [engine, mode = settings.mode, plan] { engine->planned(mode, plan, false); },
         Qt::QueuedConnection);
     m_upcoming =
-        Upcoming{std::move(next), std::move(decoder), gain, nextIsPreview, std::move(plan)};
+        Upcoming{std::move(next), std::move(decoder), nextIdentity, gain, nextIsPreview,
+                 std::move(plan)};
 }
 
 void AudioEngine::Producer::planAgain(AudioEngine* engine)
@@ -304,40 +212,52 @@ bool AudioEngine::Producer::startMixing()
     const qint64 length = plan.overlapMs * outRate / 1000;
     automix::Mixer mixer(m_upcoming->plan, outRate);
     m_mixing =
-        Mixing{std::move(deck), std::move(m_upcoming->plan), std::move(mixer), durationMs, start, 0,
-               length};
+        Mixing{std::move(deck), m_upcoming->token, std::move(m_upcoming->plan), std::move(mixer),
+               durationMs, start, 0, length};
+    m_outgoingFailed = false;
     m_upcoming.reset();
     return true;
 }
 
-void AudioEngine::Producer::mixSome(std::vector<float>& out)
+bool AudioEngine::Producer::mixSome(AudioEngine* engine, std::vector<float>& out)
 {
     Mixing& mix = *m_mixing;
     const auto frames = qsizetype(std::min<qint64>(kChunkFrames, mix.length - mix.offset));
     out.assign(size_t(frames) * 2, 0.0f);
     m_other.assign(size_t(frames) * 2, 0.0f);
-    qsizetype a = pullFrom(*m_cur, out.data(), frames);
-    if (a < frames && m_cur->decoderEnded()) {
+    qsizetype a = m_outgoingFailed ? 0 : pullFrom(*m_cur, out.data(), frames);
+    if (const auto error = m_cur->decoder().error(); error && !m_outgoingFailed) {
+        m_outgoingFailed = true;
+        failed(engine, m_curToken, *error);
+    }
+    if (!m_outgoingFailed && a < frames && m_cur->decoderEnded()) {
         m_cur->finish(); // the current track ends inside the overlap: silent for the rest
         a += pullFrom(*m_cur, out.data() + a * 2, frames - a);
     }
     const qsizetype silent = mix.mixer.silentIn(frames); // the next track begins after these
     const qsizetype b = silent + pullFrom(*mix.deck, m_other.data() + silent * 2, frames - silent);
+    if (const auto error = mix.deck->decoder().error()) {
+        failed(engine, mix.token, *error);
+        out.clear();
+        return false;
+    }
     if ((a < frames && m_cur->decoder().interrupted()) ||
         (b < frames && mix.deck->decoder().interrupted())) {
         out.clear(); // a seek or stop is waiting: this piece never plays
-        return;
+        return true;
     }
     mix.mixer.mix(out.data(), m_other.data(), out.data(), frames);
     mix.offset += frames;
     if (mix.offset < mix.length)
-        return;
+        return true;
     // Over: the next track is the current one now, the old one's deck goes.
+    m_curToken = mix.token;
     m_cur = std::move(mix.deck);
     m_curDurationMs = mix.durationMs;
     m_curOrigin = mix.startFrame;
     preview = false; // previews are never mixed
     m_mixing.reset();
+    return true;
 }
 
 bool AudioEngine::Producer::crossNext()
@@ -346,6 +266,7 @@ bool AudioEngine::Producer::crossNext()
     std::unique_ptr<AudioDecoder> opened;
     float gain;
     bool nextIsPreview;
+    LoadToken nextIdentity;
     if (m_upcoming) {
         // Opened ahead for a transition that didn't start (the track ended early, or the
         // plan was gapless): it follows right here.
@@ -353,6 +274,7 @@ bool AudioEngine::Producer::crossNext()
         opened = std::move(m_upcoming->decoder);
         gain = m_upcoming->gain;
         nextIsPreview = m_upcoming->preview;
+        nextIdentity = m_upcoming->token;
         m_upcoming.reset();
     } else {
         QString format;
@@ -361,6 +283,7 @@ bool AudioEngine::Producer::crossNext()
             if (crossed || !nextStream || seekTo || quit)
                 return false;
             next = nextStream;
+            nextIdentity = nextToken;
             format = nextFormat;
             gain = nextGain;
             nextIsPreview = nextPreview;
@@ -380,6 +303,7 @@ bool AudioEngine::Producer::crossNext()
     if (quit || seekTo || crossed || nextStream != next)
         return false; // the seek restarts the current track's deck
     boundary = m_curOrigin + quint64(m_cur->follow(std::move(opened), gain));
+    m_curToken = nextIdentity;
     crossed = true;
     nextStartFrame = boundary;
     nextBaseMs = 0;
@@ -418,6 +342,7 @@ bool AudioEngine::Producer::crossLate()
     if (quit || seekTo || crossed || nextStream != next)
         return false;
     m_cur = std::make_unique<automix::Deck>(std::move(opened), outRate, gain, normalize);
+    m_curToken = nextToken; // still locked: identity and decoder transfer together
     m_curOrigin = produced;
     m_curDurationMs = durationMs;
     preview = nextIsPreview;
@@ -428,17 +353,22 @@ bool AudioEngine::Producer::crossLate()
     return true;
 }
 
+void AudioEngine::Producer::failed(AudioEngine* engine, LoadToken token, PlaybackError error)
+{
+    if (quitting())
+        return; // stopping interrupted it; not a playback failure
+    QMetaObject::invokeMethod(engine, [engine, origin = weak_from_this(), token, error] {
+        if (auto producer = origin.lock())
+            engine->producerFailed(producer, token, error);
+    }, Qt::QueuedConnection);
+}
+
 void AudioEngine::Producer::run(AudioEngine* engine, LoadToken token, bool reopening)
 {
-    const auto failed = [&](PlaybackError error) {
-        if (quitting())
-            return; // stopping interrupted it; not a failure
-        QMetaObject::invokeMethod(
-            engine, [engine, token, error] { engine->fail(token, error); }, Qt::QueuedConnection);
-    };
+    m_curToken = token;
     auto decoder = std::make_unique<AudioDecoder>();
     if (!decoder->open(stream, format)) {
-        failed(decoder->error().value_or(PlaybackError::Decode));
+        failed(engine, m_curToken, decoder->error().value_or(PlaybackError::Decode));
         return;
     }
     if (!reopening) {
@@ -473,6 +403,7 @@ void AudioEngine::Producer::run(AudioEngine* engine, LoadToken token, bool reope
             // The owner took the next track over while the transition still sounded (it
             // restarts us for a seek before that): the seek is in the next track.
             if (m_mixing) {
+                m_curToken = m_mixing->token;
                 m_cur = std::move(m_mixing->deck);
                 m_curDurationMs = m_mixing->durationMs;
                 m_mixing.reset();
@@ -495,7 +426,7 @@ void AudioEngine::Producer::run(AudioEngine* engine, LoadToken token, bool reope
                         seeking.reset();
                     continue;
                 }
-                failed(m_cur->decoder().error().value_or(PlaybackError::Decode));
+                failed(engine, m_curToken, m_cur->decoder().error().value_or(PlaybackError::Decode));
                 return;
             }
             seekRetries = 0;
@@ -543,7 +474,8 @@ void AudioEngine::Producer::run(AudioEngine* engine, LoadToken token, bool reope
         }
         prepare(engine);
         if (m_mixing) {
-            mixSome(out);
+            if (!mixSome(engine, out))
+                return;
             continue;
         }
         // The current track alone, up to the transition's start when one is planned.
@@ -562,7 +494,7 @@ void AudioEngine::Producer::run(AudioEngine* engine, LoadToken token, bool reope
         if (got == frames)
             continue;
         if (const auto error = m_cur->decoder().error()) {
-            failed(*error);
+            failed(engine, m_curToken, *error);
             return;
         }
         if (!m_cur->decoderEnded())
@@ -672,6 +604,7 @@ void AudioEngine::startProducer(qint64 positionMs, bool seek)
     if (m_next && m_next->stream) {
         m_next->stream->clearInterrupt();
         producer->nextStream = m_next->stream;
+        producer->nextToken = m_next->token;
         producer->nextFormat = m_next->source.format.toLower();
         producer->nextGain = normalizationGain(m_next->source);
         producer->nextPreview = m_next->source.preview.has_value();
@@ -897,6 +830,37 @@ void AudioEngine::ended()
     send({m_token, Kind::Ended});
 }
 
+void AudioEngine::producerFailed(const std::shared_ptr<Producer>& producer, LoadToken token,
+                                 PlaybackError error)
+{
+    Q_ASSERT(QThread::currentThread() == thread());
+    if (!m_active || producer != m_producer)
+        return; // a stopped/replaced producer's queued callback cannot fail a new load
+    if (m_next && token == m_next->token) {
+        qint64 duration, base;
+        quint64 start;
+        {
+            std::lock_guard guard(producer->lock);
+            if (!producer->crossed)
+                return; // no decoder ownership transfer happened
+            duration = producer->nextDurationMs;
+            start = producer->nextStartFrame;
+            base = producer->nextBaseMs;
+        }
+        // Decode can outrun the sink and its ticker. Publish the identity transfer before
+        // Failure even when the sink has not reached the planned boundary yet.
+        advance(duration, start, base);
+        if (!m_active || m_producer != producer || m_token != token)
+            return; // Advanced observers may synchronously replace the load
+    }
+    if (token == m_token)
+        fail(token, error);
+    else
+        // The outgoing deck can fail while the owner is already on the incoming track.
+        // Report its actual identity; the producer leaves that side silent and continues.
+        emit event({token, Kind::Failure, {}, 0, {error}});
+}
+
 void AudioEngine::fail(LoadToken token, PlaybackError error)
 {
     if (!m_active || token != m_token)
@@ -908,8 +872,8 @@ void AudioEngine::fail(LoadToken token, PlaybackError error)
                {"ms", m_clock.elapsed()}});
     m_meter.breakInterval();
     m_ticker.stop();
-    QTimer::singleShot(0, this, [this, token, error] {
-        if (!m_active || token != m_token)
+    QTimer::singleShot(0, this, [this, producer = m_producer, token, error] {
+        if (!m_active || token != m_token || producer != m_producer)
             return;
         stop();
         emit event({token, Kind::Failure, {}, 0, {error}});
@@ -951,6 +915,7 @@ void AudioEngine::openNext()
     {
         std::lock_guard guard(m_producer->lock);
         m_producer->nextStream = m_next->stream;
+        m_producer->nextToken = m_next->token;
         m_producer->nextFormat = m_next->source.format.toLower();
         m_producer->nextGain = normalizationGain(m_next->source);
         m_producer->nextPreview = m_next->source.preview.has_value();

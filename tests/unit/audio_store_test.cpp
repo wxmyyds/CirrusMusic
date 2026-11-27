@@ -1,5 +1,9 @@
+#include "../support/audio_decoder_access.h"
 #include "../support/fake_range_http.h"
 #include "infrastructure/media/audio_store.h"
+#include "infrastructure/media/audio_decoder.h"
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDir>
@@ -103,6 +107,22 @@ class AudioStoreTest : public QObject
             ++count;
         }
         return count;
+    }
+
+    bool trusted() const
+    {
+        QDirIterator it(m_root, {QStringLiteral("*.meta")}, QDir::Files,
+                        QDirIterator::Subdirectories);
+        if (!it.hasNext())
+            return false;
+        QFile meta(it.next());
+        return meta.open(QIODevice::ReadOnly) &&
+               QJsonDocument::fromJson(meta.readAll()).object().value(QStringLiteral("complete")).toBool();
+    }
+    QByteArray tone() const
+    {
+        QFile file(QStringLiteral(AUDIO_FIXTURES "/tone_fmp4.m4a"));
+        return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
     }
 
   private slots:
@@ -523,25 +543,186 @@ class AudioStoreTest : public QObject
         QCOMPARE(s->usage(), 0);
     }
 
-    // A stream-addressed source (Bilibili) is kept too, keyed by its stream name, with no
-    // digest: the finished file is trusted as it is.
+    // Full download is reusable, but only a full, successful decode makes it trusted.
     void streamAddressedSourceIsKept()
     {
-        test::RangeServer server{noise(Chunk * 2, 31)};
+        test::RangeServer server{tone()};
+        QVERIFY(!server.body.isEmpty());
         auto s = store(server);
         auto stream = s->open(biliSource(server.body));
         auto read = readAsync(stream);
         QTRY_VERIFY_WITH_TIMEOUT(ready(read), 5000);
         QCOMPARE(read.get(), server.body);
+        QTRY_VERIFY(stream->complete());
+        QVERIFY(!trusted());
+        auto decode = std::async(std::launch::async, [stream] {
+            media::AudioDecoder decoder;
+            if (!decoder.open(stream, QStringLiteral("aac")))
+                return false;
+            std::vector<float> audio;
+            while (decoder.read(audio, 4096)) {}
+            return !decoder.error() && decoder.atEnd() && !audio.empty();
+        });
+        QTRY_VERIFY(decode.wait_for(std::chrono::seconds(0)) == std::future_status::ready);
+        QVERIFY(decode.get());
+        QTRY_VERIFY(trusted());
         stream.reset();
         settle(*s, server.body.size());
         QCOMPARE(dataFiles(), 1);
         const auto requests = server.ranges.size();
+        s.reset(); // persisted decoded evidence survives reopening the store
+        s = store(server);
         auto again = s->open(biliSource(server.body));
         auto second = readAsync(again);
         QTRY_VERIFY_WITH_TIMEOUT(ready(second), 5000);
         QCOMPARE(second.get(), server.body);
-        QCOMPARE(server.ranges.size(), requests); // served from the cache, not downloaded again
+        QCOMPARE(server.ranges.size(), requests);
+        QVERIFY(trusted());
+    }
+
+    void downloadedStreamIsNotDecodeVerified()
+    {
+        test::RangeServer server{noise(Chunk * 2, 31)};
+        auto s = store(server);
+        auto stream = s->open(biliSource(server.body));
+        auto read = readAsync(stream);
+        QTRY_VERIFY(ready(read));
+        QCOMPARE(read.get(), server.body);
+        QTRY_VERIFY(stream->complete());
+        QVERIFY(!trusted());
+        stream.reset();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        s.reset();
+        s = store(server);
+        const auto requests = server.ranges.size();
+        auto again = s->open(biliSource(server.body));
+        auto second = readAsync(again);
+        QTRY_VERIFY(ready(second));
+        QCOMPARE(second.get(), server.body);
+        QCOMPARE(server.ranges.size(), requests); // bytes retained, still unverified
+        QVERIFY(!trusted());
+    }
+
+    void decodeRejectionIsGenerationScoped()
+    {
+        test::RangeServer server{noise(Chunk * 2, 61)};
+        auto s = store(server);
+        const auto media = biliSource(server.body);
+        auto old = s->open(media);
+        auto lazy = s->open(media); // has not opened its QFile yet
+        auto read = readAsync(old);
+        QTRY_VERIFY(ready(read));
+        const auto original = read.get();
+        QCOMPARE(original, server.body);
+        QTRY_VERIFY(old->complete());
+        s->keepAnalysis(media, "old analysis");
+        old->decodeFailed(PlaybackError::Decode);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QVERIFY(!trusted());
+        QVERIFY(s->analysis(media).isEmpty());
+        const auto requests = server.ranges.size();
+        QCOMPARE(dataFiles(), 0); // detached, still held by old readers
+        QCoreApplication::processEvents();
+        QCOMPARE(server.ranges.size(), requests); // rejection never starts a retry
+
+        server.body = noise(Chunk * 2, 62); // same key/size, new explicit generation
+        auto fresh = s->open(media);
+        QVERIFY(fresh);
+        QVERIFY(fresh->id() != old->id());
+        auto replacement = readAsync(fresh);
+        QTRY_VERIFY(ready(replacement));
+        QCOMPARE(replacement.get(), server.body);
+        QVERIFY(server.ranges.size() > requests);
+        QTRY_VERIFY(fresh->complete());
+        fresh->decoded(); // store seam; decoder's strict evidence is tested separately
+        QTRY_VERIFY(trusted());
+        s->keepAnalysis(media, "new analysis");
+
+        // Delayed failure/success from another reader of the rejected generation must
+        // neither delete nor certify the new file. Even its unopened reader keeps bytes.
+        lazy->decodeFailed(PlaybackError::Decode);
+        old->decoded();
+        auto oldRead = readAsync(lazy);
+        QTRY_VERIFY(ready(oldRead));
+        QCOMPARE(oldRead.get(), original);
+        old.reset();
+        lazy.reset();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QVERIFY(trusted());
+        QCOMPARE(dataFiles(), 1);
+        QCOMPARE(s->analysis(media), QByteArray("new analysis"));
+        auto freshRead = readAsync(fresh);
+        QTRY_VERIFY(ready(freshRead));
+        QCOMPARE(freshRead.get(), server.body);
+    }
+
+    void actualDecoderFailureRejectsStreamGeneration()
+    {
+        test::RangeServer server{tone()};
+        QVERIFY(!server.body.isEmpty());
+        auto s = store(server);
+        const auto media = biliSource(server.body);
+        auto stream = s->open(media);
+        auto read = readAsync(stream);
+        QTRY_VERIFY(ready(read));
+        QCOMPARE(read.get(), server.body);
+        QTRY_VERIFY(stream->complete());
+        auto decode = std::async(std::launch::async, [stream] {
+            media::AudioDecoder decoder;
+            if (!decoder.open(stream, QStringLiteral("aac")))
+                return decoder.error();
+            media::AudioDecoderTestAccess::reader(decoder, &media::AudioDecoderTestAccess::invalid);
+            std::vector<float> audio;
+            while (decoder.read(audio, 4096)) {}
+            return decoder.error();
+        });
+        QTRY_VERIFY(decode.wait_for(std::chrono::seconds(0)) == std::future_status::ready);
+        QCOMPARE(decode.get(), std::optional(PlaybackError::Decode));
+        QTRY_COMPARE(dataFiles(), 0);
+        auto next = s->open(media);
+        QVERIFY(next);
+        QVERIFY(next->id() != stream->id());
+    }
+
+    void transportFailuresDoNotRejectEncodedBytes_data()
+    {
+        QTest::addColumn<PlaybackError>("error");
+        QTest::newRow("network") << PlaybackError::Network;
+        QTest::newRow("cancel") << PlaybackError::Canceled;
+        QTest::newRow("expired") << PlaybackError::Expired;
+        QTest::newRow("storage") << PlaybackError::Storage;
+    }
+    void transportFailuresDoNotRejectEncodedBytes()
+    {
+        QFETCH(PlaybackError, error);
+        test::RangeServer server{noise(Chunk * 2, 63)};
+        auto s = store(server);
+        auto stream = s->open(biliSource(server.body));
+        auto read = readAsync(stream);
+        QTRY_VERIFY(ready(read));
+        QCOMPARE(read.get(), server.body);
+        QTRY_VERIFY(stream->complete());
+        stream->decodeFailed(error);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        auto same = s->open(biliSource(server.body));
+        QCOMPARE(same->id(), stream->id());
+        QCOMPARE(dataFiles(), 1);
+        QVERIFY(!trusted());
+    }
+
+    void decodeFailureDoesNotInvalidateContentHash()
+    {
+        test::RangeServer server{noise(Chunk * 2, 64)};
+        auto s = store(server);
+        auto stream = s->open(source(server.body));
+        auto read = readAsync(stream);
+        QTRY_VERIFY(ready(read));
+        QCOMPARE(read.get(), server.body);
+        QTRY_VERIFY(trusted());
+        stream->decodeFailed(PlaybackError::Decode);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCOMPARE(dataFiles(), 1);
+        QVERIFY(trusted());
     }
 
     // Bilibili's CDN needs its Referer and User-Agent, and still never a Cookie.

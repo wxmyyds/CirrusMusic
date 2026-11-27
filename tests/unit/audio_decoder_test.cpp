@@ -1,4 +1,5 @@
 #include "../support/fake_range_http.h"
+#include "../support/audio_decoder_access.h"
 #include "infrastructure/media/audio_decoder.h"
 #include "infrastructure/media/audio_store.h"
 #include "infrastructure/media/byte_source.h"
@@ -42,6 +43,34 @@ std::vector<float> decodeAll(AudioDecoder& decoder)
     while (decoder.read(all, 4096)) {
     }
     return all;
+}
+class EvidenceSource final : public media::ByteSource
+{
+  public:
+    std::shared_ptr<media::LocalFileSource> file = media::LocalFileSource::open(
+        QStringLiteral(AUDIO_FIXTURES "/tone.flac"));
+    int successes = 0;
+    QList<PlaybackError> failures;
+    std::optional<PlaybackError> reason;
+    bool interruptRead = false;
+    qint64 size() const override { return file->size(); }
+    qint64 read(qint64 at, char* out, qint64 count) override
+    {
+        return interruptRead || reason ? -1 : file->read(at, out, count);
+    }
+    std::optional<PlaybackError> failure() const override { return reason; }
+    void decoded() override { ++successes; }
+    void decodeFailed(PlaybackError error) override { failures.append(error); }
+};
+int againCalls = 0;
+int brieflyAgain(AVFormatContext* format, AVPacket* packet)
+{
+    return ++againCalls <= 3 ? AVERROR(EAGAIN) : av_read_frame(format, packet);
+}
+int alwaysAgain(AVFormatContext*, AVPacket*)
+{
+    ++againCalls;
+    return AVERROR(EAGAIN);
 }
 } // namespace
 
@@ -206,6 +235,88 @@ class AudioDecoderTest : public QObject
             return decoder.open(stream, QStringLiteral("mp3")) ? std::nullopt : decoder.error();
         });
         QVERIFY(error == PlaybackError::UnsupportedFormat || error == PlaybackError::Decode);
+    }
+
+    void normalEofCertifiesOnlyLinearDecoding()
+    {
+        auto bytes = std::make_shared<EvidenceSource>();
+        QVERIFY(bytes->file);
+        AudioDecoder decoder;
+        QVERIFY(decoder.open(bytes, QStringLiteral("flac")));
+        QCOMPARE(qint64(decodeAll(decoder).size() / 2), ToneFrames);
+        QVERIFY(decoder.atEnd());
+        QVERIFY(!decoder.error());
+        QCOMPARE(bytes->successes, 1);
+        QVERIFY(bytes->failures.isEmpty());
+        decodeAll(decoder);
+        QCOMPARE(bytes->successes, 1);
+
+        auto sought = std::make_shared<EvidenceSource>();
+        AudioDecoder partial;
+        QVERIFY(partial.open(sought, QStringLiteral("flac")));
+        QVERIFY(partial.seek(250));
+        QCOMPARE(qint64(decodeAll(partial).size() / 2), ToneFrames - 11025);
+        QVERIFY(partial.atEnd());
+        QVERIFY(!partial.error());
+        QCOMPARE(sought->successes, 0);
+    }
+
+    void demuxErrorIsNotEof()
+    {
+        auto bytes = std::make_shared<EvidenceSource>();
+        QVERIFY(bytes->file);
+        AudioDecoder decoder;
+        QVERIFY(decoder.open(bytes, QStringLiteral("flac")));
+        media::AudioDecoderTestAccess::reader(decoder, &media::AudioDecoderTestAccess::invalid);
+        decodeAll(decoder);
+        QCOMPARE(decoder.error(), std::optional(PlaybackError::Decode));
+        QCOMPARE(bytes->failures, QList<PlaybackError>{PlaybackError::Decode});
+        QCOMPARE(bytes->successes, 0);
+    }
+
+    void demuxAgainIsBounded()
+    {
+        auto bytes = std::make_shared<EvidenceSource>();
+        QVERIFY(bytes->file);
+        AudioDecoder decoder;
+        QVERIFY(decoder.open(bytes, QStringLiteral("flac")));
+        againCalls = 0;
+        media::AudioDecoderTestAccess::reader(decoder, &brieflyAgain);
+        QCOMPARE(qint64(decodeAll(decoder).size() / 2), ToneFrames);
+        QVERIFY(!decoder.error());
+        QCOMPARE(bytes->successes, 1);
+
+        AudioDecoder blocked;
+        QVERIFY(blocked.open(bytes, QStringLiteral("flac")));
+        againCalls = 0;
+        media::AudioDecoderTestAccess::reader(blocked, &alwaysAgain);
+        decodeAll(blocked);
+        QCOMPARE(againCalls, 4);
+        QCOMPARE(blocked.error(), std::optional(PlaybackError::Decode));
+    }
+
+    void readFailureAndInterruptionKeepTheirMeaning()
+    {
+        for (bool interrupted : {false, true}) {
+            auto bytes = std::make_shared<EvidenceSource>();
+            QVERIFY(bytes->file);
+            AudioDecoder decoder;
+            QVERIFY(decoder.open(bytes, QStringLiteral("flac")));
+            // Force a source read after open, independently of FFmpeg's read-ahead.
+            media::AudioDecoderTestAccess::reader(decoder, &media::AudioDecoderTestAccess::readSource);
+            bytes->interruptRead = interrupted;
+            if (!interrupted)
+                bytes->reason = PlaybackError::Network;
+            decodeAll(decoder);
+            QCOMPARE(bytes->successes, 0);
+            if (interrupted) {
+                QVERIFY(decoder.interrupted());
+                QVERIFY(!decoder.error());
+                QVERIFY(bytes->failures.isEmpty());
+            } else {
+                QCOMPARE(decoder.error(), std::optional(PlaybackError::Network));
+            }
+        }
     }
 
     void aFailedDownloadIsTheReason()
