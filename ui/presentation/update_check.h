@@ -46,17 +46,23 @@ class UpdateCheck : public QObject
     // Whether this copy downloads and installs the update itself (Windows installer).
     Q_PROPERTY(bool canInstall READ canInstall NOTIFY changed)
     Q_PROPERTY(int download READ download NOTIFY downloadChanged) // UpdateCheck.Download
+    // Why the last download failed (UpdateCheck.DownloadFailure), while DownloadFailed.
+    Q_PROPERTY(int downloadFailure READ downloadFailure NOTIFY downloadChanged)
     // 0–1 while downloading.
     Q_PROPERTY(qreal downloadProgress READ downloadProgress NOTIFY downloadChanged)
 
   public:
     enum Status { Idle, Checking, UpToDate, Available, Failed };
     Q_ENUM(Status)
-    enum Failure { NoFailure, Network, Limited, Invalid };
+    // Server: GitHub answered with an error of its own (not the network).
+    enum Failure { NoFailure, Network, Limited, Invalid, Server };
     Q_ENUM(Failure)
     // The installer's download: not started, under way, downloaded and checked, or not.
     enum Download { NoDownload, Downloading, Downloaded, DownloadFailed };
     Q_ENUM(Download)
+    // Cut off, not the published file (size or SHA-256), or not saved (disk, permissions).
+    enum DownloadFailure { DownloadInterrupted, DownloadDamaged, DownloadUnsaved };
+    Q_ENUM(DownloadFailure)
 
     explicit UpdateCheck(AppSettings* settings, QObject* parent = nullptr);
 
@@ -74,6 +80,7 @@ class UpdateCheck : public QObject
     [[nodiscard]] bool canCheckAutomatically() const;
     [[nodiscard]] bool canInstall() const;
     [[nodiscard]] int download() const { return m_download; }
+    [[nodiscard]] int downloadFailure() const { return m_downloadFailure; }
     [[nodiscard]] qreal downloadProgress() const;
 
     // The build's package identity and target architecture from CMake. Development
@@ -114,6 +121,7 @@ class UpdateCheck : public QObject
     void finish(QNetworkReply* reply, bool manual);
     void setState(Status status, Failure failure);
     void setDownload(Download download);
+    void downloadFailed(DownloadFailure why);
     void downloadFinished(QNetworkReply* reply);
     void removeDownloads() const;
     [[nodiscard]] QString downloadFolder() const;
@@ -128,6 +136,7 @@ class UpdateCheck : public QObject
     QPointer<QNetworkReply> m_reply;
     // The installer's download.
     Download m_download = NoDownload;
+    DownloadFailure m_downloadFailure = DownloadInterrupted;
     QPointer<QNetworkReply> m_downloadReply;
     QFile* m_downloadFile = nullptr;
     QCryptographicHash m_downloadHash{QCryptographicHash::Sha256};

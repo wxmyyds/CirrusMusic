@@ -60,6 +60,29 @@ App::App(Sources sources)
             [this] { m_player->setLikedPlaylist(m_library->likedPlaylistKey()); });
 }
 
+void App::setStartupProblem(Startup problem)
+{
+    switch (problem) {
+    case Startup::NewerData:
+        m_startupProblem =
+            tr("本机的播放数据来自更新版本的 Cirrus，这个版本打不开。请升级 Cirrus。");
+        break;
+    case Startup::DiskFull:
+        m_startupProblem = tr("磁盘空间不足，打不开本机的播放数据。清理空间后重新打开 Cirrus。");
+        break;
+    case Startup::DataInUse:
+        m_startupProblem = tr("本机的播放数据正被另一个 Cirrus 使用。关掉它后重新打开。");
+        break;
+    case Startup::DataBroken:
+        m_startupProblem = tr("本机的播放数据读不出来。请在 设置 › 诊断 导出诊断包并反馈。");
+        break;
+    case Startup::Failed:
+        m_startupProblem = tr("Cirrus 没能启动。请在 设置 › 诊断 导出诊断包并反馈。");
+        break;
+    }
+    emit startupProblemChanged();
+}
+
 App::~App()
 {
     if (g_instance == this)

@@ -1531,6 +1531,7 @@ void BackendRuntimeTest::startupFailure_data()
     QTest::newRow("invalid-config") << 0;
     QTest::newRow("database-lock") << 1;
     QTest::newRow("guest-network-degraded") << 2;
+    QTest::newRow("newer-schema") << 3;
 }
 
 void BackendRuntimeTest::startupFailure()
@@ -1550,6 +1551,17 @@ void BackendRuntimeTest::startupFailure()
         held->open();
         QVERIFY(opened.wait(3000));
     }
+    if (mode == 3) { // written by a newer version: never opened
+        auto migrations = storage::ListeningStateStore::migrations();
+        migrations.append({migrations.last().version + 1,
+                           {QStringLiteral("CREATE TABLE synthetic_future (x INTEGER)")}});
+        storage::DatabaseWorker newer(config.databasePath, migrations);
+        QSignalSpy opened(&newer, &storage::DatabaseWorker::opened);
+        newer.open();
+        QVERIFY(opened.wait(3000));
+        QCOMPARE(qvariant_cast<storage::StorageError>(opened.first().first()),
+                 storage::StorageError::None);
+    }
     Gate gate;
     BackendRuntime runtime(config, factories(state, gate));
     auto& f = runtime.facade();
@@ -1559,7 +1571,8 @@ void BackendRuntimeTest::startupFailure()
     QCOMPARE(f.state(), mode == 2 ? BackendState::Ready : BackendState::Failed);
     QCOMPARE(qvariant_cast<StartupError>(started.first().first()),
              mode == 0   ? StartupError::Configuration
-             : mode == 1 ? StartupError::Storage
+             : mode == 1 ? StartupError::StorageLocked
+             : mode == 3 ? StartupError::NewerStorage
                          : StartupError::GuestBootstrap);
     QCOMPARE(state->requests.load(), mode == 2 ? 1 : 0);
     f.close();

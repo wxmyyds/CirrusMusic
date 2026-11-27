@@ -54,6 +54,9 @@ restart_alt
 download
 download_done
 cloud
+cloud_upload
+cloud_off
+link_off
 folder
 
 # Actions
