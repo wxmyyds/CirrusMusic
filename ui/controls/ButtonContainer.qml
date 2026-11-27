@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Templates as T
 import Cirrus.Theme
@@ -24,13 +25,21 @@ Item {
     readonly property real tr: innerRight ? innerRadius : outerRadius
     readonly property real br: innerRight ? innerRadius : outerRadius
 
-    Elevation {
+    // Only for buttons that rise (most never do: each shadow is a few objects and a shader
+    // effect); kept once made. It starts from 0, so the first rise animates too.
+    Loader {
+        property bool used: false
         anchors.fill: parent
-        level: root.elevation
-        topLeftRadius: root.tl
-        topRightRadius: root.tr
-        bottomRightRadius: root.br
-        bottomLeftRadius: root.bl
+        active: used || root.elevation > 0
+        onLoaded: used = true
+        sourceComponent: Elevation {
+            level: 0
+            topLeftRadius: root.tl
+            topRightRadius: root.tr
+            bottomRightRadius: root.br
+            bottomLeftRadius: root.bl
+            Component.onCompleted: level = Qt.binding(() => root.elevation)
+        }
     }
 
     Rectangle {

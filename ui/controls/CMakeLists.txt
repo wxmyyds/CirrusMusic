@@ -57,6 +57,7 @@ qt_add_qml_module(cirrus_ui_controls
         TabBar.qml
         TabButton.qml
         Chip.qml
+        ShortcutKey.qml
         ChipGroup.qml
 )
 

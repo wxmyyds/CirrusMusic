@@ -625,6 +625,7 @@ FocusScope {
                     anchors.fill: parent
                     colors: colors
                     positionMs: clock.positionMs
+                    live: page.visible
                     visible: page.view === 1
                     onCopyRequested: songInfo.open()
                 }
@@ -1150,7 +1151,10 @@ FocusScope {
     }
 
     // Single keys (§7); while hidden the first key only shows the controls (Space
-    // still plays or pauses).
+    // still plays or pauses). They win over single-key shortcuts.
+    Keys.onShortcutOverride: event => event.accepted = !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))
+        && (event.key === Qt.Key_Space || event.key === Qt.Key_L || event.key === Qt.Key_Q
+            || event.key === Qt.Key_F)
     Keys.onPressed: event => {
         const hidden = page.chromeHidden;
         page.wake();

@@ -157,7 +157,7 @@ Item {
     }
 
     Shortcut {
-        sequences: [StandardKey.Save]
+        sequences: App.shortcuts.keys.saveOrder
         enabled: page.visible && orderModel.changed
         onActivated: orderModel.save()
     }
@@ -286,10 +286,12 @@ Item {
                     page.currentRow = 0;
             }
 
-            // Ctrl+↑/↓ move without selecting here, before the window's volume shortcuts.
+            // Ctrl+↑/↓ move without selecting here, before the window's volume shortcuts;
+            // Ctrl+A and Ctrl+Space are the list's too.
             Keys.onShortcutOverride: event => event.accepted =
                 (event.modifiers & Qt.ControlModifier)
-                && (event.key === Qt.Key_Up || event.key === Qt.Key_Down)
+                && (event.key === Qt.Key_Up || event.key === Qt.Key_Down
+                    || event.key === Qt.Key_A || event.key === Qt.Key_Space)
             Keys.onPressed: event => {
                 page.keyboardUsed = true;
                 const alt = event.modifiers & Qt.AltModifier;

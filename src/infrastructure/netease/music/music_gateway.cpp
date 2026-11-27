@@ -152,6 +152,14 @@ quint64 MusicGateway::request(domain::SessionToken context, MusicQuery query)
         operation = ApiOperation::DailyRecommendations;
     } else if (std::holds_alternative<domain::PersonalFmQuery>(query)) {
         operation = ApiOperation::PersonalFm;
+    } else if (const auto* heartbeat = std::get_if<domain::HeartbeatQuery>(&query)) {
+        operation = ApiOperation::HeartbeatList;
+        parameters = {{QStringLiteral("playlistId"), heartbeat->playlist.value},
+                      {QStringLiteral("songId"), heartbeat->anchor.value},
+                      {QStringLiteral("startMusicId"), heartbeat->start.value},
+                      {QStringLiteral("count"), QString::number(heartbeat->count)},
+                      {QStringLiteral("type"), heartbeat->fromAll ? QStringLiteral("fromPlayAll")
+                                                                  : QStringLiteral("fromPlayOne")}};
     } else if (const auto* browse = std::get_if<domain::DiscoveryBrowseQuery>(&query)) {
         const auto request = discoveryBrowseRequest(*browse);
         Q_ASSERT(request);

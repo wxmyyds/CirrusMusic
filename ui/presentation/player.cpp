@@ -65,7 +65,9 @@ void Player::clearBiliCookie()
 
 void Player::applyModes()
 {
-    if (!m_settings || m_snapshot.mode != playback::Queue)
+    // A heartbeat mix plays in its own order; the settings keep the modes from before it.
+    if (!m_settings || m_snapshot.mode != playback::Queue || m_snapshot.heartbeat ||
+        m_snapshot.heartbeatLoading)
         return;
     const int order = m_settings->playOrder();
     const int repeat = m_settings->playRepeat();
@@ -80,6 +82,14 @@ void Player::update()
 {
     const PlaybackSnapshot& next = m_source->snapshot();
     const bool queueChanged = next.queue != m_snapshot.queue;
+    if (m_snapshot.heartbeat && !next.heartbeat && m_leavingHeartbeat)
+        emit notice(noticed("player.heartbeat_left", tr("已恢复原来的播放列表")));
+    if (!next.heartbeat)
+        m_leavingHeartbeat = false;
+    if (next.heartbeatTries > m_snapshot.heartbeatTries)
+        emit notice(next.heartbeatFailed
+                        ? noticed("player.heartbeat_failed", tr("心动歌曲加载失败"))
+                        : noticed("player.heartbeat", tr("播放列表已替换为心动歌曲")));
     const bool moved = queueChanged || next.queueIndex != m_snapshot.queueIndex;
     m_snapshot = next;
     const SongInfo& current = m_snapshot.current;
@@ -300,10 +310,89 @@ void Player::setVolume(double volume)
         m_source->setVolume(volume);
 }
 
+bool Player::heartbeatAvailable() const
+{
+    return !m_likedPlaylist.isEmpty() && m_snapshot.mode == playback::Queue &&
+           (m_snapshot.heartbeat || m_snapshot.currentPlaylist == m_likedPlaylist);
+}
+
+void Player::setLikedPlaylist(const QString& key)
+{
+    if (key == m_likedPlaylist)
+        return;
+    m_likedPlaylist = key;
+    emit changed();
+}
+
+int Player::playMode() const
+{
+    if (m_snapshot.heartbeat || m_snapshot.heartbeatLoading)
+        return 4;
+    if (m_snapshot.repeat == playback::RepeatOne)
+        return 1;
+    if (m_snapshot.order == playback::Shuffle)
+        return 2;
+    return m_snapshot.repeat == playback::RepeatAll ? 0 : 3;
+}
+
+void Player::setPlayMode(int mode)
+{
+    switch (mode) {
+    case 0:
+        setOrder(playback::Sequential);
+        setRepeat(playback::RepeatAll);
+        break;
+    case 1:
+        setRepeat(playback::RepeatOne);
+        break;
+    case 2:
+        setOrder(playback::Shuffle);
+        setRepeat(playback::RepeatAll);
+        break;
+    case 3:
+        setOrder(playback::Sequential);
+        setRepeat(playback::RepeatOff);
+        break;
+    case 4:
+        startHeartbeat();
+        break;
+    default:
+        break;
+    }
+}
+
+void Player::cyclePlayMode()
+{
+    const int next = playMode() + 1;
+    setPlayMode(next == 4 && !heartbeatAvailable() ? 0 : next % 5);
+}
+
+void Player::startHeartbeat()
+{
+    if (m_source && heartbeatAvailable() && !m_snapshot.heartbeat)
+        m_source->startHeartbeat(m_likedPlaylist, QString());
+}
+
+void Player::stopHeartbeat()
+{
+    if (!m_snapshot.heartbeat && !m_snapshot.heartbeatLoading)
+        return;
+    // The settings keep the modes from before it (applyModes leaves them alone meanwhile).
+    setOrder(m_settings ? m_settings->playOrder() : int(playback::Sequential));
+    setRepeat(m_settings ? m_settings->playRepeat() : int(playback::RepeatAll));
+}
+
+void Player::startHeartbeatWith(const QStringList& keys, const QString& title)
+{
+    if (m_source && !m_likedPlaylist.isEmpty() && !keys.isEmpty())
+        m_source->startHeartbeat(m_likedPlaylist, title, keys);
+}
+
 void Player::setOrder(int order)
 {
     if (order != playback::Sequential && order != playback::Shuffle)
         return;
+    m_leavingHeartbeat = m_leavingHeartbeat || m_snapshot.heartbeat;
     if (m_settings)
         m_settings->setPlayOrder(order);
     if (m_source)
@@ -314,6 +403,7 @@ void Player::setRepeat(int repeat)
 {
     if (repeat < playback::RepeatOff || repeat > playback::RepeatOne)
         return;
+    m_leavingHeartbeat = m_leavingHeartbeat || m_snapshot.heartbeat;
     if (m_settings)
         m_settings->setPlayRepeat(repeat);
     if (m_source)

@@ -29,11 +29,18 @@ class Spring::Driver final : public QAbstractAnimation
     Spring* m_owner;
 };
 
-Spring::Spring(QObject* parent) : QObject(parent), m_driver(new Driver(this)) {}
+Spring::Spring(QObject* parent) : QObject(parent) {}
 
-Spring::~Spring() { m_driver->stop(); }
+Spring::~Spring()
+{
+    if (m_driver)
+        m_driver->stop();
+}
 
-bool Spring::running() const { return m_driver->state() == QAbstractAnimation::Running; }
+bool Spring::running() const
+{
+    return m_driver && m_driver->state() == QAbstractAnimation::Running;
+}
 
 void Spring::setTarget(qreal target)
 {
@@ -86,6 +93,9 @@ void Spring::restartSegment()
 {
     // Continue from the current position and velocity towards the new target.
     m_segmentStart = {m_value - m_target, m_velocity};
+    // Made on the first motion: thousands of springs sit still (a hover layer per control).
+    if (!m_driver)
+        m_driver = new Driver(this);
     if (running())
         m_driver->setCurrentTime(0);
     else
@@ -107,7 +117,8 @@ void Spring::tick(int milliseconds)
 
 void Spring::settle()
 {
-    m_driver->stop();
+    if (m_driver)
+        m_driver->stop();
     const bool changed = !same(m_value, m_target) || m_velocity != 0.0;
     m_value = m_target;
     m_velocity = 0.0;

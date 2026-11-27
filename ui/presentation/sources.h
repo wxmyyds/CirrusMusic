@@ -325,6 +325,18 @@ class PlaybackSource
     virtual void setRepeat(playback::Repeat repeat) = 0;
     // Endless recommendations for the signed-in account (mode PersonalFm).
     virtual void startFm() = 0;
+    // 心动模式 (docs/tasks/heartbeat-mode.md §7.3), signed in: the queue becomes a heartbeat
+    // mix of the playlist `playlistKey` (the account's liked songs, `title`). With `keys`
+    // (its songs as its page shows them) from their start; without, from the playing song,
+    // which plays on, over the queue's songs from that playlist. setOrder() or setRepeat()
+    // leave it (and cancel a mix being fetched); a new queue, Personal FM or clearing end it.
+    virtual void startHeartbeat(const QString& playlistKey, const QString& title,
+                                const QStringList& keys = {})
+    {
+        Q_UNUSED(playlistKey);
+        Q_UNUSED(title);
+        Q_UNUSED(keys);
+    }
 };
 
 struct Sources {

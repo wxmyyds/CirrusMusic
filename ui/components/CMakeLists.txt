@@ -1,4 +1,6 @@
 # Business-facing building blocks of the shell and pages (docs/ui/README.md §3.1).
+find_package(Qt6 REQUIRED COMPONENTS ShaderTools)
+
 qt_add_library(cirrus_ui_components STATIC)
 
 set_source_files_properties(CoverHandoff.qml PageInsets.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
@@ -50,6 +52,12 @@ qt_add_qml_module(cirrus_ui_components
         CoverHandoff.qml
         PageInsets.qml
         CoverFlight.qml
+)
+
+qt_add_shaders(cirrus_ui_components "cirrus_ui_components_shaders"
+    PREFIX "/qt/qml/Cirrus/Components"
+    FILES
+        shaders/cover.frag
 )
 
 target_link_libraries(cirrus_ui_components

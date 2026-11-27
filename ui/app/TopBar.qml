@@ -53,13 +53,15 @@ Item {
         IconButton {
             enabled: bar.shell.canGoBack
             glyph: Symbols.arrow_back
-            text: qsTr("后退（Alt+←）")
+            text: App.shortcuts.hints.back ? qsTr("后退（%1）").arg(App.shortcuts.hints.back)
+                                           : qsTr("后退")
             onClicked: bar.shell.back()
         }
         IconButton {
             enabled: bar.shell.canGoForward
             glyph: Symbols.arrow_forward
-            text: qsTr("前进（Alt+→）")
+            text: App.shortcuts.hints.forward
+                  ? qsTr("前进（%1）").arg(App.shortcuts.hints.forward) : qsTr("前进")
             onClicked: bar.shell.forward()
         }
     }
@@ -98,7 +100,8 @@ Item {
         visible: bar.shell.pageShare !== null
         IconButton {
             glyph: Symbols.link
-            text: qsTr("复制链接（Ctrl+Shift+C）")
+            text: App.shortcuts.hints.copyLink
+                  ? qsTr("复制链接（%1）").arg(App.shortcuts.hints.copyLink) : qsTr("复制链接")
             onClicked: bar.shell.copyPageLink()
         }
     }

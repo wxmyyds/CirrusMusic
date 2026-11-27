@@ -103,12 +103,12 @@ Item {
     }
 
     Shortcut {
-        sequences: [StandardKey.PreviousChild, "Ctrl+PgUp"]
+        sequences: App.shortcuts.keys.previousTab
         enabled: page.visible
         onActivated: page.shell.discoverTab = (page.tab + page.tabCount - 1) % page.tabCount
     }
     Shortcut {
-        sequences: [StandardKey.NextChild, "Ctrl+PgDown"]
+        sequences: App.shortcuts.keys.nextTab
         enabled: page.visible
         onActivated: page.shell.discoverTab = (page.tab + 1) % page.tabCount
     }

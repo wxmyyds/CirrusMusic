@@ -19,6 +19,10 @@ T.ItemDelegate {
     property string trailingText
     property string leadingGlyph
     property string trailingGlyph
+    // A small mark after the supporting text (16 px, the supporting color), e.g. a song a
+    // 心动模式 mix put in a queue; `supportingGlyphToolTip` names it on hover.
+    property string supportingGlyph
+    property string supportingGlyphToolTip
     property Component leading
     property Component trailing
     property bool segmented: false
@@ -74,7 +78,7 @@ T.ItemDelegate {
 
     contentItem: Item {
         implicitWidth: (leadingLoader.active ? leadingLoader.implicitWidth + control.spacing : 0)
-                       + Math.max(headline.implicitWidth, support.implicitWidth)
+                       + Math.max(headline.implicitWidth, supportRow.implicitWidth)
                        + (trailingLoader.active ? trailingLoader.implicitWidth
                                                   + control.spacing : 0)
         implicitHeight: textColumn.implicitHeight
@@ -112,16 +116,47 @@ T.ItemDelegate {
                 color: control.headlineColor
                 elide: Text.ElideRight
             }
-            Text {
-                id: support
+            Row {
+                id: supportRow
                 visible: control.supportingText !== ""
                 width: parent.width
-                text: control.supportingText
-                font: Theme.type.bodyMedium.font
-                color: control.mutedColor
-                elide: Text.ElideRight
-                wrapMode: control.supportingMaximumLines > 1 ? Text.Wrap : Text.NoWrap
-                maximumLineCount: control.supportingMaximumLines
+                spacing: 4
+
+                Text {
+                    id: support
+                    width: !mark.visible ? parent.width
+                         : Math.min(implicitWidth, parent.width - mark.width - parent.spacing)
+                    text: control.supportingText
+                    font: Theme.type.bodyMedium.font
+                    color: control.mutedColor
+                    elide: Text.ElideRight
+                    wrapMode: control.supportingMaximumLines > 1 ? Text.Wrap : Text.NoWrap
+                    maximumLineCount: control.supportingMaximumLines
+                }
+                Icon {
+                    id: mark
+                    visible: control.supportingGlyph !== ""
+                    y: (Math.min(support.height, support.font.pixelSize * 1.5) - height) / 2
+                    glyph: control.supportingGlyph
+                    size: 16
+                    color: control.mutedColor
+
+                    // The tooltip is made on first hover and kept, so it can fade out.
+                    property bool hoveredOnce: false
+                    HoverHandler {
+                        id: markHover
+                        onHoveredChanged: if (hovered)
+                                              mark.hoveredOnce = true
+                    }
+                    Loader {
+                        active: control.supportingGlyphToolTip !== "" && mark.hoveredOnce
+                        sourceComponent: ToolTip {
+                            parent: mark
+                            text: control.supportingGlyphToolTip
+                            visible: markHover.hovered
+                        }
+                    }
+                }
             }
         }
 

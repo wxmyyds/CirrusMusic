@@ -91,12 +91,12 @@ Item {
     }
 
     Shortcut {
-        sequences: [StandardKey.PreviousChild, "Ctrl+PgUp"]
+        sequences: App.shortcuts.keys.previousTab
         enabled: page.visible && overview.state === LoadState.Ready
         onActivated: page.shell.libraryTab = (page.tab + page.tabCount - 1) % page.tabCount
     }
     Shortcut {
-        sequences: [StandardKey.NextChild, "Ctrl+PgDown"]
+        sequences: App.shortcuts.keys.nextTab
         enabled: page.visible && overview.state === LoadState.Ready
         onActivated: page.shell.libraryTab = (page.tab + 1) % page.tabCount
     }

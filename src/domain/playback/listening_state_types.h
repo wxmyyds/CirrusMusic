@@ -9,20 +9,36 @@ namespace cirrus::domain
 {
 inline constexpr qsizetype MaximumSavedQueueEntries = 10000;
 
-inline bool validSavedQueue(const QueueSnapshot& queue)
+namespace detail
 {
-    if (queue.entries.size() > MaximumSavedQueueEntries || queue.order < QueueOrder::Sequential ||
-        queue.order > QueueOrder::Shuffle || queue.repeat < QueueRepeat::Off ||
-        queue.repeat > QueueRepeat::One)
+inline bool validQueueList(const QList<QueueEntry>& entries, QUuid active, QueueOrder order,
+                           QueueRepeat repeat)
+{
+    if (entries.size() > MaximumSavedQueueEntries || order < QueueOrder::Sequential ||
+        order > QueueOrder::Shuffle || repeat < QueueRepeat::Off || repeat > QueueRepeat::One)
         return false;
     QSet<QUuid> ids;
-    for (const auto& entry : queue.entries) {
+    for (const auto& entry : entries) {
         if (entry.id.isNull() || ids.contains(entry.id) || !validMusicId(entry.song.value) ||
-            !validPlayOrigin(entry.origin) || !validQueueProgram(entry.program))
+            !validPlayOrigin(entry.origin) || !validQueueProgram(entry.program) ||
+            !validQueueAlg(entry.alg))
             return false;
         ids.insert(entry.id);
     }
-    return queue.active.isNull() || ids.contains(queue.active);
+    return active.isNull() || ids.contains(active);
+}
+} // namespace detail
+inline bool validSavedQueue(const QueueSnapshot& queue)
+{
+    if (!detail::validQueueList(queue.entries, queue.active, queue.order, queue.repeat))
+        return false;
+    if (!queue.heartbeat)
+        return true;
+    // A heartbeat mix plays in its own order, round and round.
+    const auto& before = *queue.heartbeat;
+    return queue.order == QueueOrder::Sequential && queue.repeat == QueueRepeat::All &&
+           validMusicId(before.playlist.value) &&
+           detail::validQueueList(before.entries, before.active, before.order, before.repeat);
 }
 
 // Guest is a distinct installation-local bucket, never assigned to a logged-in account.
@@ -46,12 +62,13 @@ struct StoredListeningRecord {
     QString actualQuality;
     PlayOrigin origin{}; // fixed when the record is first stored
     ProgramId program{}; // a podcast program played through `song`, its track
+    QString alg{};       // the queue entry's 心动模式 mark, for the reports; not stored
 };
 inline StoredListeningRecord storedListeningRecord(const ListeningRecord& row)
 {
-    return {row.recordId,    row.accountId,     row.song,     row.source, row.queueEntry,
-            row.startedAtMs, row.endedAtMs,     row.playedMs, row.capped, row.end,
-            row.preview,     row.actualQuality, row.origin,   row.program};
+    return {row.recordId,    row.accountId,     row.song,     row.source,  row.queueEntry,
+            row.startedAtMs, row.endedAtMs,     row.playedMs, row.capped,  row.end,
+            row.preview,     row.actualQuality, row.origin,   row.program, row.alg};
 }
 inline bool validStoredListeningRecord(const StoredListeningRecord& row)
 {

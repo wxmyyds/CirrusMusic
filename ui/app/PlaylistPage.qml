@@ -210,6 +210,17 @@ SongCollectionPage {
 
     actionsContent: Flow {
         spacing: 8
+        // The account's liked songs: 心动模式 from their start (heartbeat-mode.md §7.2).
+        PageAction {
+            visible: pageModel.likedList && page.playlistKey !== ""
+                     && page.playlistKey === App.library.likedPlaylistKey
+            enabled: !App.player.heartbeatLoading
+            iconOnly: page.twoPane
+            size: page.paneActionSize
+            glyph: Symbols.ecg_heart
+            text: qsTr("心动模式")
+            onClicked: App.player.startHeartbeatWith(page.shownKeys(), pageModel.title)
+        }
         // Someone else's playlist (P5).
         PageAction {
             visible: !pageModel.own && App.library.canSavePlaylists

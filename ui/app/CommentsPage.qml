@@ -285,6 +285,11 @@ Item {
             }
         }
 
+        // L, R and Space are the comment's, before single-key shortcuts.
+        Keys.onShortcutOverride: event => event.accepted = Window.activeFocusItem !== null
+            && Window.activeFocusItem === list.currentItem
+            && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))
+            && (event.key === Qt.Key_L || event.key === Qt.Key_R || event.key === Qt.Key_Space)
         Keys.onPressed: event => {
             // Only with the list itself focused: typing in a box goes there.
             if (Window.activeFocusItem === null || Window.activeFocusItem !== list.currentItem)

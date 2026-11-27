@@ -4,6 +4,8 @@
 
 #include <QBuffer>
 #include <QImageReader>
+#include <QQuickWindow>
+#include <QSGTexture>
 #include <QThreadPool>
 #include <QUrl>
 
@@ -13,6 +15,24 @@ namespace cirrus::ui
 namespace
 {
 class CoverResponse;
+
+// A cover's texture, never in the scene graph's atlas: CoverArt samples it in a shader of
+// its own, which would take an atlas texture out into a copy (twice the memory).
+class CoverTexture : public QQuickTextureFactory
+{
+  public:
+    explicit CoverTexture(QImage image) : m_image(std::move(image)) {}
+    QSGTexture* createTexture(QQuickWindow* window) const override
+    {
+        return window->createTextureFromImage(m_image);
+    }
+    [[nodiscard]] QSize textureSize() const override { return m_image.size(); }
+    [[nodiscard]] int textureByteCount() const override { return int(m_image.sizeInBytes()); }
+    [[nodiscard]] QImage image() const override { return m_image; }
+
+  private:
+    QImage m_image;
+};
 
 // One cover request, shared by the response (image loader thread), the source request
 // (GUI thread) and the decode job (thread pool).
@@ -35,7 +55,7 @@ class CoverResponse : public QQuickImageResponse
 
     QQuickTextureFactory* textureFactory() const override
     {
-        return QQuickTextureFactory::textureFactoryForImage(m_image);
+        return m_image.isNull() ? nullptr : new CoverTexture(m_image);
     }
     QString errorString() const override { return m_error; }
 

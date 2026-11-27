@@ -15,6 +15,7 @@
 #include "application/playback/listening_session.h"
 #include "application/playback/playback_observation_publisher.h"
 #include "application/ports/playback.h"
+#include "backend_catalog.h"
 #include "backend_playback.h"
 #include "infrastructure/bootstrap/xeapi_key_vault.h"
 #include "infrastructure/cache/resource_cache_service.h"
@@ -277,6 +278,7 @@ class BackendRuntimeTest : public QObject
         QCoreApplication::setApplicationName(QUuid::createUuid().toString(QUuid::Id128));
     }
     void startLoginCloseRestore();
+    void heartbeatRequestCanceledOnSessionChange();
     void musicQueriesThroughThread();
     void discoveryThroughThread();
     void libraryThroughThread();
@@ -1175,6 +1177,50 @@ void BackendRuntimeTest::startLoginCloseRestore()
     next.close();
     QTRY_COMPARE(closedAgain.size(), 1);
     QCOMPARE(state->requests.load(), 4); // QR key/check/identity + restored identity only
+}
+
+void BackendRuntimeTest::heartbeatRequestCanceledOnSessionChange()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto state = std::make_shared<SharedState>();
+    Gate gate;
+    const BackendConfig config{directory.filePath(QStringLiteral("state.sqlite")),
+                               QStringLiteral("synthetic-heartbeat-session")};
+    seed(config.databasePath, *state);
+    auto plans = loginPlans();
+    plans.append(Plan{"", 200, -1}); // stays in flight until the session change cancels it
+    auto options = factories(state, gate, std::move(plans));
+    options.playback = [] { return std::make_unique<FakePlaybackBackend>(); };
+    BackendRuntime runtime(config, std::move(options));
+    cirrus::ui::BackendCatalog catalog(runtime);
+    cirrus::ui::BackendPlayback playback(runtime, catalog);
+    auto& facade = runtime.facade();
+    QSignalSpy started(&facade, &BackendFacade::started),
+        challenge(&facade, &BackendFacade::challengeReady),
+        signedIn(&facade, &BackendFacade::signedIn), stopped(&facade, &BackendFacade::stopped);
+
+    facade.start();
+    QTRY_COMPARE(started.size(), 1);
+    QVERIFY(facade.beginLogin() != 0);
+    QTRY_COMPARE(challenge.size(), 1);
+    QVERIFY(facade.poll() != 0);
+    QTRY_COMPARE(signedIn.size(), 1);
+    QCOMPARE(facade.snapshot().phase, domain::SessionPhase::Authenticated);
+
+    playback.startHeartbeat(QStringLiteral("70"), QString{}, QStringList{QStringLiteral("1")});
+    QTRY_VERIFY(playback.snapshot().heartbeatLoading);
+    QTRY_COMPARE(state->requests.load(), 4); // three login requests and the pending mix
+
+    QVERIFY(facade.signOut() != 0);
+    QTRY_COMPARE(facade.snapshot().phase, domain::SessionPhase::Guest);
+    QTRY_VERIFY(!playback.snapshot().heartbeatLoading);
+    QCOMPARE(playback.snapshot().heartbeatTries, quint64(0));
+
+    facade.close();
+    QTRY_COMPARE(stopped.size(), 1);
+    QCOMPARE(state->created.load(), state->destroyed.load());
+    QCOMPARE(state->wrongThread.load(), 0);
 }
 
 void BackendRuntimeTest::closeDuringRead()

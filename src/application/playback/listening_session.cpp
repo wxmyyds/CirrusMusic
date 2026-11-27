@@ -243,7 +243,8 @@ void ListeningSession::commit(PlaybackQueue candidate, TransportIntent intent, A
     m_positionObservedAt.reset();
     m_history.begin(m_token, m_backend.snapshot().accountId, entry->song,
                     fm ? ListeningMode::PersonalFm : ListeningMode::Queue, fm ? QUuid{} : entry->id,
-                    fm ? PlayOrigin{} : entry->origin, fm ? ProgramId{} : entry->program);
+                    fm ? PlayOrigin{} : entry->origin, fm ? ProgramId{} : entry->program,
+                    fm ? QString() : entry->alg);
     m_quality = quality;
     m_intent = intent;
     m_auto = automatic;
@@ -298,6 +299,30 @@ bool ListeningSession::replaceQueue(const QList<SongId>& songs, qsizetype startI
     auto candidate = m_queue;
     if (!candidate.replace(songs, origins, programs) ||
         !candidate.select(candidate.snapshot().entries[startIndex].id))
+        return false;
+    return begin(std::move(candidate), TransportIntent::Play, quality, false);
+}
+bool ListeningSession::enterHeartbeat(const PlaylistId& playlist, const QList<QueueEntry>& mix,
+                                      bool keepPlaying, AudioQuality quality,
+                                      const QString& activeAlg)
+{
+    log::info(lcPlayback, "queue.heartbeat",
+              {{"count", mix.size()}, {"keep", keepPlaying}, {"quality", quality}});
+    if (m_mode == ListeningMode::PersonalFm || (m_queueContext.isValid() && !queueContextMatches()))
+        return false;
+    if (keepPlaying) {
+        if (!m_queue.enterHeartbeat(playlist, mix, true, activeAlg))
+            return false;
+        if (current())
+            m_history.setAlg(m_queue.snapshot().active, activeAlg);
+        recordControlIntent();
+        refreshPreload();
+        emit queueChanged(m_queue.snapshot());
+        return true;
+    }
+    auto candidate = m_queue;
+    if (!candidate.enterHeartbeat(playlist, mix, false) ||
+        !candidate.select(candidate.snapshot().entries.first().id))
         return false;
     return begin(std::move(candidate), TransportIntent::Play, quality, false);
 }

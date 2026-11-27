@@ -97,6 +97,9 @@ IconButton {
             spacing: 4
             Keys.onUpPressed: root.setVolume(root.volume + 0.05)
             Keys.onDownPressed: root.setVolume(root.volume - 0.05)
+            // M mutes here, before a single-key shortcut.
+            Keys.onShortcutOverride: event => event.accepted = event.key === Qt.Key_M
+                && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))
             Keys.onPressed: event => {
                 if (event.key === Qt.Key_M) {
                     root.toggleMute();

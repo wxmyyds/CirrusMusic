@@ -596,6 +596,9 @@ void StatsPageModel::buildRankings()
             title = row.key == account || row.name.isEmpty() ? tr("听歌排行")
                                                              : tr("%1 的听歌排行").arg(row.name);
             break;
+        case StatsOrigin::Heartbeat:
+            title = named(tr("心动推荐"));
+            break;
         default:
             title = tr("其他");
             clickable = false;

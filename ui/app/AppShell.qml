@@ -727,16 +727,16 @@ Item {
         onActivated: rail.expanded = false
     }
     Shortcut {
-        sequence: "Ctrl+K"
+        sequences: App.shortcuts.keys.search
         enabled: !shell.covered
         onActivated: {
             shell.searchField.forceActiveFocus();
             shell.searchField.selectAll();
         }
     }
-    // Pages with an in-page find take Ctrl+F; elsewhere it is the search too.
+    // Pages with an in-page find take it; elsewhere it is the search too.
     Shortcut {
-        sequences: [StandardKey.Find]
+        sequences: App.shortcuts.keys.find
         enabled: !shell.covered
         onActivated: {
             const songPage = stack.currentItem as SongCollectionPage;
@@ -749,36 +749,36 @@ Item {
         }
     }
     Shortcut {
-        sequences: [StandardKey.Preferences, "Ctrl+,"]
+        sequences: App.shortcuts.keys.settings
         onActivated: {
             shell.uncoverRequested();
             shell.openSettings();
         }
     }
 
-    // Playback, from anywhere (docs/ui/pages/settings.md §4). Text fields and lists
+    // Playback, from anywhere (docs/ui/pages/shortcuts.md). Text fields and lists
     // keep the keys they use themselves (Ctrl+←/→ in a field, Ctrl+↑/↓ in a list).
     Shortcut {
-        sequence: "Ctrl+P"
+        sequences: App.shortcuts.keys.playPause
         enabled: App.player.current.key !== ""
         onActivated: App.player.playPause()
     }
     Shortcut {
-        sequence: "Ctrl+Left"
+        sequences: App.shortcuts.keys.previous
         enabled: App.player.canPrevious
         onActivated: App.player.previous()
     }
     Shortcut {
-        sequence: "Ctrl+Right"
+        sequences: App.shortcuts.keys.next
         enabled: App.player.canNext
         onActivated: App.player.next()
     }
     Shortcut {
-        sequence: "Ctrl+Up"
+        sequences: App.shortcuts.keys.volumeUp
         onActivated: shell.stepVolume(0.1)
     }
     Shortcut {
-        sequence: "Ctrl+Down"
+        sequences: App.shortcuts.keys.volumeDown
         onActivated: shell.stepVolume(-0.1)
     }
     // The player reports a new volume a moment later: quick presses step from the
@@ -796,7 +796,7 @@ Item {
         onTriggered: shell.pendingVolume = -1
     }
     Shortcut {
-        sequence: "Ctrl+L"
+        sequences: App.shortcuts.keys.like
         enabled: App.player.current.key !== "" && !App.player.current.voice
         onActivated: {
             if (!App.session.signedIn) {
@@ -808,12 +808,12 @@ Item {
         }
     }
     Shortcut {
-        sequences: [StandardKey.Back]
+        sequences: App.shortcuts.keys.back
         enabled: !shell.covered && shell.canGoBack
         onActivated: shell.back()
     }
     Shortcut {
-        sequences: [StandardKey.Forward]
+        sequences: App.shortcuts.keys.forward
         enabled: !shell.covered && shell.canGoForward
         onActivated: shell.forward()
     }

@@ -4,7 +4,8 @@ import QtQuick.Layouts
 import Cirrus.Theme
 import Cirrus.Controls
 
-// Phase 2 check: switches, checkboxes, radio buttons, text fields, search bar, sliders.
+// Phase 2 check: switches, checkboxes, radio buttons, text fields, search bar, sliders,
+// chips, shortcut keys.
 ControlPage {
     id: page
 
@@ -301,5 +302,43 @@ ControlPage {
         model: [qsTr("全部"), qsTr("华语"), qsTr("欧美"), qsTr("日本"), qsTr("韩国"), qsTr("其他")]
         currentIndex: 1
         onActivated: index => currentIndex = index
+    }
+
+    SectionTitle {
+        text: qsTr("快捷键键帽")
+    }
+    Caption {
+        text: qsTr("ShortcutKey：点击、空格或 Enter 开始录入，录入时容器变成 PrimaryContainer，按下的键交给 recorded，Esc 取消，Backspace 清除，Tab 或点别处也取消。只有图标时是描边的“添加”按钮。第三个为录入中，最后两个为禁用。")
+    }
+    Flow {
+        Layout.fillWidth: true
+        spacing: 8
+        ShortcutKey {
+            text: "Ctrl+P"
+            onRecorded: recording = false
+        }
+        ShortcutKey {
+            text: "Ctrl+Shift+←"
+            onRecorded: recording = false
+        }
+        ShortcutKey {
+            text: "F5"
+            recording: true
+            onRecorded: recording = false
+        }
+        ShortcutKey {
+            glyph: Symbols.add
+            hint: qsTr("添加按键")
+            onRecorded: recording = false
+        }
+        ShortcutKey {
+            enabled: false
+            text: "Ctrl+,"
+        }
+        ShortcutKey {
+            enabled: false
+            glyph: Symbols.add
+            hint: qsTr("添加按键")
+        }
     }
 }

@@ -129,7 +129,8 @@ jobs:
           version=$(sed -nE 's/^project\(CirrusMusic VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)
           [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           packaging/fetch-sources.sh "$GITHUB_WORKSPACE/build/library-sources"
-          tar -C "$GITHUB_WORKSPACE/build" -cJf "dist/Cirrus-$version-library-sources.tar.xz" library-sources
+          mkdir -p "$GITHUB_WORKSPACE/build/library-source-artifact"
+          tar -C "$GITHUB_WORKSPACE/build" -cJf "$GITHUB_WORKSPACE/build/library-source-artifact/Cirrus-$version-library-sources.tar.xz" library-sources
 
       - name: Save compiler cache
         if: always() && env.CIRRUS_CCACHE_KEY != '' && env.CIRRUS_CCACHE_HIT != 'true'
@@ -144,5 +145,18 @@ jobs:
           name: cirrus-linux-${{ matrix.distribution }}-${{ matrix.arch }}
           retention-days: 1
           overwrite: ${{ github.run_attempt > 1 }}
-          path: dist/*
+          path: |
+            dist/cirrus-*.pkg.tar.zst
+            dist/cirrus_*.deb
+            dist/cirrus-*.rpm
+          if-no-files-found: error
+
+      - name: Upload bundled-library sources separately
+        if: matrix.collect_sources == true
+        uses: actions/upload-artifact@v7
+        with:
+          name: cirrus-library-sources
+          retention-days: 1
+          overwrite: ${{ github.run_attempt > 1 }}
+          path: build/library-source-artifact/Cirrus-*-library-sources.tar.xz
           if-no-files-found: error

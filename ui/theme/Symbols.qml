@@ -11,6 +11,7 @@ QtObject {
     readonly property string fast_forward: "\ue01f"
     readonly property string fast_rewind: "\ue020"
     readonly property string shuffle: "\ue043"
+    readonly property string ecg_heart: "\uf6e9"
     readonly property string repeat: "\ue040"
     readonly property string repeat_one: "\ue041"
     readonly property string queue_music: "\ue03d"
@@ -48,6 +49,7 @@ QtObject {
     readonly property string podcasts: "\uf048"
     readonly property string mic: "\ue31d"
     readonly property string history: "\ue8b3"
+    readonly property string restart_alt: "\uf053"
     readonly property string download: "\uf090"
     readonly property string download_done: "\uf091"
     readonly property string cloud: "\uf15c"
@@ -145,6 +147,7 @@ QtObject {
         "fast_forward",
         "fast_rewind",
         "shuffle",
+        "ecg_heart",
         "repeat",
         "repeat_one",
         "queue_music",
@@ -182,6 +185,7 @@ QtObject {
         "podcasts",
         "mic",
         "history",
+        "restart_alt",
         "download",
         "download_done",
         "cloud",

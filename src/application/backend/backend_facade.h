@@ -229,6 +229,8 @@ class BackendFacade final : public QObject
     [[nodiscard]] quint64 dailyRecommendationHistoryDates();
     [[nodiscard]] quint64 dailyRecommendationHistorySongs(domain::DailyHistorySongsQuery query);
     [[nodiscard]] quint64 personalFmBatch(); // use one PersonalFmSource for dynamic consumption
+    // 心动模式's list for the liked songs (docs/api/heartbeat-mode.md); signed in only.
+    [[nodiscard]] quint64 heartbeatList(domain::HeartbeatQuery query);
     [[nodiscard]] quint64 myPlaylists(domain::CatalogPage page = {});
     [[nodiscard]] quint64 likedSongIds();
     [[nodiscard]] quint64 savedAlbums(domain::CatalogPage page = {25, 0});

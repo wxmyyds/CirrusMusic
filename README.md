@@ -9,26 +9,16 @@
 
 # Cirrus
 
-本项目基于上游 [Guang233/CirrusMusic](https://github.com/Guang233/CirrusMusic) 的 **v0.5.0** 修改，是一个使用 C++ 和 Qt Quick 编写的非官方网易云音乐桌面客户端。保留上游的音乐浏览、播放引擎和界面，主要围绕 Bilibili 辅助音源、实际播放源字幕、桌面集成和多平台原生构建进行调整。
+本项目基于上游 [Guang233/CirrusMusic](https://github.com/Guang233/CirrusMusic) 修改，是一个使用 C++ 和 Qt Quick 编写的非官方网易云音乐桌面客户端。保留上游的音乐浏览、播放引擎和界面，并针对 Bilibili 辅助音源、桌面集成和多平台原生构建进行调整。
 
-以下差异以已同步的[上游 v0.5.0](https://github.com/Guang233/CirrusMusic/releases/tag/v0.5.0) 为对照；上游后续变化以其仓库为准。本项目的当前发布说明见 [resources/CHANGELOG.md](resources/CHANGELOG.md)。
+## 与上游的简要差异
 
-## 相比上游的改动
+- 增加 Bilibili 辅助音源、账号凭据和按实际播放源选择歌词的支持。
+- 移除云盘上传/管理链路和 MiSans 正文字体；保留 Material Symbols 图标字体，并支持手动选择正文/歌词字体。
+- 加强播放源、歌词、缓存和私有文件的安全边界；Linux 提供默认关闭的只读播放状态/歌词导出。
+- Linux 使用 Arch、Debian、Fedora 原生发行版包，Windows/macOS 使用各自原生安装包；构建与发布由 GitHub Actions 完成。
 
-### 新增与调整
-
-- **Bilibili 辅助音源**：默认关闭，可在播放设置中启用。网易云歌曲因权限限制无法完整播放，或只返回试听流时，尝试按歌名、歌手和时长匹配 B 站视频及分 P；普通网络错误不会触发切源。播放页会标明实际音源。
-- **实际播放源字幕**：使用 Bilibili 音源时，读取选中视频及分 P 的字幕；字幕缺失或为空时使用网易云歌词。B 站字幕保留逐行时间，不伪造逐字时间。沿用上游 Linux Unix socket 接口，并适配实际音源的歌词与时序，让桌面歌词和应用显示一致。
-- **Bilibili 凭据管理**：支持粘贴、校验和清除 Bilibili Cookie，通过系统钥匙串保存，不写入普通设置文件；需要可用的系统钥匙串服务。
-- **独立更新来源**：应用内更新只查询本仓库的 GitHub Releases；Windows 安装版按当前 CPU 选择安装器并校验 SHA-256，避免被上游或其他架构的安装包覆盖。
-- **原生多平台构建**：Linux 提供 Arch、Debian、Fedora 的 x86_64 / ARM64 原生包；Windows 提供 x64 / ARM64 的安装器和 ZIP；macOS 提供 Apple Silicon / Intel 的 DMG。构建与发布统一通过 GitHub Actions 执行。
-
-### 未引入的功能与当前限制
-
-- **不提供上游云盘管理功能**：没有云盘页面、本地音乐上传、云盘歌曲删除、纠错或取消关联入口。
-- **Bilibili 音源存在使用边界**：匹配结果与音质取决于实际资源，不保证与网易云原曲完全一致；播放 B 站音源时不向网易云上报听歌记录，也不支持“一起听”。
-- **详细播放状态与歌词导出目前仅支持 Linux**，默认关闭；Windows / macOS 没有对应的导出接口。
-- **不再提供 AppImage 和旧 AUR 打包入口**，Linux 使用当前的原生发行版打包链路。
+完整差异说明见 [resources/UPSTREAM-DIFFERENCES.md](resources/UPSTREAM-DIFFERENCES.md)；当前发布说明见 [resources/CHANGELOG.md](resources/CHANGELOG.md)。
 
 ![首页](resources/screenshots/home-dark.png)
 

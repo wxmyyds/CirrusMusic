@@ -145,7 +145,7 @@ jobs:
               expected[f'cirrus-linux-fedora-{cpu}'] = {f'cirrus-{version}-1.fc44.{native}.rpm'}
               expected[f'cirrus-windows-{cpu}'] = {f'Cirrus-{version}-windows-{win}.zip', f'Cirrus-{version}-windows-{win}-setup.exe'}
               expected[f'cirrus-macos-{cpu}'] = {f'Cirrus-{version}-macos-{cpu}.dmg'}
-          expected['cirrus-linux-debian-x86_64'].add(f'Cirrus-{version}-library-sources.tar.xz')
+          expected['cirrus-library-sources'] = {f'Cirrus-{version}-library-sources.tar.xz'}
           artifacts = Path('artifacts')
           actual = {path.name for path in artifacts.iterdir()}
           if actual != expected.keys():
@@ -174,7 +174,7 @@ jobs:
           notes = '\n'.join(lines[start:]).strip()
           Path('notes.md').write_text(notes + '\n')
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
-              summary.write(f"Source: `{os.environ['SOURCE_COMMIT']}`\n\nTag: `{os.environ['TAG']}`\n\n10 platform/CPU groups, 12 binary packages and the bundled-library source archive verified.\n")
+              summary.write(f"Source: `{os.environ['SOURCE_COMMIT']}`\n\nTag: `{os.environ['TAG']}`\n\n10 platform/CPU groups, 12 binary packages and a separate bundled-library source artifact verified.\n")
           PY
 
       - name: Upload release inventory

@@ -53,6 +53,17 @@ class Player : public QObject
     // A song can be in it twice: the current row is `queueIndex`, not the current role.
     Q_PROPERTY(cirrus::ui::SongListModel* queue READ queue CONSTANT)
     Q_PROPERTY(int queueIndex READ queueIndex NOTIFY changed)
+    // 心动模式 (docs/tasks/heartbeat-mode.md §7): the queue is a heartbeat mix of the liked
+    // songs; one is being fetched; it can start (signed in, the playing song from the liked
+    // songs) or is on. `queueRecommended`: per row of `queue`, a song the mix put in.
+    Q_PROPERTY(bool heartbeat READ heartbeat NOTIFY changed)
+    Q_PROPERTY(bool heartbeatLoading READ heartbeatLoading NOTIFY changed)
+    Q_PROPERTY(bool heartbeatAvailable READ heartbeatAvailable NOTIFY changed)
+    Q_PROPERTY(QList<bool> queueRecommended READ queueRecommended NOTIFY changed)
+    // The one play-mode button's (PlayerControls, MiniPlayer), cycling as NetEase does:
+    // 0 list repeat, 1 repeat one, 2 shuffle, 3 in order (stops at the end), 4 心动模式
+    // (in the cycle only while heartbeatAvailable).
+    Q_PROPERTY(int playMode READ playMode NOTIFY changed)
     // The cover of the song after this one, when known: views fetch it ahead.
     Q_PROPERTY(QString upcomingCoverKey READ upcomingCoverKey NOTIFY upcomingChanged)
 
@@ -87,6 +98,13 @@ class Player : public QObject
     [[nodiscard]] SongListModel* queue() const { return m_queue; }
     [[nodiscard]] int queueIndex() const { return m_snapshot.queueIndex; }
     [[nodiscard]] QString upcomingCoverKey() const { return m_upcomingCoverKey; }
+    [[nodiscard]] bool heartbeat() const { return m_snapshot.heartbeat; }
+    [[nodiscard]] bool heartbeatLoading() const { return m_snapshot.heartbeatLoading; }
+    [[nodiscard]] bool heartbeatAvailable() const;
+    [[nodiscard]] QList<bool> queueRecommended() const { return m_snapshot.recommended; }
+    [[nodiscard]] int playMode() const;
+    // The account's liked songs (Library::likedPlaylistKey): whose mix 心动模式 is.
+    void setLikedPlaylist(const QString& key);
 
     // The clock of `positionAt`, in ms.
     Q_INVOKABLE static double now() { return double(playback::now()); }
@@ -122,6 +140,15 @@ class Player : public QObject
     Q_INVOKABLE void setOrder(int order);
     Q_INVOKABLE void setRepeat(int repeat);
     Q_INVOKABLE void startFm();
+    Q_INVOKABLE void setPlayMode(int mode);
+    // To the next play mode (playMode).
+    Q_INVOKABLE void cyclePlayMode();
+    // 心动模式 from the playing song (heartbeatAvailable); setOrder()/setRepeat() leave it.
+    Q_INVOKABLE void startHeartbeat();
+    // Out of 心动模式 (or a mix being fetched), back to the modes from before it.
+    Q_INVOKABLE void stopHeartbeat();
+    // 心动模式 over the liked songs `keys` (as their page shows them) from their start.
+    Q_INVOKABLE void startHeartbeatWith(const QStringList& keys, const QString& title);
 
   signals:
     void currentChanged();
@@ -151,6 +178,8 @@ class Player : public QObject
     bool m_previewKnown = false;
     SongListModel* m_queue;
     SongDetailLoader* m_queueDetails;
+    QString m_likedPlaylist;
+    bool m_leavingHeartbeat = false; // a mode change leaves the mix: say so once it has
 };
 
 } // namespace cirrus::ui

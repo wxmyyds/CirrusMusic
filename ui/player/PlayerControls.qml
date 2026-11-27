@@ -1,11 +1,13 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import Cirrus.Theme
+import Cirrus.Controls
 import Cirrus.Presentation
 
 // Transport row (docs/ui/pages/player.md §1.1): play mode, previous, play/pause,
 // next, like, spread over the width with play/pause in the middle. The play mode is
-// one button cycling as NetEase does: list repeat → repeat one → shuffle → in order.
+// one button cycling as NetEase does: list repeat → repeat one → shuffle → in order
+// (→ 心动模式 while the liked songs play).
 Item {
     id: root
 
@@ -20,42 +22,34 @@ Item {
     // Not signed in: liking needs the sign-in first.
     signal loginRequested
 
-    // 0 list repeat, 1 repeat one, 2 shuffle, 3 in order (stops at the end).
-    readonly property int mode: App.player.repeat === Playback.RepeatOne ? 1
-                              : App.player.order === Playback.Shuffle ? 2
-                              : App.player.repeat === Playback.RepeatAll ? 0 : 3
+    // App.player.playMode: 0 list repeat, 1 repeat one, 2 shuffle, 3 in order (stops at the
+    // end), 4 心动模式 (docs/tasks/heartbeat-mode.md §7.2).
     readonly property var modeNames: [qsTr("列表循环"), qsTr("单曲循环"), qsTr("随机播放"),
-        qsTr("顺序播放")]
-
-    function setMode(next: int): void {
-        switch (next) {
-        case 0:
-            App.player.setOrder(Playback.Sequential);
-            App.player.setRepeat(Playback.RepeatAll);
-            break;
-        case 1:
-            App.player.setRepeat(Playback.RepeatOne);
-            break;
-        case 2:
-            App.player.setOrder(Playback.Shuffle);
-            App.player.setRepeat(Playback.RepeatAll);
-            break;
-        default:
-            App.player.setOrder(Playback.Sequential);
-            App.player.setRepeat(Playback.RepeatOff);
-        }
-    }
+        qsTr("顺序播放"), qsTr("心动模式")]
+    readonly property var modeGlyphs: [Symbols.repeat, Symbols.repeat_one, Symbols.shuffle,
+        Symbols.playlist_play, Symbols.ecg_heart]
 
     implicitHeight: play.implicitHeight
 
     PlayerButton {
+        id: modeButton
         anchors.left: parent.left
         anchors.verticalCenter: parent.verticalCenter
         color: root.colors.content
         iconSize: root.compact ? 20 : 22
-        glyph: [Symbols.repeat, Symbols.repeat_one, Symbols.shuffle, Symbols.playlist_play][root.mode]
-        text: root.modeNames[root.mode]
-        onClicked: root.setMode((root.mode + 1) % 4)
+        glyph: root.modeGlyphs[App.player.playMode]
+        text: root.modeNames[App.player.playMode]
+        onClicked: App.player.cyclePlayMode()
+
+        // A heartbeat mix being fetched (usually under a second).
+        CircularProgress {
+            anchors.centerIn: parent
+            width: modeButton.iconSize + 14
+            height: width
+            thickness: 2
+            indeterminate: true
+            visible: App.player.heartbeatLoading
+        }
     }
 
     PlayerButton {

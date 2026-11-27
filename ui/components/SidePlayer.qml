@@ -283,15 +283,42 @@ Rectangle {
 
         ConnectedButtonGroup {
             id: trayGroup
-            readonly property int count: root.isSong ? 5 : 4
+            readonly property int count: (root.isSong ? 5 : 4) + (heartbeatButton.visible ? 1 : 0)
             readonly property real itemWidth: (width - (count - 1) * spacing) / count
             x: 4
             y: 4
             width: parent.width - 8
 
+            // 心动模式 while the liked songs play (docs/tasks/heartbeat-mode.md §7.2): on, the
+            // mix plays in its own order, so shuffle and repeat show off; either leaves it.
+            TrayButton {
+                id: heartbeatButton
+                readonly property bool on: App.player.heartbeat || App.player.heartbeatLoading
+                visible: App.player.heartbeatAvailable
+                checkable: true
+                checked: on
+                glyph: Symbols.ecg_heart
+                text: on ? qsTr("退出心动模式") : qsTr("心动模式")
+                onClicked: {
+                    checked = Qt.binding(() => heartbeatButton.on);
+                    if (on)
+                        App.player.stopHeartbeat();
+                    else
+                        App.player.startHeartbeat();
+                }
+
+                CircularProgress {
+                    anchors.centerIn: parent
+                    width: 34
+                    height: width
+                    thickness: 2
+                    indeterminate: true
+                    visible: App.player.heartbeatLoading
+                }
+            }
             TrayButton {
                 id: shuffleButton
-                readonly property bool on: App.player.order === Playback.Shuffle
+                readonly property bool on: App.player.order === Playback.Shuffle && !heartbeatButton.on
                 checkable: true
                 checked: on
                 glyph: Symbols.shuffle
@@ -303,7 +330,9 @@ Rectangle {
             }
             TrayButton {
                 id: repeatButton
-                readonly property int repeat: App.player.repeat
+                // In 心动模式: off, and a click turns list repeat on (leaving the mix).
+                readonly property int repeat: heartbeatButton.on ? Playback.RepeatOff
+                                                                 : App.player.repeat
                 checkable: true
                 checked: repeat !== Playback.RepeatOff
                 glyph: repeat === Playback.RepeatOne ? Symbols.repeat_one : Symbols.repeat
@@ -443,6 +472,9 @@ Rectangle {
                 containerColor: root.tones.raised
                 text: row.title
                 supportingText: row.artistText
+                supportingGlyph: App.player.queueRecommended[row.index] === true ? Symbols.ecg_heart
+                                                                                  : ""
+                supportingGlyphToolTip: qsTr("心动推荐")
                 onClicked: App.player.playAt(row.index)
                 leading: Component {
                     CoverArt {

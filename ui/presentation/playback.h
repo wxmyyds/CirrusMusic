@@ -103,6 +103,16 @@ struct PlaybackSnapshot {
     // The details of the queue's podcast voices, as far as the source has them (their keys
     // are no songs': never ask for them as songs); a voice without them has only its key.
     QList<SongInfo> voices;
+    // 心动模式 (docs/tasks/heartbeat-mode.md §7): the queue is a heartbeat mix; one is being
+    // fetched. Each try that is over counts in `heartbeatTries`, the last failing or not.
+    bool heartbeat = false;
+    bool heartbeatLoading = false;
+    quint64 heartbeatTries = 0;
+    bool heartbeatFailed = false;
+    // The playlist (its key) the current song was queued from, else empty.
+    QString currentPlaylist;
+    // Per row of `queue`: put in by the heartbeat mix (a recommended song).
+    QList<bool> recommended;
 };
 
 } // namespace cirrus::ui

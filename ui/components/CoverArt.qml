@@ -7,9 +7,11 @@ import Cirrus.Controls
 // A cover by key (`image://cover/<key>`) with rounded corners over a placeholder.
 // A new cover replaces the shown one only once decoded, with a cross-fade
 // (motion-choreography.md §4.1). Two layers at most: when a cover arrives during a
-// fade, the more visible layer becomes the base. The software renderer has no
-// masking, so covers stay square there. `shape` cuts the cover to an MD3E shape instead
-// of a rounded rectangle (decorative covers only: it crops the corners).
+// fade, the more visible layer becomes the base. The rounded corners come from a shader
+// that samples the image itself (shaders/cover.frag); the software renderer has no
+// shaders, so covers stay square there. `shape` cuts the cover to an MD3E shape instead
+// of a rounded rectangle (decorative covers only: it crops the corners), through an
+// offscreen layer and a mask.
 //   CoverArt { coverKey: key; shape: MaterialShape.Cookie9Sided }
 Item {
     id: root
@@ -31,6 +33,9 @@ Item {
 
     readonly property bool masked: GraphicsInfo.api !== GraphicsInfo.Software
                                    && GraphicsInfo.api !== GraphicsInfo.Unknown
+    // Only a shape needs the offscreen layer (an MD3E shape mask); a page of covers each
+    // with a layer and a mask texture of their own held two offscreen textures per cover.
+    readonly property bool shaped: masked && shape >= 0
     // Layer showing the current cover, the other one fades in over it.
     property Image base: first
     // The layer loading a new cover, revealed once it is done. Only it: the other layer
@@ -105,6 +110,8 @@ Item {
         // A new size (the item resizing) reloads it: keep the old pixels meanwhile.
         retainWhileLoading: true
         opacity: 0
+        // With shaders a Rounded draws it; inside a shape's layer it draws itself.
+        visible: !root.masked || root.shaped
         onStatusChanged: {
             if (this === root.pending && status !== Image.Loading) {
                 root.pending = null;
@@ -113,20 +120,36 @@ Item {
         }
     }
 
+    // A layer's image with the rounded corners, from its texture (PreserveAspectCrop: the
+    // painted size over the item's).
+    component Rounded: ShaderEffect {
+        required property Image image
+        readonly property Item source: image
+        readonly property size boxSize: Qt.size(width, height)
+        readonly property real radius: root.radius
+        readonly property size crop: Qt.size(Math.max(1, image.paintedWidth) / Math.max(1, width),
+                                             Math.max(1, image.paintedHeight) / Math.max(1, height))
+        anchors.fill: parent
+        visible: root.masked && !root.shaped && image.status === Image.Ready && image.opacity > 0
+        z: image.z
+        opacity: image.opacity
+        fragmentShader: Qt.resolvedUrl("shaders/cover.frag.qsb")
+    }
+
     Item {
         id: content
         anchors.fill: parent
-        layer.enabled: root.masked
+        layer.enabled: root.shaped
         layer.effect: MultiEffect {
             maskEnabled: true
-            maskSource: shapeMask.active ? shapeMask : mask
+            maskSource: shapeMask
             maskThresholdMin: 0.5
             maskSpreadAtMin: 1
         }
 
         Rectangle {
             anchors.fill: parent
-            radius: root.masked ? 0 : root.radius
+            radius: root.shaped ? 0 : root.radius
             color: ColorScope.scheme.surfaceContainerHighest
             Icon {
                 anchors.centerIn: parent
@@ -141,19 +164,18 @@ Item {
         Layer {
             id: second
         }
+        Rounded {
+            image: first
+        }
+        Rounded {
+            image: second
+        }
     }
 
-    Rectangle {
-        id: mask
-        anchors.fill: parent
-        radius: root.radius
-        visible: false
-        layer.enabled: root.masked && !shapeMask.active
-    }
     Loader {
         id: shapeMask
         anchors.fill: parent
-        active: root.masked && root.shape >= 0
+        active: root.shaped
         visible: false
         layer.enabled: active
         sourceComponent: MorphShape {

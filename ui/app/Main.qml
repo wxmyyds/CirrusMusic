@@ -198,7 +198,7 @@ AppWindow {
     // 复制链接 (pages/share.md §3): what plays while the player page is open, else the
     // page's own item.
     Shortcut {
-        sequence: "Ctrl+Shift+C"
+        sequences: App.shortcuts.keys.copyLink
         onActivated: {
             const current = App.player.current;
             if (player.opened && current.key !== "")
@@ -209,7 +209,7 @@ AppWindow {
         }
     }
     Shortcut {
-        sequence: "Ctrl+Shift+F"
+        sequences: App.shortcuts.keys.togglePlayer
         enabled: App.player.current.key !== ""
         onActivated: player.opened ? player.close() : player.open()
     }
@@ -245,7 +245,7 @@ AppWindow {
 
     // The way out when the window only hides and there is no tray menu.
     Shortcut {
-        sequences: [StandardKey.Quit] // every binding of it (Ctrl+Q and the like)
+        sequences: App.shortcuts.keys.quit
         context: Qt.ApplicationShortcut
         onActivated: Desktop.quit()
     }
