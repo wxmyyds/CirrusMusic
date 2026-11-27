@@ -26,7 +26,8 @@ build() {
     -DBUILD_TESTING=OFF \
     -DCIRRUS_BUILD_GALLERY=OFF \
     -DCIRRUS_EXECUTABLE=cirrus \
-    -DCIRRUS_PACKAGE=aur \
+    -DCIRRUS_PACKAGE=arch \
+    -DCIRRUS_PACKAGE_ARCH=@PACKAGE_ARCH@ \
     -DCIRRUS_DEPLOY_QT=OFF
   cmake --build "$srcdir/build" --parallel "${JOBS:-4}"
 }

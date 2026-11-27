@@ -118,11 +118,13 @@ set_target_properties(appCirrusMusic PROPERTIES
 
 # Shown in Settings › About.
 target_compile_definitions(appCirrusMusic PRIVATE CIRRUS_VERSION="${PROJECT_VERSION}")
-# The package this build goes into (docs/tasks/update-check.md §6): linux (the deb and
-# the AppImage), windows (the installer and the zip), macos (the dmg), aur; empty for
-# development builds, which never check for updates on their own.
-set(CIRRUS_PACKAGE "" CACHE STRING "Package of this build: linux, windows, macos, aur or empty")
-target_compile_definitions(appCirrusMusic PRIVATE CIRRUS_PACKAGE="${CIRRUS_PACKAGE}")
+// The package identity (arch, debian, fedora, windows, macos) and target architecture
+// (x86_64 or arm64); both empty for development builds.
+set(CIRRUS_PACKAGE "" CACHE STRING "Package format family: arch, debian, fedora, windows, macos or empty")
+set(CIRRUS_PACKAGE_ARCH "" CACHE STRING "Target package architecture: x86_64, arm64 or empty")
+target_compile_definitions(appCirrusMusic PRIVATE
+    CIRRUS_PACKAGE="${CIRRUS_PACKAGE}"
+    CIRRUS_PACKAGE_ARCH="${CIRRUS_PACKAGE_ARCH}")
 # The commit, for the log's session header (docs/tasks/logging.md §6): checked at every
 # build; the header only changes (and main.cpp only rebuilds) when the commit does.
 set(CIRRUS_COMMIT_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/cirrus_commit.h")

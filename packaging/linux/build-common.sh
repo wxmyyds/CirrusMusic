@@ -51,7 +51,8 @@ cmake -S "$root" -B "$build" -G Ninja \
     -DBUILD_TESTING=OFF \
     -DCIRRUS_BUILD_GALLERY=OFF \
     -DCIRRUS_EXECUTABLE=cirrus \
-    -DCIRRUS_PACKAGE=linux \
+    -DCIRRUS_PACKAGE="$distribution" \
+    -DCIRRUS_PACKAGE_ARCH="$arch" \
     -DCIRRUS_DEPLOY_QT=OFF
 cmake --build "$build" --parallel "${JOBS:-4}"
 rm -rf "$stage"

@@ -45,6 +45,7 @@ printf 'Source commit: %s\nPackage version: %s\nSource SHA-256: %s\n' "$commit" 
 sed -e "s/@PKGVER@/$version/g" \
     -e "s/@SOURCE_DIR@/$source_dir/g" \
     -e "s/@SHA256@/$source_sha/g" \
+    -e "s/@PACKAGE_ARCH@/$arch/g" \
     "$root/packaging/linux/arch/PKGBUILD.in" > "$build/PKGBUILD"
 
 # All dependencies are already installed; no --syncdeps, sudo, or root makepkg.

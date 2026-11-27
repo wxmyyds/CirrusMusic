@@ -16,7 +16,6 @@
 #include <QProcess>
 #include <QSettings>
 #include <QStandardPaths>
-#include <QSysInfo>
 
 #include <algorithm>
 
@@ -30,15 +29,35 @@ constexpr int kTimeoutMs = 15 * 1000;
 // The installer's download is aborted after this long without a byte.
 constexpr int kDownloadStallMs = 30 * 1000;
 
-updates::WindowsArchitecture buildWindowsArchitecture()
+updates::Package releasePackage(UpdateCheck::Install install)
 {
-    // Select for this executable's build, including x64 apps under ARM emulation.
-    const QString cpu = QSysInfo::buildCpuArchitecture();
-    if (cpu == QLatin1String("x86_64"))
-        return updates::WindowsArchitecture::X86_64;
-    if (cpu == QLatin1String("arm64"))
-        return updates::WindowsArchitecture::Arm64;
-    return updates::WindowsArchitecture::Unknown;
+    switch (install) {
+    case UpdateCheck::Arch:
+        return updates::Package::Arch;
+    case UpdateCheck::Debian:
+        return updates::Package::Debian;
+    case UpdateCheck::Fedora:
+        return updates::Package::Fedora;
+    case UpdateCheck::WindowsSetup:
+        return updates::Package::WindowsSetup;
+    case UpdateCheck::WindowsZip:
+        return updates::Package::WindowsZip;
+    case UpdateCheck::MacDmg:
+        return updates::Package::MacDmg;
+    case UpdateCheck::Development:
+    case UpdateCheck::UnknownPackage:
+        return updates::Package::Unknown;
+    }
+    return updates::Package::Unknown;
+}
+
+updates::Architecture packageArchitecture(const QString& architecture)
+{
+    if (architecture == QLatin1String("x86_64"))
+        return updates::Architecture::X86_64;
+    if (architecture == QLatin1String("arm64"))
+        return updates::Architecture::Arm64;
+    return updates::Architecture::Unknown;
 }
 
 const char* outcomeName(UpdateCheck::Status status)
@@ -75,25 +94,28 @@ qint64 UpdateCheck::lastCheck() const
 
 bool UpdateCheck::canCheckAutomatically() const { return m_install != Development; }
 
-void UpdateCheck::setPackage(const QString& package)
+void UpdateCheck::setPackage(const QString& package, const QString& architecture)
 {
-    if (package == QLatin1String("linux")) {
-        // The deb and the AppImage share one build; the AppImage runtime sets APPIMAGE.
-        m_install = qEnvironmentVariableIsSet("APPIMAGE") ? AppImage : Deb;
+    m_architecture = packageArchitecture(architecture);
+    if (package.isEmpty()) {
+        m_install = Development;
+    } else if (package == QLatin1String("arch")) {
+        m_install = Arch;
+    } else if (package == QLatin1String("debian")) {
+        m_install = Debian;
+    } else if (package == QLatin1String("fedora")) {
+        m_install = Fedora;
     } else if (package == QLatin1String("windows")) {
-        // The installer and the zip share one build; Inno Setup leaves its uninstaller.
+        // The installer and zip share one build; Inno Setup leaves its uninstaller.
         const QDir dir(QCoreApplication::applicationDirPath());
         m_install = QFileInfo::exists(dir.filePath(QStringLiteral("unins000.exe"))) ? WindowsSetup
                                                                                     : WindowsZip;
-        // An installer left from an earlier update (or one never run) is not kept.
         if (m_install == WindowsSetup)
             removeDownloads();
     } else if (package == QLatin1String("macos")) {
         m_install = MacDmg;
-    } else if (package == QLatin1String("aur")) {
-        m_install = Aur;
     } else {
-        m_install = Development;
+        m_install = UnknownPackage;
     }
     schedule();
 }
@@ -146,7 +168,7 @@ void UpdateCheck::finish(QNetworkReply* reply, bool manual)
     Failure failure = NoFailure;
     if (httpStatus == 200) {
         if (const auto release =
-                updates::parseRelease(reply->readAll(), buildWindowsArchitecture())) {
+                updates::parseRelease(reply->readAll(), releasePackage(m_install), m_architecture)) {
             // A download of another version is no longer wanted.
             if (release->version != m_release.version && m_download != NoDownload) {
                 cancelDownload();
@@ -202,6 +224,16 @@ void UpdateCheck::setState(Status status, Failure failure)
     emit changed();
 }
 
+bool UpdateCheck::openDownload() const
+{
+    if (m_release.asset && updates::isDownloadUrl(m_release.asset->url, m_release.version,
+                                                   m_release.asset->name)) {
+        log::info(lcUiNav, "update.open_asset");
+        return QDesktopServices::openUrl(m_release.asset->url);
+    }
+    return openRelease();
+}
+
 bool UpdateCheck::openRelease() const
 {
     if (!updates::isReleasePage(m_release.page))
@@ -212,15 +244,16 @@ bool UpdateCheck::openRelease() const
 
 bool UpdateCheck::canInstall() const
 {
-    return m_install == WindowsSetup && m_release.installer &&
+    return m_install == WindowsSetup && m_release.asset && m_release.asset->size > 0 &&
+           !m_release.asset->sha256.isEmpty() &&
            updates::isNewer(m_release.version, QCoreApplication::applicationVersion());
 }
 
 qreal UpdateCheck::downloadProgress() const
 {
-    if (!m_release.installer || m_release.installer->size <= 0)
+    if (!m_release.asset || m_release.asset->size <= 0)
         return 0;
-    return std::clamp(qreal(m_received) / qreal(m_release.installer->size), qreal(0), qreal(1));
+    return std::clamp(qreal(m_received) / qreal(m_release.asset->size), qreal(0), qreal(1));
 }
 
 QString UpdateCheck::downloadFolder() const
@@ -247,7 +280,7 @@ void UpdateCheck::downloadInstaller()
 {
     if (!canInstall() || m_downloadReply)
         return;
-    const updates::Asset asset = *m_release.installer;
+    const updates::Asset asset = *m_release.asset;
     removeDownloads();
     m_installer.clear();
     const QString folder = downloadFolder();
@@ -295,11 +328,11 @@ void UpdateCheck::downloadFinished(QNetworkReply* reply)
     reply->deleteLater();
     m_downloadReply.clear();
     m_downloadFile->close();
-    if (!m_release.installer) {
+    if (!m_release.asset) {
         QFile::remove(m_downloadFile->fileName());
         return;
     }
-    const updates::Asset asset = *m_release.installer;
+    const updates::Asset asset = *m_release.asset;
     const QString part = m_downloadFile->fileName();
     const bool canceled = reply->error() == QNetworkReply::OperationCanceledError &&
                           m_received <= asset.size && m_download == NoDownload;

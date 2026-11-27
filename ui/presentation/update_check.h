@@ -38,6 +38,7 @@ class UpdateCheck : public QObject
     Q_PROPERTY(QString latestVersion READ latestVersion NOTIFY changed)
     Q_PROPERTY(QString title READ title NOTIFY changed)
     Q_PROPERTY(QString notes READ notes NOTIFY changed)
+    Q_PROPERTY(QString assetName READ assetName NOTIFY changed)
     // Milliseconds since the epoch, 0 when unknown (for App.format).
     Q_PROPERTY(qint64 publishedAt READ publishedAt NOTIFY changed)
     Q_PROPERTY(qint64 lastCheck READ lastCheck NOTIFY changed)
@@ -55,7 +56,7 @@ class UpdateCheck : public QObject
     enum Failure { NoFailure, Network, Limited, Invalid };
     Q_ENUM(Failure)
     // How this copy was installed: what to download for an update.
-    enum Install { Development, Deb, AppImage, WindowsSetup, WindowsZip, Aur, MacDmg };
+    enum Install { Development, UnknownPackage, Arch, Debian, Fedora, WindowsSetup, WindowsZip, MacDmg };
     Q_ENUM(Install)
     // The installer's download: not started, under way, downloaded and checked, or not.
     enum Download { NoDownload, Downloading, Downloaded, DownloadFailed };
@@ -69,6 +70,7 @@ class UpdateCheck : public QObject
     [[nodiscard]] QString latestVersion() const { return m_release.version; }
     [[nodiscard]] QString title() const { return m_release.title; }
     [[nodiscard]] QString notes() const { return m_release.notes; }
+    [[nodiscard]] QString assetName() const { return m_release.asset ? m_release.asset->name : QString(); }
     [[nodiscard]] qint64 publishedAt() const;
     [[nodiscard]] qint64 lastCheck() const;
     [[nodiscard]] bool canCheckAutomatically() const;
@@ -76,12 +78,14 @@ class UpdateCheck : public QObject
     [[nodiscard]] int download() const { return m_download; }
     [[nodiscard]] qreal downloadProgress() const;
 
-    // The build's package ("linux", "windows", "macos", "aur"; empty for a development build),
-    // from CMake's CIRRUS_PACKAGE; the install kind is refined at run time (an AppImage,
-    // the Windows installer). Call once, before the event loop.
-    void setPackage(const QString& package);
+    // The build's package identity and architecture from CMake. Empty package and
+    // architecture identify a development build; unknown nonempty values still check
+    // releases but never guess an asset. Call once, before the event loop.
+    void setPackage(const QString& package, const QString& architecture);
 
     Q_INVOKABLE void check();
+    // Opens the exact matching release asset, or the release page if identity is unknown.
+    Q_INVOKABLE bool openDownload() const;
     // The release page in the browser; false when there is none (or not GitHub's).
     Q_INVOKABLE bool openRelease() const;
     // Downloads the new installer (canInstall) to a private folder, again after a failure.
@@ -117,6 +121,7 @@ class UpdateCheck : public QObject
 
     AppSettings* m_settings;
     Install m_install = Development;
+    updates::Architecture m_architecture = updates::Architecture::Unknown;
     Status m_status = Idle;
     Failure m_failure = NoFailure;
     updates::Release m_release;

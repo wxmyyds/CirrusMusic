@@ -52,14 +52,65 @@ bool isDownloadUrl(const QUrl& url, QStringView version, QStringView name)
                QStringLiteral("/wxmyyds/CirrusMusic/releases/download/v%1/%2").arg(version, name);
 }
 
-QString installerName(QStringView version, WindowsArchitecture architecture)
+QString assetName(QStringView version, Package package, Architecture architecture)
 {
-    switch (architecture) {
-    case WindowsArchitecture::X86_64:
-        return QStringLiteral("Cirrus-%1-windows-x64-setup.exe").arg(version);
-    case WindowsArchitecture::Arm64:
-        return QStringLiteral("Cirrus-%1-windows-arm64-setup.exe").arg(version);
-    case WindowsArchitecture::Unknown:
+    switch (package) {
+    case Package::Arch:
+        switch (architecture) {
+        case Architecture::X86_64:
+            return QStringLiteral("cirrus-%1-1-x86_64.pkg.tar.zst").arg(version);
+        case Architecture::Arm64:
+            return QStringLiteral("cirrus-%1-1-aarch64.pkg.tar.zst").arg(version);
+        case Architecture::Unknown:
+            return {};
+        }
+        break;
+    case Package::Debian:
+        switch (architecture) {
+        case Architecture::X86_64:
+            return QStringLiteral("cirrus_%1_amd64.deb").arg(version);
+        case Architecture::Arm64:
+            return QStringLiteral("cirrus_%1_arm64.deb").arg(version);
+        case Architecture::Unknown:
+            return {};
+        }
+        break;
+    case Package::Fedora:
+        switch (architecture) {
+        case Architecture::X86_64:
+            return QStringLiteral("cirrus-%1-1.fc44.x86_64.rpm").arg(version);
+        case Architecture::Arm64:
+            return QStringLiteral("cirrus-%1-1.fc44.aarch64.rpm").arg(version);
+        case Architecture::Unknown:
+            return {};
+        }
+        break;
+    case Package::WindowsSetup:
+    case Package::WindowsZip:
+        switch (architecture) {
+        case Architecture::X86_64:
+            return QStringLiteral("Cirrus-%1-windows-x64%2")
+                .arg(version, package == Package::WindowsSetup ? QStringLiteral("-setup.exe")
+                                                               : QStringLiteral(".zip"));
+        case Architecture::Arm64:
+            return QStringLiteral("Cirrus-%1-windows-arm64%2")
+                .arg(version, package == Package::WindowsSetup ? QStringLiteral("-setup.exe")
+                                                               : QStringLiteral(".zip"));
+        case Architecture::Unknown:
+            return {};
+        }
+        break;
+    case Package::MacDmg:
+        switch (architecture) {
+        case Architecture::X86_64:
+            return QStringLiteral("Cirrus-%1-macos-x86_64.dmg").arg(version);
+        case Architecture::Arm64:
+            return QStringLiteral("Cirrus-%1-macos-arm64.dmg").arg(version);
+        case Architecture::Unknown:
+            return {};
+        }
+        break;
+    case Package::Unknown:
         return {};
     }
     return {};
@@ -69,10 +120,9 @@ namespace
 {
 constexpr qint64 kMaximumInstallerBytes = 512LL * 1024 * 1024;
 
-std::optional<Asset> installerOf(const QJsonArray& assets, const QString& version,
-                                 WindowsArchitecture architecture)
+std::optional<Asset> releaseAssetOf(const QJsonArray& assets, const QString& version,
+                                    const QString& name, bool verifyWindowsSetup)
 {
-    const QString name = installerName(version, architecture);
     if (name.isEmpty())
         return std::nullopt;
     for (const auto& value : assets) {
@@ -82,12 +132,15 @@ std::optional<Asset> installerOf(const QJsonArray& assets, const QString& versio
         Asset asset;
         asset.name = name;
         asset.url = QUrl(object.value(QLatin1String("browser_download_url")).toString());
+        if (!isDownloadUrl(asset.url, version, name))
+            return std::nullopt;
+        if (!verifyWindowsSetup)
+            return asset;
         asset.size = qint64(object.value(QLatin1String("size")).toDouble());
         const QString digest = object.value(QLatin1String("digest")).toString();
         static const QRegularExpression sha256(QStringLiteral("^sha256:([0-9a-f]{64})$"));
         const auto match = sha256.match(digest);
-        if (!isDownloadUrl(asset.url, version, name) || asset.size <= 0 ||
-            asset.size > kMaximumInstallerBytes || !match.hasMatch())
+        if (asset.size <= 0 || asset.size > kMaximumInstallerBytes || !match.hasMatch())
             return std::nullopt;
         asset.sha256 = QByteArray::fromHex(match.captured(1).toLatin1());
         return asset;
@@ -123,7 +176,8 @@ QString notesToPlainText(const QString& markdown)
     return text.trimmed();
 }
 
-std::optional<Release> parseRelease(const QByteArray& json, WindowsArchitecture architecture)
+std::optional<Release> parseRelease(const QByteArray& json, Package package,
+                                    Architecture architecture)
 {
     QJsonParseError error;
     const QJsonDocument document = QJsonDocument::fromJson(json, &error);
@@ -147,8 +201,9 @@ std::optional<Release> parseRelease(const QByteArray& json, WindowsArchitecture 
         QDateTime::fromString(object.value(QLatin1String("published_at")).toString(), Qt::ISODate);
     if (!isReleasePage(release.page))
         return std::nullopt;
-    release.installer =
-        installerOf(object.value(QLatin1String("assets")).toArray(), release.version, architecture);
+    const QString name = assetName(release.version, package, architecture);
+    release.asset = releaseAssetOf(object.value(QLatin1String("assets")).toArray(),
+                                   release.version, name, package == Package::WindowsSetup);
     return release;
 }
 } // namespace cirrus::ui::updates

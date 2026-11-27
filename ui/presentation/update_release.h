@@ -13,14 +13,16 @@ namespace cirrus::ui::updates
 // The pure parts of the update check (docs/tasks/update-check.md): no network, so they
 // are tested on their own.
 
-enum class WindowsArchitecture { Unknown, X86_64, Arm64 };
+enum class Package { Unknown, Arch, Debian, Fedora, WindowsSetup, WindowsZip, MacDmg };
+enum class Architecture { Unknown, X86_64, Arm64 };
 
-// A file of a release that the app downloads itself: the Windows installer.
+// A release asset of the current package identity. Only a Windows setup is downloaded
+// by the app; other selected assets are opened in the browser.
 struct Asset {
-    QString name;      // "Cirrus-0.5.0-windows-x64-setup.exe"
+    QString name;
     QUrl url;          // its download address (isDownloadUrl)
-    qint64 size = 0;   // in bytes, as GitHub has it
-    QByteArray sha256; // the 32 bytes of GitHub's digest
+    qint64 size = 0;   // in bytes, populated for a verified Windows setup
+    QByteArray sha256; // populated for a verified Windows setup
 };
 
 // The latest release, as GitHub's "latest release" answer gives it.
@@ -30,8 +32,8 @@ struct Release {
     QString notes;   // its body (the CHANGELOG section) as plain text
     QUrl page;       // the release page on github.com
     QDateTime published;
-    // The Windows installer, when the release has one with a size and a sha256 digest.
-    std::optional<Asset> installer;
+    // The exact asset for this package identity, if the latest release contains it.
+    std::optional<Asset> asset;
 };
 
 // "v1.2.3" or "1.2.3" as {1, 2, 3}; anything else (a pre-release suffix, missing or
@@ -41,16 +43,17 @@ std::optional<std::array<int, 3>> parseVersion(QStringView text);
 bool isNewer(QStringView latest, QStringView current);
 // GitHub's latest-release JSON; nullopt when it is malformed, a draft, a pre-release,
 // has no usable version or its page is not the project's (isReleasePage).
-std::optional<Release> parseRelease(const QByteArray& json, WindowsArchitecture architecture);
+std::optional<Release> parseRelease(const QByteArray& json, Package package,
+                                    Architecture architecture);
 // A release page of the project on GitHub (https only): the only page the app opens
 // for an update.
 bool isReleasePage(const QUrl& url);
 // The address of a release file of the project on GitHub (https only, the tag's own):
 // the only place the app downloads an update from.
 bool isDownloadUrl(const QUrl& url, QStringView version, QStringView name);
-// The Windows installer's file name for a version and application build architecture.
-// Unknown architectures have no installer name and never select an asset.
-QString installerName(QStringView version, WindowsArchitecture architecture);
+// The exact release asset filename for a package format and build architecture.
+// Unknown package identities or architectures never select an asset.
+QString assetName(QStringView version, Package package, Architecture architecture);
 // The release notes (GitHub Markdown, the CHANGELOG's style) as plain text for a
 // selectable text block: headings as their text, list items as "• ", links as their
 // text, emphasis and code marks dropped; no HTML ever reaches the UI.
