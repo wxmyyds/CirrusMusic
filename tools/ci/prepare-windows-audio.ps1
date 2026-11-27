@@ -18,8 +18,12 @@ $evidence = [ordered]@{
     packageUrl = 'https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack46.zip'
     expectedSha256 = 'bc44e8974191a5a2427d6c979e2dab08dbb09925f3f435dfa2f0ba3e45b6eb90'
     signatures = @()
+    installerWaitTimedOut = $false
+    installerStoppedAfterReadiness = $false
+    installerStoppedOnFailure = $false
     result = 'failed'
 }
+$setupProcess = $null
 
 function Assert-TrustedSignature([string] $Path, [string] $Publisher) {
     $signature = Get-AuthenticodeSignature -LiteralPath $Path
@@ -74,18 +78,22 @@ try {
     # Do not stage an INF as a substitute for creating the actual PnP device. Normal
     # Windows PnP catalog/member validation remains enforced; no trust-policy changes.
     $evidence.installerArguments = @('-i', '-h')
-    $process = Start-Process -FilePath $installer -ArgumentList $evidence.installerArguments `
+    $setupProcess = Start-Process -FilePath $installer -ArgumentList $evidence.installerArguments `
         -WorkingDirectory $package -PassThru `
         -RedirectStandardOutput (Join-Path $EvidenceDirectory 'installer-stdout.txt') `
         -RedirectStandardError (Join-Path $EvidenceDirectory 'installer-stderr.txt')
-    if (!$process.WaitForExit(120000)) {
-        Stop-Process -Id $process.Id -Force
-        throw 'Official silent setup timed out (unsupported switches or interactive/reboot prompt)'
+    if ($setupProcess.WaitForExit(120000)) {
+        $setupProcess.WaitForExit()
+        $evidence.installerExitCode = $setupProcess.ExitCode
+        if ($setupProcess.ExitCode -in @(3010, 1641)) { throw 'Official setup requires a runner reboot' }
+        if ($setupProcess.ExitCode -ne 0) { throw "Official setup failed: exit $($setupProcess.ExitCode)" }
+    } else {
+        # A successfully installed driver may leave the vendor UI waiting at its final
+        # confirmation. Do not treat the process timeout as success: the signed driver,
+        # running PnP device, active default endpoint and Qt audio cases must still pass.
+        $evidence.installerWaitTimedOut = $true
+        Write-Warning 'Setup did not exit; continuing only to verify the exact installed endpoint'
     }
-    $process.WaitForExit()
-    $evidence.installerExitCode = $process.ExitCode
-    if ($process.ExitCode -in @(3010, 1641)) { throw 'Official setup requires a runner reboot' }
-    if ($process.ExitCode -ne 0) { throw "Official setup failed: exit $($process.ExitCode)" }
 
     # Refresh service enumeration once after installation, without rebooting the OS.
     if ((Get-Service Audiosrv).Status -ne 'Stopped') { Stop-Service Audiosrv }
@@ -177,6 +185,20 @@ namespace CirrusCI {
     $evidence.loadedDriver = $loaded | Select-Object Name, State, PathName
     if (!$loaded -or $loaded.State -ne 'Running') { throw 'VB-CABLE kernel driver is not running' }
 
+    if ($setupProcess.HasExited) {
+        $setupProcess.WaitForExit()
+        $evidence.installerExitCode = $setupProcess.ExitCode
+        if ($setupProcess.ExitCode -in @(3010, 1641)) { throw 'Official setup requires a runner reboot' }
+        if ($setupProcess.ExitCode -ne 0) { throw "Official setup failed: exit $($setupProcess.ExitCode)" }
+    } else {
+        # The driver can finish installing while the official setup waits for a desktop
+        # confirmation dialog unavailable to these headless runners. Terminate it only
+        # after all independent PnP, signature, service and endpoint checks passed.
+        Stop-Process -Id $setupProcess.Id -Force
+        $setupProcess.WaitForExit()
+        $evidence.installerStoppedAfterReadiness = $true
+    }
+
     # QMediaDevices must independently report precisely this default ID in each
     # AudioEngine test. The production engine opens that same default via QAudioSink.
     "CIRRUS_TEST_AUDIO_ENDPOINT_ID=$endpointId" >> $env:GITHUB_ENV
@@ -186,6 +208,15 @@ namespace CirrusCI {
     $evidence.error = $_.Exception.Message
     throw
 } finally {
+    if ($setupProcess -and !$setupProcess.HasExited) {
+        try {
+            Stop-Process -Id $setupProcess.Id -Force
+            $setupProcess.WaitForExit(10000) | Out-Null
+            $evidence.installerStoppedOnFailure = $setupProcess.HasExited
+        } catch {
+            $evidence.installerCleanupError = $_.Exception.Message
+        }
+    }
     $evidence | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'endpoint.json') -Encoding utf8
     Write-Host ($evidence | ConvertTo-Json -Depth 8)
     # Preserve Windows' actual installation diagnostics even if setup/endpoint checks fail.
