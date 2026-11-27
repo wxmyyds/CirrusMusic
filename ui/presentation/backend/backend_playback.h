@@ -17,6 +17,10 @@ namespace cirrus::application
 class BackendFacade;
 class ListeningSession;
 } // namespace cirrus::application
+namespace cirrus::domain
+{
+struct HeartbeatList;
+}
 namespace cirrus::cache
 {
 class CachedMusicQueryService;
@@ -87,6 +91,8 @@ class BackendPlayback : public QObject, public PlaybackSource
     void setOrder(playback::Order order) override;
     void setRepeat(playback::Repeat repeat) override;
     void startFm() override;
+    void startHeartbeat(const QString& playlistKey, const QString& title,
+                        const QStringList& keys = {}) override;
 
   private:
     // Rebuilds the snapshot; notifies on the next turn when it changed.
@@ -152,6 +158,32 @@ class BackendPlayback : public QObject, public PlaybackSource
     void saveOrigins() const;
 
     runtime::BackendRuntime& m_runtime;
+    // 心动模式 (docs/tasks/heartbeat-mode.md §7): the mix being fetched, its reply put in,
+    // a try over (ok or failed), and a fetch dropped (the user went on).
+    struct HeartbeatAsk {
+        QString playlist;
+        QString title;
+        bool keepPlaying = false;
+        QString first; // from the page: the song played first (the playlist's first shown)
+    };
+    void heartbeatArrived(const HeartbeatAsk& ask, const domain::HeartbeatList* list);
+    void heartbeatDone(bool ok);
+    void cancelHeartbeat();
+    // What leaving the mix would bring back, in play order (keep() keeps that on a session
+    // change, §7.4); read on every queue change.
+    void rememberBefore();
+    std::optional<HeartbeatAsk> m_heartbeatAsk;
+    Request m_heartbeatRequest;
+    quint64 m_heartbeatTries = 0;
+    bool m_heartbeatFailed = false;
+    struct Before {
+        QStringList keys;
+        QList<PlayOrigin> origins;
+        QList<bool> voices;
+        int index = -1;
+    };
+    std::optional<Before> m_before;
+    MusicRequests* m_requests;
     QPointer<application::ListeningSession> m_session;
     std::function<void(const QString&)> m_notice;
     std::function<void()> m_biliChanged;

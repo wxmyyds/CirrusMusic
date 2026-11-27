@@ -23,6 +23,8 @@ qt_add_qml_module(cirrus_presentation
         app.cpp
         app_settings.h
         app_settings.cpp
+        shortcut_map.h
+        shortcut_map.cpp
         formatter.h
         formatter.cpp
         network_status.h

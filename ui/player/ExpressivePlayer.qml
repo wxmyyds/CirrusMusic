@@ -212,6 +212,7 @@ Item {
         height: root.height - y - (root.split ? 24 : 24 + 72 + 16)
         colors: root.colors
         positionMs: root.positionMs
+        live: root.visible // the page's, not the fade's
         opacity: lyricsFade.value
         visible: opacity > 0.01
         onCopyRequested: root.copyRequested()

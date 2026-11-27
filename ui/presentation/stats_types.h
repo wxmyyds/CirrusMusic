@@ -46,9 +46,10 @@ struct StatsItem {
 };
 
 struct StatsOrigin {
-    enum Kind { Fm, Playlist, Album, Artist, Daily, Search, Recent, Ranking, Other };
+    // Heartbeat: the songs a 心动模式 mix of the playlist `key` put in.
+    enum Kind { Fm, Playlist, Album, Artist, Daily, Search, Recent, Ranking, Other, Heartbeat };
     Kind kind = Other;
-    QString key;  // Playlist, Album, Artist; Ranking: its user
+    QString key;  // Playlist, Album, Artist, Heartbeat (its playlist); Ranking: its user
     QString name; // as when played; may be empty
     StatsAmount amount;
 };

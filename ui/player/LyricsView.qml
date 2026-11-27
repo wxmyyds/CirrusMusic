@@ -15,6 +15,9 @@ FocusScope {
     required property PlayerPalette colors
     // The smooth playback position (PlaybackClock).
     property real positionMs
+    // Whether the lines exist: only while the player page shows (a song's lines are
+    // thousands of objects). Coming back, they snap to the current line.
+    property bool live: true
 
     // The copy dialog, from the line menu.
     signal copyRequested
@@ -109,6 +112,10 @@ FocusScope {
             root.stopBrowsing(false);
             root.snapNextLayout();
         }
+    }
+    onLiveChanged: {
+        stopBrowsing(false);
+        snapNextLayout();
     }
 
     // The upcoming line during a long gap before it (§5.5): its dots take the anchor.
@@ -335,7 +342,7 @@ FocusScope {
 
             Repeater {
                 id: lines
-                model: App.lyrics.lines
+                model: root.live ? App.lyrics.lines : null
                 onItemAdded: root.scheduleLayout()
                 onItemRemoved: root.scheduleLayout()
 

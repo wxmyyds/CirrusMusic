@@ -61,6 +61,8 @@ Dialog {
         Accessible.name: dialog.title
         ScrollBar.vertical: ScrollBar {}
         Keys.onSpacePressed: (currentItem as ListItem)?.clicked()
+        Keys.onShortcutOverride: event => event.accepted = event.key === Qt.Key_Space
+            && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))
         Keys.onReturnPressed: (currentItem as ListItem)?.clicked()
         Keys.onEnterPressed: (currentItem as ListItem)?.clicked()
 

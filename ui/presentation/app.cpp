@@ -16,6 +16,7 @@
 #include "qr_provider.h"
 #include "session.h"
 #include "sharing.h"
+#include "shortcut_map.h"
 #include "stats_model.h"
 #include "together.h"
 #include "update_check.h"
@@ -48,10 +49,15 @@ App::App(Sources sources)
       m_library(new Library(m_sources.library.get(), m_session, this)),
       m_lyrics(new CurrentLyrics(m_sources.lyrics.get(), m_player, this)),
       m_stats(new LocalStats(m_sources.stats.get(), this)),
-      m_together(new Together(m_sources.together.get(), this)), m_share(new Share(m_settings, this))
+      m_together(new Together(m_sources.together.get(), this)),
+      m_share(new Share(m_settings, this)), m_shortcuts(new ShortcutMap(this))
 {
     if (m_sources.fakeControls)
         m_sources.fakeControls->attach(m_network);
+    // 心动模式 is the liked songs' (Player::heartbeatAvailable).
+    m_player->setLikedPlaylist(m_library->likedPlaylistKey());
+    connect(m_library, &Library::likedPlaylistChanged, m_player,
+            [this] { m_player->setLikedPlaylist(m_library->likedPlaylistKey()); });
 }
 
 App::~App()

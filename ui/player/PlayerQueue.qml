@@ -205,6 +205,10 @@ FocusScope {
                 text: row.loaded ? row.title : " "
                 // A voice: its podcast.
                 supportingText: !row.loaded ? " " : row.voice ? row.albumTitle : row.artistText
+                // Put in by the heartbeat mix (heartbeat-mode.md §7.4).
+                supportingGlyph: App.player.queueRecommended[row.index] === true ? Symbols.ecg_heart
+                                                                                  : ""
+                supportingGlyphToolTip: qsTr("心动推荐")
                 outerRadius: Theme.shape.medium
                 first: true
                 last: true

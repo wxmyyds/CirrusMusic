@@ -11,6 +11,7 @@
 #include "domain/music/discovery_browse_types.h"
 #include "domain/music/discovery_types.h"
 #include "domain/music/entity_search_types.h"
+#include "domain/music/heartbeat_types.h"
 #include "domain/music/introduction_types.h"
 #include "domain/music/library_types.h"
 #include "domain/music/playlist_discovery_types.h"
@@ -101,7 +102,7 @@ using MusicQuery = std::variant<
     domain::SongWikiQuery, domain::SearchSuggestionsQuery, domain::HotKeywordsQuery,
     domain::HotKeywordDetailsQuery, domain::DailyRecommendedPlaylistsQuery,
     domain::DailyHistoryDatesQuery, domain::DailyHistorySongsQuery, domain::DiscoveryBrowseQuery,
-    domain::SongWikiTextQuery, domain::UserProfileQuery>;
+    domain::SongWikiTextQuery, domain::UserProfileQuery, domain::HeartbeatQuery>;
 using MusicResult = std::variant<
     domain::SongSearchPage, domain::SongDetails, domain::SongLyrics, MusicFailure,
     domain::AlbumDetails, domain::ArtistDetails, domain::ArtistSongsPage, domain::ArtistAlbumsPage,
@@ -119,7 +120,7 @@ using MusicResult = std::variant<
     domain::ArtistIntroduction, domain::SongWikiSummary, domain::SearchSuggestions,
     domain::HotKeywords, domain::HotKeywordDetails, domain::DailyRecommendedPlaylists,
     domain::DailyHistoryDates, domain::DailyHistorySongs, domain::DiscoveryBrowsePage,
-    domain::SongWikiText, domain::UserProfilePage>;
+    domain::SongWikiText, domain::UserProfilePage, domain::HeartbeatList>;
 
 inline bool validMusicQuery(const MusicQuery& query)
 {
@@ -231,6 +232,7 @@ inline bool requiresAuthenticatedMusicQuery(const MusicQuery& query)
 {
     return std::holds_alternative<domain::DailyRecommendationsQuery>(query) ||
            std::holds_alternative<domain::PersonalFmQuery>(query) ||
+           std::holds_alternative<domain::HeartbeatQuery>(query) ||
            musicQueryAccount(query).has_value();
 }
 

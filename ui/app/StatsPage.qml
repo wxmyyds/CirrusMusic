@@ -29,6 +29,7 @@ Item {
     function openOrigin(row: var): void {
         switch (row.kind) {
         case StatsPageModel.Playlist:
+        case StatsPageModel.Heartbeat:
             shell.openPlaylist(row.key);
             break;
         case StatsPageModel.Album:
@@ -46,17 +47,15 @@ Item {
         }
     }
 
-    // [ and ] page through periods, unless typing.
-    readonly property bool typing: (Window.activeFocusItem as TextInput) !== null
-                                   || (Window.activeFocusItem as TextEdit) !== null
+    // [ and ] page through periods (single keys stay text while typing: ShortcutMap).
     Shortcut {
-        sequence: "["
-        enabled: page.visible && !page.typing
+        sequences: App.shortcuts.keys.statsPrevious
+        enabled: page.visible
         onActivated: pageModel.goBack()
     }
     Shortcut {
-        sequence: "]"
-        enabled: page.visible && !page.typing
+        sequences: App.shortcuts.keys.statsNext
+        enabled: page.visible
         onActivated: pageModel.goForward()
     }
 

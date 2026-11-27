@@ -84,6 +84,8 @@ Item {
         Keys.onReturnPressed: link.clicked()
         Keys.onEnterPressed: link.clicked()
         Keys.onSpacePressed: link.clicked()
+        Keys.onShortcutOverride: event => event.accepted = event.key === Qt.Key_Space
+            && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))
         HoverHandler {
             id: linkHover
             enabled: link.clickable

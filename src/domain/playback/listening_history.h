@@ -14,6 +14,7 @@ struct ListeningRecord {
     QUuid queueEntry;  // no playlist/album origin is fabricated
     PlayOrigin origin; // the queue entry's, as the caller gave it; None for FM
     ProgramId program; // the queue entry's: a podcast program played through `song`
+    QString alg;       // the queue entry's 心动模式 mark, for the reports; never stored
     std::optional<PreviewRange> preview;
     QString actualQuality;
     qint64 playedMs = 0; // observed elapsed progress, NOT final position or unique coverage

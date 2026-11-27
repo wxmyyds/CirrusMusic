@@ -137,6 +137,13 @@ quint64 ListeningReportGateway::submit(SessionToken context, QString accountId,
                       {QStringLiteral("started"), report.startedAtMs}};
     if (!active && !report.program.value.isEmpty())
         parameters.insert(QStringLiteral("program"), report.program.value);
+    if (!active && !report.alg.isEmpty())
+        parameters.insert(QStringLiteral("alg"), report.alg);
+    if (!active && report.program.value.isEmpty()) {
+        parameters.insert(QStringLiteral("heart"), report.liked);
+        parameters.insert(QStringLiteral("mode"), modeName(report.mode));
+        parameters.insert(QStringLiteral("index"), report.index);
+    }
     const bool play = report.action == ListeningReportAction::Play;
     if (play) {
         parameters.insert(QStringLiteral("time"), report.playedSeconds);
@@ -153,6 +160,8 @@ quint64 ListeningReportGateway::submit(SessionToken context, QString accountId,
                                   ? QStringLiteral("len:%1").arg(report.sourceId.size())
                                   : report.sourceId},
                 {"seconds", report.playedSeconds},
+                {"mode", report.mode},
+                {"liked", report.liked},
                 {"duration", report.durationSeconds},
                 {"quality", report.quality},
                 {"end", report.end}});

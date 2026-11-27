@@ -197,7 +197,10 @@ bool sameState(const PlaybackSnapshot& a, const PlaybackSnapshot& b)
            a.seekable == b.seekable && a.previewStartMs == b.previewStartMs &&
            a.volume == b.volume && a.order == b.order && a.repeat == b.repeat &&
            a.canNext == b.canNext && a.canPrevious == b.canPrevious && a.mode == b.mode &&
-           a.fmWaiting == b.fmWaiting && a.queue == b.queue && a.queueIndex == b.queueIndex;
+           a.fmWaiting == b.fmWaiting && a.queue == b.queue && a.queueIndex == b.queueIndex &&
+           a.heartbeat == b.heartbeat && a.heartbeatLoading == b.heartbeatLoading &&
+           a.heartbeatTries == b.heartbeatTries && a.currentPlaylist == b.currentPlaylist &&
+           a.recommended == b.recommended;
 }
 
 std::optional<LyricTrack> trackOf(const domain::LyricTrack& track)
@@ -254,15 +257,18 @@ template <class T> Request replyLater(QObject* context, Reply<T> reply, Outcome<
 
 BackendPlayback::BackendPlayback(runtime::BackendRuntime& runtime, CatalogSource& catalog,
                                  QObject* parent)
-    : QObject(parent), m_runtime(runtime), m_session(&runtime.listening()), m_facade(&runtime.facade()),
-      m_catalog(catalog)
+    : QObject(parent), m_runtime(runtime), m_requests(new MusicRequests(runtime.facade(), this)),
+      m_session(&runtime.listening()), m_facade(&runtime.facade()), m_catalog(catalog)
 {
     connect(&runtime, &runtime::BackendRuntime::biliAccountChanged, this, [this] {
         if (m_biliChanged)
             m_biliChanged();
     });
     const auto changed = [this] { update(); };
-    connect(m_session, &ListeningSession::queueChanged, this, changed);
+    connect(m_session, &ListeningSession::queueChanged, this, [this] {
+        rememberBefore();
+        update();
+    });
     connect(m_session, &ListeningSession::playbackChanged, this, changed);
     connect(m_session, &ListeningSession::fmChanged, this, changed);
     connect(m_session, &ListeningSession::failureStreakExceeded, this, [this] {
@@ -272,7 +278,8 @@ BackendPlayback::BackendPlayback(runtime::BackendRuntime& runtime, CatalogSource
     // A session change retires the queue and playback.
     connect(&runtime.facade(), &application::BackendFacade::sessionChanged, this,
             [this](const domain::SessionSnapshot&) {
-                applyVolume(); // set before the backend could take it (startup)
+                cancelHeartbeat(); // a mix belongs to the account that requested it
+                applyVolume();     // set before the backend could take it (startup)
                 applyNormalization();
                 applyTransition();
                 update();
@@ -362,7 +369,14 @@ void BackendPlayback::update()
                     m_voices.value(entry->program.value, bareVoice(entry->program.value)));
             if (voice && id == queue.active && entry->song == play.song)
                 currentKey = entry->program.value;
+            next.recommended.append(entry &&
+                                    entry->origin.kind == domain::PlayOriginKind::Heartbeat);
+            if (entry && id == queue.active &&
+                (entry->origin.kind == domain::PlayOriginKind::Playlist ||
+                 entry->origin.kind == domain::PlayOriginKind::Heartbeat))
+                next.currentPlaylist = entry->origin.id;
         }
+        next.heartbeat = queue.heartbeat.has_value();
         next.queueIndex = int(m_entries.indexOf(queue.active));
         next.order =
             queue.order == domain::QueueOrder::Shuffle ? playback::Shuffle : playback::Sequential;
@@ -386,8 +400,12 @@ void BackendPlayback::update()
     }
 
     next.generation = play.token.generation;
-    next.provider = play.provider == domain::SourceProvider::Bilibili ? playback::Bilibili
-                                                                     : playback::Netease;
+    next.provider =
+        play.provider == domain::SourceProvider::Bilibili ? playback::Bilibili : playback::Netease;
+    next.heartbeatLoading = m_heartbeatAsk.has_value();
+    next.heartbeatTries = m_heartbeatTries;
+    next.heartbeatFailed = m_heartbeatFailed;
+
     next.status = statusOf(play);
     if (next.status == playback::Empty && next.fmWaiting)
         next.status = session.fmBlocked() ? playback::Ended : playback::Loading;
@@ -483,7 +501,13 @@ void BackendPlayback::keep(qint64 now)
     kept.provider = m_state.provider;
     kept.durationMs = m_state.durationMs;
     kept.previewStartMs = m_state.previewStartMs;
-    if (!m_removing) {
+    if (!m_removing && m_state.heartbeat && m_before) {
+        // Out of 心动模式 on a session change: the queue from before it (§7.4).
+        kept.keys = m_before->keys;
+        kept.index = m_before->index;
+        kept.origins = m_before->origins;
+        kept.voices = m_before->voices;
+    } else if (!m_removing) {
         kept.keys = m_state.queue;
         kept.index = m_state.queueIndex;
         for (qsizetype i = 0; i < kept.keys.size(); ++i) {
@@ -491,6 +515,8 @@ void BackendPlayback::keep(qint64 now)
                                                      : PlayOrigin{});
             kept.voices.append(m_queueVoices.value(i));
         }
+    }
+    if (!m_removing) {
         const bool returning = !m_seekKey.isEmpty() && m_seekKey == kept.current.key;
         kept.songPositionMs =
             returning ? m_seekSongMs // stopped again before getting back there
@@ -616,6 +642,9 @@ void BackendPlayback::showKept(PlaybackSnapshot& next, qint64 now)
     if (next.mode == playback::Queue) {
         next.queue = kept.keys;
         next.queueIndex = kept.index;
+        next.recommended.clear();
+        next.heartbeat = false;
+        next.currentPlaylist.clear();
         m_queueVoices = kept.voices;
         next.voices.clear();
         for (qsizetype i = 0; i < kept.keys.size(); ++i)
@@ -736,6 +765,7 @@ void BackendPlayback::startQueue(const QStringList& keys, int index,
 {
     if (!m_session || index < 0 || index >= keys.size())
         return;
+    cancelHeartbeat(); // another queue now
     loadVoices();
     QList<domain::SongId> ids;
     QList<PlayOrigin> idOrigins;
@@ -1211,6 +1241,7 @@ void BackendPlayback::clearQueue()
     if (!m_session || m_state.mode != playback::Queue)
         return;
     log::info(lcUi, "player.clear", {"count", m_state.queue.size()});
+    cancelHeartbeat();
     m_kept.reset();
     m_clearing = true; // the stop it makes is the user's
     m_session->clear();
@@ -1310,6 +1341,7 @@ void BackendPlayback::setVolume(double volume)
 
 void BackendPlayback::setOrder(playback::Order order)
 {
+    cancelHeartbeat(); // another mode instead
     if (m_session)
         m_session->setModes(order == playback::Shuffle ? domain::QueueOrder::Shuffle
                                                        : domain::QueueOrder::Sequential,
@@ -1318,6 +1350,7 @@ void BackendPlayback::setOrder(playback::Order order)
 
 void BackendPlayback::setRepeat(playback::Repeat repeat)
 {
+    cancelHeartbeat();
     if (m_session)
         m_session->setModes(m_session->queue().order,
                             repeat == playback::RepeatAll   ? domain::QueueRepeat::All
@@ -1327,8 +1360,165 @@ void BackendPlayback::setRepeat(playback::Repeat repeat)
 
 void BackendPlayback::startFm()
 {
+    cancelHeartbeat();
     if (m_session)
         m_session->startFm(quality());
+}
+
+void BackendPlayback::startHeartbeat(const QString& playlistKey, const QString& title,
+                                     const QStringList& keys)
+{
+    if (!m_session || !m_facade ||
+        m_facade->snapshot().phase != domain::SessionPhase::Authenticated ||
+        !domain::validMusicId(playlistKey) || m_state.mode != playback::Queue)
+        return;
+    cancelHeartbeat();
+    domain::HeartbeatQuery query;
+    query.playlist = {playlistKey};
+    QString name = title;
+    if (keys.isEmpty()) {
+        // From the playing song, over the whole queue (its order before shuffling), as the
+        // official app sends its play list (el0/a.java): its first song and its length.
+        const auto queue = m_session->queue();
+        const auto active = std::find_if(queue.entries.cbegin(), queue.entries.cend(),
+                                         [&](const auto& e) { return e.id == queue.active; });
+        if (active == queue.entries.cend() || !active->program.value.isEmpty())
+            return;
+        if (name.isEmpty())
+            name = active->origin.name;
+        query.anchor = active->song;
+        query.start = queue.entries.first().song;
+        query.count =
+            int(std::min<qsizetype>(queue.entries.size(), domain::HeartbeatQuery::MaximumCount));
+    } else {
+        QStringList valid;
+        for (const QString& key : keys)
+            if (domain::validMusicId(key))
+                valid.append(key);
+        if (valid.isEmpty())
+            return;
+        query.anchor = query.start = {valid.first()};
+        query.count = int(std::min<qsizetype>(valid.size(), domain::HeartbeatQuery::MaximumCount));
+        query.fromAll = true;
+    }
+    if (!query.isValid())
+        return;
+    log::info(lcUi, "player.heartbeat", {{"from_all", query.fromAll}, {"count", query.count}});
+    const HeartbeatAsk ask{playlistKey, name, !query.fromAll,
+                           query.fromAll ? query.start.value : QString()};
+    m_heartbeatAsk = ask;
+    m_heartbeatRequest = m_requests->submit(
+        [query](application::BackendFacade& facade) {
+            return facade.snapshot().phase == domain::SessionPhase::Authenticated
+                       ? facade.heartbeatList(query)
+                       : MusicRequests::NeedsSignIn;
+        },
+        [this, ask](const application::MusicResult& result) {
+            heartbeatArrived(ask, std::get_if<domain::HeartbeatList>(&result));
+        },
+        [this](failure::Kind, std::optional<qint64>) { heartbeatDone(false); });
+    update();
+}
+
+void BackendPlayback::heartbeatArrived(const HeartbeatAsk& ask, const domain::HeartbeatList* list)
+{
+    m_heartbeatRequest.release();
+    if (!m_session || !list || list->entries.isEmpty())
+        return heartbeatDone(false);
+    // The playlist's own songs stay from it; the mix's are its "心动推荐" (§7.6).
+    const domain::PlayOrigin own = storedOrigin({playback::FromPlaylist, ask.playlist, ask.title});
+    domain::PlayOrigin mixed = own;
+    mixed.kind = domain::PlayOriginKind::Heartbeat;
+    // As the official app (el0/a.java): from the page the playlist's first song plays first,
+    // marked "Alg_AI_all_0_redheart"; from a song, that song plays on, marked
+    // "Alg_AI_One_<song>_clicksong-RH" (for the liked songs; the app's other kinds differ).
+    QList<domain::QueueEntry> mix;
+    if (!ask.first.isEmpty())
+        mix.append({{}, {ask.first}, own, {}, QStringLiteral("Alg_AI_all_0_redheart")});
+    for (const auto& entry : list->entries)
+        if (entry.song.value != ask.first)
+            mix.append({{},
+                        entry.song,
+                        entry.recommended ? mixed : own,
+                        {},
+                        domain::validQueueAlg(entry.alg) ? entry.alg : QString()});
+    const auto playing = m_session->queue().active;
+    QString activeAlg;
+    for (const auto& entry : m_session->queue().entries)
+        if (ask.keepPlaying && entry.id == playing)
+            activeAlg = QStringLiteral("Alg_AI_One_%1_clicksong-RH").arg(entry.song.value);
+    if (!m_session->enterHeartbeat({ask.playlist}, mix, ask.keepPlaying, quality(), activeAlg) ||
+        !m_session)
+        return heartbeatDone(false);
+    // The new entries are reported from the playlist, like its own songs (§7.6); what is in
+    // neither queue is no more.
+    loadOrigins();
+    const auto queue = m_session->queue();
+    QSet<QUuid> live;
+    for (const auto& entry : queue.entries) {
+        live.insert(entry.id);
+        if (!m_origins.contains(entry.id))
+            m_origins.insert(entry.id, PlayOrigin{playback::FromPlaylist, ask.playlist, ask.title});
+    }
+    if (queue.heartbeat)
+        for (const auto& entry : queue.heartbeat->entries)
+            live.insert(entry.id);
+    for (auto it = m_origins.begin(); it != m_origins.end();)
+        it = live.contains(it.key()) ? std::next(it) : m_origins.erase(it);
+    saveOrigins();
+    heartbeatDone(true);
+}
+
+void BackendPlayback::heartbeatDone(bool ok)
+{
+    log::info(lcUi, "player.heartbeat_done", {"ok", ok});
+    m_heartbeatAsk.reset();
+    m_heartbeatRequest.release();
+    ++m_heartbeatTries;
+    m_heartbeatFailed = !ok;
+    update();
+}
+
+void BackendPlayback::cancelHeartbeat()
+{
+    if (!m_heartbeatAsk)
+        return;
+    log::info(lcUi, "player.heartbeat_canceled");
+    m_heartbeatAsk.reset();
+    m_heartbeatRequest.cancel();
+    update();
+}
+
+void BackendPlayback::rememberBefore()
+{
+    m_before.reset();
+    if (!m_session)
+        return;
+    const auto queue = m_session->queue();
+    if (!queue.heartbeat)
+        return;
+    // What leaving would bring back (PlaybackQueue::setModes), in its play order.
+    application::PlaybackQueue left;
+    if (!left.restore(queue) || !left.setModes(queue.heartbeat->order, queue.heartbeat->repeat))
+        return;
+    loadOrigins();
+    const auto entries = left.snapshot().entries;
+    QHash<QUuid, const domain::QueueEntry*> byId;
+    for (const auto& entry : entries)
+        byId.insert(entry.id, &entry);
+    Before before;
+    for (const QUuid& id : left.playOrder()) {
+        const auto* entry = byId.value(id);
+        if (!entry)
+            continue;
+        const bool voice = !entry->program.value.isEmpty();
+        before.keys.append(voice ? entry->program.value : entry->song.value);
+        before.origins.append(m_origins.value(id));
+        before.voices.append(voice);
+        if (id == left.snapshot().active)
+            before.index = int(before.keys.size() - 1);
+    }
+    m_before = std::move(before);
 }
 
 struct BackendLyrics::Job {

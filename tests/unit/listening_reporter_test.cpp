@@ -389,6 +389,60 @@ class ListeningReporterTest : public QObject
         QCOMPARE(h.plays().last().sourceId, ""); // no podcast known: none made up
         QVERIFY(h.plays().last().isValid());
     }
+    void aHeartbeatSongSendsItsAlg()
+    {
+        Harness h;
+        h.reporter.setOriginLookup([](QUuid) {
+            return std::optional(ListeningReporter::Origin{ListeningReportSource::List, "70"});
+        });
+        const PlayOrigin own{PlayOriginKind::Playlist, "70", "synthetic liked"};
+        const PlayOrigin mixed{PlayOriginKind::Heartbeat, "70", "synthetic liked"};
+        QVERIFY(h.session.replaceQueue({{"1"}}, 0, AudioQuality::Standard, {own}));
+        QVERIFY(h.session.enterHeartbeat(
+            {"70"}, {{{}, {"91"}, mixed, {}, "Alg_AI_all_1_synthetic"}, {{}, {"2"}, own}}, false));
+        h.state(PlaybackState::Playing, 4000);
+        QCOMPARE(h.starts().last().alg, "Alg_AI_all_1_synthetic");
+        QVERIFY(h.session.next());
+        const auto r = h.plays().last();
+        QCOMPARE(r.song.value, "91");
+        QCOMPARE(r.alg, "Alg_AI_all_1_synthetic");
+        QCOMPARE(r.sourceId, "70");
+        QVERIFY(r.isValid());
+        h.state(PlaybackState::Playing, 4000);
+        QVERIFY(h.session.next());
+        QVERIFY(h.plays().last().alg.isEmpty()); // none given: none sent
+        QCOMPARE(h.plays().last().mode, ListeningReportMode::Heartbeat);
+        QCOMPARE(h.plays().last().index, 1);
+    }
+    void theSongPlayingGetsItsHeartbeatAlg()
+    {
+        Harness h;
+        h.reporter.setLikedLookup([](const SongId& song) { return song.value == "1"; });
+        const PlayOrigin own{PlayOriginKind::Playlist, "70", "synthetic liked"};
+        QVERIFY(h.session.replaceQueue({{"1"}, {"2"}}, 0, AudioQuality::Standard, {own, own}));
+        QVERIFY(h.session.setModes(QueueOrder::Shuffle, QueueRepeat::One));
+        h.state(PlaybackState::Playing, 4000);
+        QCOMPARE(h.starts().last().mode, ListeningReportMode::Single);
+        QVERIFY(h.starts().last().liked);
+        // Into 心动模式 while it plays: it plays on, reported with the mark it got then.
+        QVERIFY(h.session.enterHeartbeat({"70"}, {{{}, {"2"}, own, {}, "Alg_AI_One_9:1_RH"}}, true,
+                                         AudioQuality::Standard, "Alg_AI_One_1_clicksong-RH"));
+        h.state(PlaybackState::Playing, 6000);
+        QVERIFY(h.session.next());
+        const auto r = h.plays().last();
+        QCOMPARE(r.song.value, "1");
+        QCOMPARE(r.alg, "Alg_AI_One_1_clicksong-RH");
+        QCOMPARE(r.mode, ListeningReportMode::Heartbeat);
+        QVERIFY(r.liked);
+        QVERIFY(r.isValid());
+        h.state(PlaybackState::Playing, 4000);
+        QVERIFY(h.session.setModes(QueueOrder::Sequential, QueueRepeat::All));
+        QVERIFY(h.session.next());
+        QCOMPARE(h.plays().last().song.value, "2");
+        QCOMPARE(h.plays().last().alg, "Alg_AI_One_9:1_RH");
+        QVERIFY(!h.plays().last().liked);
+        QCOMPARE(h.plays().last().mode, ListeningReportMode::Circulation); // left by then
+    }
 };
 QTEST_GUILESS_MAIN(ListeningReporterTest)
 #include "listening_reporter_test.moc"

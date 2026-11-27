@@ -149,6 +149,7 @@ class ListeningStatsTest : public QObject
   private slots:
     void upgradeKeepsVersion3Rows();
     void queueAndRecordsKeepTheirOrigin();
+    void queueKeepsHeartbeatState();
     void countedPlays();
     void rankingsAndShares();
     void periodsSlotsAndStreak();
@@ -250,6 +251,64 @@ void ListeningStatsTest::queueAndRecordsKeepTheirOrigin()
     auto fm = record(QStringLiteral("3"), at(3, 10), 40000, ListeningEnd::Ended, playlist,
                      ListeningMode::PersonalFm);
     QCOMPARE(fixture.save({fm}), StorageError::Query); // FM records have no origin
+}
+
+void ListeningStatsTest::queueKeepsHeartbeatState()
+{
+    QTemporaryDir dir;
+    Fixture fixture(dir.filePath(QStringLiteral("state.sqlite")));
+    QVERIFY(fixture.ok);
+    const PlayOrigin own{PlayOriginKind::Playlist, QStringLiteral("70"), QStringLiteral("红心")};
+    const PlayOrigin mixed{PlayOriginKind::Heartbeat, QStringLiteral("70"),
+                           QStringLiteral("红心·心动推荐")};
+    domain::QueueSnapshot queue;
+    const auto first = QUuid::createUuid();
+    queue.entries = {{first, {QStringLiteral("1")}, own},
+                     {QUuid::createUuid(),
+                      {QStringLiteral("91")},
+                      mixed,
+                      {},
+                      QStringLiteral("Alg_AI_One_1:2_mix")}};
+    queue.active = first;
+    queue.order = domain::QueueOrder::Sequential;
+    queue.repeat = domain::QueueRepeat::All;
+    queue.heartbeat = domain::HeartbeatState{
+        {QStringLiteral("70")},
+        {{first, {QStringLiteral("1")}, own}, {QUuid::createUuid(), {QStringLiteral("2")}, own}},
+        first,
+        domain::QueueOrder::Shuffle,
+        domain::QueueRepeat::One};
+    ListeningStateJob save;
+    save.operation = ListeningStateOperation::SaveQueue;
+    save.queue = queue;
+    QCOMPARE(fixture.run(save).error, StorageError::None);
+    ListeningStateJob load;
+    load.operation = ListeningStateOperation::LoadQueue;
+    auto restored = fixture.run(load);
+    QVERIFY(restored.queue);
+    QCOMPARE(restored.queue->entries.size(), 2);
+    QCOMPARE(restored.queue->entries[1].origin, mixed);
+    QCOMPARE(restored.queue->entries[1].alg, QStringLiteral("Alg_AI_One_1:2_mix"));
+    QVERIFY(restored.queue->entries[0].alg.isEmpty());
+    QVERIFY(restored.queue->heartbeat);
+    QCOMPARE(restored.queue->heartbeat->playlist.value, QStringLiteral("70"));
+    QCOMPARE(restored.queue->heartbeat->entries.size(), 2);
+    QCOMPARE(restored.queue->heartbeat->entries[0].id, first);
+    QCOMPARE(restored.queue->heartbeat->active, first);
+    QCOMPARE(restored.queue->heartbeat->order, domain::QueueOrder::Shuffle);
+    QCOMPARE(restored.queue->heartbeat->repeat, domain::QueueRepeat::One);
+    // Out of the mode: nothing of it is left.
+    save.queue.heartbeat.reset();
+    QCOMPARE(fixture.run(save).error, StorageError::None);
+    restored = fixture.run(load);
+    QVERIFY(restored.queue);
+    QVERIFY(!restored.queue->heartbeat);
+    QCOMPARE(fixture.scalar(QStringLiteral("SELECT count(*) FROM playback_queue_before")),
+             QStringLiteral("0"));
+    // A mix that is not in order is not saved.
+    save.queue = queue;
+    save.queue.order = domain::QueueOrder::Shuffle;
+    QCOMPARE(fixture.run(save).error, StorageError::Query);
 }
 
 void ListeningStatsTest::countedPlays()

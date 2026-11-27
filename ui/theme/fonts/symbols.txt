@@ -10,6 +10,7 @@ skip_previous
 fast_forward
 fast_rewind
 shuffle
+ecg_heart
 repeat
 repeat_one
 queue_music
@@ -49,6 +50,7 @@ trending_up
 podcasts
 mic
 history
+restart_alt
 download
 download_done
 cloud

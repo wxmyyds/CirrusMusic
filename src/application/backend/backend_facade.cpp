@@ -381,6 +381,11 @@ quint64 BackendFacade::dailyRecommendationHistorySongs(domain::DailyHistorySongs
 }
 quint64 BackendFacade::personalFmBatch() { return submitMusic(domain::PersonalFmQuery{}); }
 
+quint64 BackendFacade::heartbeatList(domain::HeartbeatQuery query)
+{
+    return submitMusic(std::move(query));
+}
+
 quint64 BackendFacade::myPlaylists(domain::CatalogPage page)
 {
     return submitMusic(domain::MyPlaylistsQuery{m_snapshot.accountId, page});

@@ -71,31 +71,6 @@ Item {
     readonly property Item seekItem: tier > 0 ? seek : null
     property bool flying: false
 
-    // The play mode, one button cycling as the player page's does
-    // (ui/player/PlayerControls.qml): 0 list repeat, 1 repeat one, 2 shuffle, 3 in order.
-    readonly property int mode: App.player.repeat === Playback.RepeatOne ? 1
-                              : App.player.order === Playback.Shuffle ? 2
-                              : App.player.repeat === Playback.RepeatAll ? 0 : 3
-
-    function setMode(next: int): void {
-        switch (next) {
-        case 0:
-            App.player.setOrder(Playback.Sequential);
-            App.player.setRepeat(Playback.RepeatAll);
-            break;
-        case 1:
-            App.player.setRepeat(Playback.RepeatOne);
-            break;
-        case 2:
-            App.player.setOrder(Playback.Shuffle);
-            App.player.setRepeat(Playback.RepeatAll);
-            break;
-        default:
-            App.player.setOrder(Playback.Sequential);
-            App.player.setRepeat(Playback.RepeatOff);
-        }
-    }
-
     // Opens the player page (UI phase 4).
     signal openRequested
     // The player page with its queue panel.
@@ -447,14 +422,26 @@ Item {
                 anchors.rightMargin: 8
                 anchors.verticalCenter: parent.verticalCenter
 
+                // The play mode, one button cycling as the player page's does
+                // (App.player.playMode, ui/player/PlayerControls.qml).
                 IconButton {
+                    id: modeButton
                     visible: root.showExtras && root.modeOn
                     tint: root.content
                     glyph: [Symbols.repeat, Symbols.repeat_one, Symbols.shuffle,
-                        Symbols.playlist_play][root.mode]
+                        Symbols.playlist_play, Symbols.ecg_heart][App.player.playMode]
                     text: [qsTr("列表循环"), qsTr("单曲循环"), qsTr("随机播放"),
-                        qsTr("顺序播放")][root.mode]
-                    onClicked: root.setMode((root.mode + 1) % 4)
+                        qsTr("顺序播放"), qsTr("心动模式")][App.player.playMode]
+                    onClicked: App.player.cyclePlayMode()
+
+                    CircularProgress {
+                        anchors.centerIn: parent
+                        width: 34
+                        height: width
+                        thickness: 2
+                        indeterminate: true
+                        visible: App.player.heartbeatLoading
+                    }
                 }
                 MiniVolume {
                     visible: root.showExtras && root.volumeOn

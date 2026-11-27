@@ -1,6 +1,7 @@
 #pragma once
 #include "domain/music/catalog_types.h"
 #include "domain/music/podcast_types.h"
+#include "domain/playback/listening_types.h"
 #include "logging/log.h"
 #include <QUuid>
 
@@ -68,6 +69,25 @@ inline QString endName(ListeningReportEnd end)
     }
     return {};
 }
+// The play mode as the Android client names it in its logs (`mode`, APK om0/m2.f): list
+// repeat, shuffle, repeat one, 心动模式. It has no "in order, then stop": that is logged as
+// list repeat.
+enum class ListeningReportMode { Circulation, Random, Single, Heartbeat };
+CIRRUS_LOG_ENUM(ListeningReportMode, Circulation, Random, Single, Heartbeat)
+inline QString modeName(ListeningReportMode mode)
+{
+    switch (mode) {
+    case ListeningReportMode::Circulation:
+        return QStringLiteral("circulation");
+    case ListeningReportMode::Random:
+        return QStringLiteral("ai_random");
+    case ListeningReportMode::Single:
+        return QStringLiteral("single");
+    case ListeningReportMode::Heartbeat:
+        return QStringLiteral("ai");
+    }
+    return {};
+}
 // A source id for `source`: a provider id, search keywords (printable, at most 256
 // characters), or anything (possibly empty) for the daily recommendations, whose value
 // the web client doesn't show.
@@ -99,11 +119,22 @@ struct ListeningReport {
     // A podcast program played through `song` (its track), reported as the program; its
     // source is DjRadio. Empty for songs.
     ProgramId program;
+    // The song's 心动模式 mark (QueueEntry::alg), sent as the official app does; empty: none.
+    QString alg;
+    // As the official app fills them (vn0/h1.java): whether the song is one of the account's
+    // liked songs (`is_heart`), the play mode (`mode`) and its place in the play order
+    // (`songInd`). Songs only.
+    bool liked = false;
+    ListeningReportMode mode = ListeningReportMode::Circulation;
+    qint64 index = 0;
     [[nodiscard]] bool isValid() const
     {
         if (action == ListeningReportAction::ActiveClient)
-            return !eventId.isNull() && playedSeconds == 0;
-        if (durationSeconds < 0 || durationSeconds > 86400 || quality.size() > 16)
+            return !eventId.isNull() && playedSeconds == 0 && alg.isEmpty();
+        if (durationSeconds < 0 || durationSeconds > 86400 || quality.size() > 16 ||
+            !validQueueAlg(alg) || (!alg.isEmpty() && !program.value.isEmpty()) || index < 0 ||
+            index >= 100000 || mode < ListeningReportMode::Circulation ||
+            mode > ListeningReportMode::Heartbeat)
             return false;
         for (const QChar c : quality)
             if (!c.isLetterOrNumber())

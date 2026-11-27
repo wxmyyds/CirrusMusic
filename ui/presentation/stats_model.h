@@ -113,7 +113,18 @@ class StatsPageModel : public LoadableModel, public QQmlParserStatus
   public:
     enum Range { Week, Month, Year, AllTime };
     Q_ENUM(Range)
-    enum OriginKind { Fm, Playlist, Album, Artist, Daily, Search, Recent, Ranking, Other };
+    enum OriginKind {
+        Fm,
+        Playlist,
+        Album,
+        Artist,
+        Daily,
+        Search,
+        Recent,
+        Ranking,
+        Other,
+        Heartbeat
+    };
     Q_ENUM(OriginKind)
 
     explicit StatsPageModel(QObject* parent = nullptr);

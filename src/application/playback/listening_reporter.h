@@ -32,6 +32,8 @@ class ListeningReporter final : public QObject
         QString id;
     };
     using OriginLookup = std::function<std::optional<Origin>(QUuid queueEntry)>;
+    // Whether a song is one of the account's liked songs (the reports' `is_heart`).
+    using LikedLookup = std::function<bool(const domain::SongId& song)>;
     static constexpr qint64 MinimumMs = 3000;
     static constexpr int DefaultPauseTimeoutMs = 5 * 60 * 1000;
 
@@ -39,6 +41,7 @@ class ListeningReporter final : public QObject
     ~ListeningReporter() override;
 
     void setOriginLookup(OriginLookup lookup) { m_lookup = std::move(lookup); }
+    void setLikedLookup(LikedLookup lookup) { m_liked = std::move(lookup); }
     void setPauseTimeout(int ms) { m_pause.setInterval(ms); }
     // The local time (tests); the day for ActiveClient begins at 6:00 of it.
     void setClock(std::function<QDateTime()> clock) { m_clock = std::move(clock); }
@@ -66,6 +69,7 @@ class ListeningReporter final : public QObject
     BackendFacade& m_facade;
     ListeningSession& m_session;
     OriginLookup m_lookup;
+    LikedLookup m_liked;
     std::optional<domain::StoredListeningRecord> m_active; // the load playing, its latest total
     QSet<QUuid> m_reported;                                // record ids already settled
     QList<QUuid> m_reportedOrder;                          // bounds m_reported

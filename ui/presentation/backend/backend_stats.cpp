@@ -53,6 +53,9 @@ StatsOrigin originOf(const domain::StatsOrigin& row)
     case Kind::Ranking:
         origin.kind = StatsOrigin::Ranking;
         break;
+    case Kind::Heartbeat:
+        origin.kind = StatsOrigin::Heartbeat;
+        break;
     default:
         origin.kind = StatsOrigin::Other;
     }

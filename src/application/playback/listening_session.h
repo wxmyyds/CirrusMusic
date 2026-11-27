@@ -41,6 +41,14 @@ class ListeningSession final : public QObject
                       domain::AudioQuality quality = domain::AudioQuality::Standard,
                       const QList<domain::PlayOrigin>& origins = {},
                       const QList<domain::ProgramId>& programs = {});
+    // 心动模式 (docs/tasks/heartbeat-mode.md §7.3, PlaybackQueue::enterHeartbeat): the queue
+    // becomes `mix`. `keepPlaying`: the active song stays first and goes on undisturbed;
+    // else the mix's first plays. Queue mode only; leaving it is setModes().
+    // `activeAlg`: the playing song's mark from now on (keepPlaying).
+    bool enterHeartbeat(const domain::PlaylistId& playlist, const QList<domain::QueueEntry>& mix,
+                        bool keepPlaying,
+                        domain::AudioQuality quality = domain::AudioQuality::Standard,
+                        const QString& activeAlg = {});
     // Storage composition only. Never load/play/query during restoration. A Personal FM
     // (`mode`) comes back as its songs so far, shown as queue() until resumeFm() plays it.
     bool restoreQueue(const domain::QueueSnapshot& saved, domain::SessionSnapshot expected,

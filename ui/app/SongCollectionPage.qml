@@ -169,8 +169,13 @@ Item {
         field.selectAll();
     }
 
+    // The songs as the page shows them (sorted, found), what playAll() plays.
+    function shownKeys(): list<string> {
+        return playSource ? playSource.keys() : sortedModel.keys();
+    }
+
     function playAll(): void {
-        const keys = playSource ? playSource.keys() : sortedModel.keys();
+        const keys = shownKeys();
         if (keys.length === 0)
             return;
         if (playsVoices)
@@ -511,6 +516,7 @@ Item {
         onCommentsRequested: (key, title, artistText, coverKey) =>
                              page.shell.openSongComments(key, title, artistText, coverKey)
         // Typing on the table goes on in the find field.
+        typingFinds: page.findable && page.hasSongs
         onTyped: text => {
             const field = page.compactProgress > 0.5 ? compactFind : page.headerFind;
             if (!field)

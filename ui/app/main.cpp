@@ -1,12 +1,14 @@
 #include "app.h"
 #include "app_icon.h"
 #include "app_settings.h"
+#include "application/playback/listening_reporter.h"
 #include "backend_host.h"
 #include "backend_sources.h"
 #include "cirrus_commit.h"
 #include "desktop.h"
 #include "diagnostics.h"
 #include "gpu_preference.h"
+#include "library.h"
 #include "logging/log.h"
 #include "logging/logger.h"
 #include "memory.h"
@@ -208,6 +210,10 @@ int main(int argc, char* argv[])
     // What is playing, for desktop lyrics and status bars, while the user lets it (Linux).
     backend.nowPlaying().follow(presentation->settings(), presentation->player(),
                                 presentation->lyrics());
+    // The reports say whether a song is liked, as the official app does (is_heart).
+    backend.reporter().setLikedLookup([presentation](const cirrus::domain::SongId& song) {
+        return presentation->library()->isLiked(song.value);
+    });
     QObject::connect(
         &backend.nowPlaying(), &cirrus::ui::NowPlayingExport::failed, presentation, [presentation] {
             emit presentation->notice(cirrus::ui::noticed(

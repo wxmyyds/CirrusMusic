@@ -3,6 +3,7 @@ import QtQuick
 import QtQuick.Templates as T
 import Cirrus.Theme
 import Cirrus.Controls
+import Cirrus.Presentation
 
 // The one search input of the app, in the title bar row (docs/ui/pages/shell.md §3,
 // search.md §2.1). Works like a browser's address bar: the keyboard focus stays in
@@ -261,7 +262,7 @@ SearchBar {
         x: field.width - width - 16
         anchors.verticalCenter: parent.verticalCenter
         visible: !field.activeFocus && field.length === 0
-        text: "Ctrl+K"
+        text: App.shortcuts.hints.search ?? ""
         color: Theme.color.outline
         font: Theme.type.labelMedium.font
     }

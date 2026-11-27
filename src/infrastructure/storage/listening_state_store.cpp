@@ -38,7 +38,7 @@ std::optional<domain::PlayOrigin> storedOrigin(const QVariant& kind, const QVari
                                                const QVariant& name)
 {
     const auto value = storedInteger(kind);
-    if (!value || *value < 0 || *value > static_cast<int>(domain::PlayOriginKind::Podcast))
+    if (!value || *value < 0 || *value > static_cast<int>(domain::PlayOriginKind::Heartbeat))
         return std::nullopt;
     domain::PlayOrigin origin{static_cast<domain::PlayOriginKind>(*value), id.toString(),
                               name.toString()};
@@ -59,9 +59,10 @@ StorageResult<ListeningStateResult> executeQueue(QSqlDatabase& db, const Listeni
         return fail(StorageError::Query);
     if (job.operation == ListeningStateOperation::LoadQueue) {
         QSqlQuery header(db);
-        header.prepare(
-            QStringLiteral("SELECT active, queue_order, queue_repeat, mode FROM playback_queue "
-                           "WHERE account_id = ?"));
+        header.prepare(QStringLiteral(
+            "SELECT active, queue_order, queue_repeat, mode, heartbeat_playlist, "
+            "heartbeat_active, heartbeat_order, heartbeat_repeat FROM playback_queue "
+            "WHERE account_id = ?"));
         header.addBindValue(job.accountId);
         if (!header.exec())
             return fail(StorageError::Query);
@@ -78,25 +79,54 @@ StorageResult<ListeningStateResult> executeQueue(QSqlDatabase& db, const Listeni
                                     *active,
                                     static_cast<domain::QueueOrder>(*order),
                                     static_cast<domain::QueueRepeat>(*repeat)};
-        QSqlQuery entries(db);
-        entries.prepare(QStringLiteral(
-            "SELECT ordinal, entry_id, song_id, origin_kind, origin_id, origin_name, "
-            "program_id FROM playback_queue_entry WHERE account_id = ? ORDER BY "
-            "ordinal LIMIT 10001"));
-        entries.addBindValue(job.accountId);
-        if (!entries.exec())
-            return fail(StorageError::Query);
-        while (entries.next()) {
-            const auto id = storedUuid(entries.value(1).toString(), false);
-            const auto ordinal = storedInteger(entries.value(0));
-            auto origin = storedOrigin(entries.value(3), entries.value(4), entries.value(5));
-            if (!id || !ordinal || !origin || *ordinal != queue.entries.size() ||
-                queue.entries.size() == domain::MaximumSavedQueueEntries)
+        // 心动模式's queue before it, when in it (docs/tasks/heartbeat-mode.md §7.4).
+        const auto heartbeatPlaylist = header.value(4).toString();
+        if (!heartbeatPlaylist.isEmpty()) {
+            const auto beforeActive = storedUuid(header.value(5).toString(), true);
+            const auto beforeOrder = storedInteger(header.value(6));
+            const auto beforeRepeat = storedInteger(header.value(7));
+            if (!beforeActive || !beforeOrder || *beforeOrder < 0 || *beforeOrder > 1 ||
+                !beforeRepeat || *beforeRepeat < 0 || *beforeRepeat > 2)
                 return fail(StorageError::Corrupt);
-            queue.entries.append({*id,
-                                  {entries.value(2).toString()},
-                                  std::move(*origin),
-                                  {entries.value(6).toString()}});
+            queue.heartbeat =
+                domain::HeartbeatState{{heartbeatPlaylist},
+                                       {},
+                                       *beforeActive,
+                                       static_cast<domain::QueueOrder>(*beforeOrder),
+                                       static_cast<domain::QueueRepeat>(*beforeRepeat)};
+        }
+        const auto load = [&](const QString& table, QList<domain::QueueEntry>& into) {
+            QSqlQuery entries(db);
+            entries.prepare(QStringLiteral("SELECT ordinal, entry_id, song_id, origin_kind, "
+                                           "origin_id, origin_name, program_id, alg FROM %1 "
+                                           "WHERE account_id = ? ORDER BY ordinal LIMIT 10001")
+                                .arg(table));
+            entries.addBindValue(job.accountId);
+            if (!entries.exec())
+                return StorageError::Query;
+            while (entries.next()) {
+                const auto id = storedUuid(entries.value(1).toString(), false);
+                const auto ordinal = storedInteger(entries.value(0));
+                auto origin = storedOrigin(entries.value(3), entries.value(4), entries.value(5));
+                if (!id || !ordinal || !origin || *ordinal != into.size() ||
+                    into.size() == domain::MaximumSavedQueueEntries)
+                    return StorageError::Corrupt;
+                into.append({*id,
+                             {entries.value(2).toString()},
+                             std::move(*origin),
+                             {entries.value(6).toString()},
+                             entries.value(7).toString()});
+            }
+            return StorageError::None;
+        };
+        if (const auto error = load(QStringLiteral("playback_queue_entry"), queue.entries);
+            error != StorageError::None)
+            return fail(error);
+        if (queue.heartbeat) {
+            if (const auto error =
+                    load(QStringLiteral("playback_queue_before"), queue.heartbeat->entries);
+                error != StorageError::None)
+                return fail(error);
         }
         if (!domain::validSavedQueue(queue))
             return fail(StorageError::Corrupt);
@@ -112,42 +142,63 @@ StorageResult<ListeningStateResult> executeQueue(QSqlDatabase& db, const Listeni
         db.rollback();
         return fail(StorageError::Query);
     };
-    QSqlQuery erase(db);
-    erase.prepare(QStringLiteral("DELETE FROM playback_queue_entry WHERE account_id = ?"));
-    erase.addBindValue(job.accountId);
-    if (!erase.exec())
-        return rollback();
+    for (const auto* table : {"playback_queue_entry", "playback_queue_before"}) {
+        QSqlQuery erase(db);
+        erase.prepare(
+            QStringLiteral("DELETE FROM %1 WHERE account_id = ?").arg(QLatin1String(table)));
+        erase.addBindValue(job.accountId);
+        if (!erase.exec())
+            return rollback();
+    }
+    const auto& heartbeat = job.queue.heartbeat;
     QSqlQuery header(db);
-    header.prepare(
-        QStringLiteral("INSERT INTO playback_queue(account_id, active, queue_order, "
-                       "queue_repeat, mode) VALUES (?, ?, ?, ?, ?) ON CONFLICT(account_id) DO "
-                       "UPDATE SET active=excluded.active, queue_order=excluded.queue_order, "
-                       "queue_repeat=excluded.queue_repeat, mode=excluded.mode"));
+    header.prepare(QStringLiteral(
+        "INSERT INTO playback_queue(account_id, active, queue_order, queue_repeat, mode, "
+        "heartbeat_playlist, heartbeat_active, heartbeat_order, heartbeat_repeat) VALUES (?, ?, "
+        "?, ?, ?, ?, ?, ?, ?) ON CONFLICT(account_id) DO UPDATE SET active=excluded.active, "
+        "queue_order=excluded.queue_order, queue_repeat=excluded.queue_repeat, "
+        "mode=excluded.mode, heartbeat_playlist=excluded.heartbeat_playlist, "
+        "heartbeat_active=excluded.heartbeat_active, heartbeat_order=excluded.heartbeat_order, "
+        "heartbeat_repeat=excluded.heartbeat_repeat"));
     header.addBindValue(job.accountId);
     header.addBindValue(uuidText(job.queue.active));
     header.addBindValue(static_cast<int>(job.queue.order));
     header.addBindValue(static_cast<int>(job.queue.repeat));
     header.addBindValue(job.mode == domain::ListeningMode::PersonalFm ? 1 : 0);
+    header.addBindValue(heartbeat ? heartbeat->playlist.value : QStringLiteral(""));
+    header.addBindValue(heartbeat ? uuidText(heartbeat->active) : uuidText({}));
+    header.addBindValue(heartbeat ? static_cast<int>(heartbeat->order) : 0);
+    header.addBindValue(heartbeat ? static_cast<int>(heartbeat->repeat) : 0);
     if (!header.exec())
         return rollback();
-    QSqlQuery insert(db);
-    insert.prepare(QStringLiteral("INSERT INTO playback_queue_entry(account_id, ordinal, entry_id, "
-                                  "song_id, origin_kind, origin_id, origin_name, program_id) "
-                                  "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"));
-    for (qsizetype index = 0; index < job.queue.entries.size(); ++index) {
-        const auto& entry = job.queue.entries[index];
-        insert.bindValue(0, job.accountId);
-        insert.bindValue(1, index);
-        insert.bindValue(2, uuidText(entry.id));
-        insert.bindValue(3, entry.song.value);
-        insert.bindValue(4, static_cast<int>(entry.origin.kind));
-        insert.bindValue(5, entry.origin.id.isEmpty() ? QStringLiteral("") : entry.origin.id);
-        insert.bindValue(6, entry.origin.name.isEmpty() ? QStringLiteral("") : entry.origin.name);
-        insert.bindValue(7,
-                         entry.program.value.isEmpty() ? QStringLiteral("") : entry.program.value);
-        if (!insert.exec())
-            return rollback();
-    }
+    const auto save = [&](const QString& table, const QList<domain::QueueEntry>& entries) {
+        QSqlQuery insert(db);
+        insert.prepare(QStringLiteral("INSERT INTO %1(account_id, ordinal, entry_id, song_id, "
+                                      "origin_kind, origin_id, origin_name, program_id, alg) "
+                                      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                           .arg(table));
+        for (qsizetype index = 0; index < entries.size(); ++index) {
+            const auto& entry = entries[index];
+            const auto text = [](const QString& value) {
+                return value.isEmpty() ? QStringLiteral("") : value;
+            };
+            insert.bindValue(0, job.accountId);
+            insert.bindValue(1, index);
+            insert.bindValue(2, uuidText(entry.id));
+            insert.bindValue(3, entry.song.value);
+            insert.bindValue(4, static_cast<int>(entry.origin.kind));
+            insert.bindValue(5, text(entry.origin.id));
+            insert.bindValue(6, text(entry.origin.name));
+            insert.bindValue(7, text(entry.program.value));
+            insert.bindValue(8, text(entry.alg));
+            if (!insert.exec())
+                return false;
+        }
+        return true;
+    };
+    if (!save(QStringLiteral("playback_queue_entry"), job.queue.entries) ||
+        (heartbeat && !save(QStringLiteral("playback_queue_before"), heartbeat->entries)))
+        return rollback();
     if (!db.commit())
         return rollback();
     return {StorageError::None, {job.id, StorageError::None, {}}};
@@ -914,6 +965,28 @@ QList<Migration> ListeningStateStore::migrations()
         {6,
          {QStringLiteral("ALTER TABLE playback_queue_entry ADD COLUMN program_id TEXT "
                          "NOT NULL DEFAULT ''")}});
+    // v7: 心动模式 (docs/tasks/heartbeat-mode.md §7): each entry's alg, and the queue before
+    // the mode with its modes (heartbeat_playlist empty: not in it).
+    migrations.append(
+        {7,
+         {QStringLiteral(
+              "ALTER TABLE playback_queue_entry ADD COLUMN alg TEXT NOT NULL DEFAULT ''"),
+          QStringLiteral("ALTER TABLE playback_queue ADD COLUMN heartbeat_playlist TEXT NOT "
+                         "NULL DEFAULT ''"),
+          QStringLiteral(
+              "ALTER TABLE playback_queue ADD COLUMN heartbeat_active TEXT NOT NULL DEFAULT ''"),
+          QStringLiteral("ALTER TABLE playback_queue ADD COLUMN heartbeat_order INTEGER NOT "
+                         "NULL DEFAULT 0 CHECK(heartbeat_order IN (0,1))"),
+          QStringLiteral("ALTER TABLE playback_queue ADD COLUMN heartbeat_repeat INTEGER NOT "
+                         "NULL DEFAULT 0 CHECK(heartbeat_repeat IN (0,1,2))"),
+          QStringLiteral(
+              "CREATE TABLE playback_queue_before (account_id TEXT NOT NULL REFERENCES "
+              "playback_queue(account_id) ON DELETE CASCADE, ordinal INTEGER NOT NULL "
+              "CHECK(ordinal BETWEEN 0 AND 9999), entry_id TEXT NOT NULL, song_id TEXT NOT NULL, "
+              "origin_kind INTEGER NOT NULL DEFAULT 0 CHECK(origin_kind BETWEEN 0 AND 255), "
+              "origin_id TEXT NOT NULL DEFAULT '', origin_name TEXT NOT NULL DEFAULT '', "
+              "program_id TEXT NOT NULL DEFAULT '', alg TEXT NOT NULL DEFAULT '', PRIMARY "
+              "KEY(account_id, ordinal), UNIQUE(account_id, entry_id))")}});
     return migrations;
 }
 ListeningStateStore::ListeningStateStore(DatabaseWorker& database, QObject* parent)

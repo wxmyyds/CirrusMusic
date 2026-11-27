@@ -130,7 +130,9 @@ enum class ApiOperation {
     UserFans,
     UserRanking,
     UserFollow,
-    UserUnfollow
+    UserUnfollow,
+    // 心动模式 (docs/api/heartbeat-mode.md).
+    HeartbeatList
 };
 
 struct ApiOperationContract {

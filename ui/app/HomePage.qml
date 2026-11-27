@@ -87,7 +87,7 @@ Item {
     }
 
     Shortcut {
-        sequences: [StandardKey.Refresh]
+        sequences: App.shortcuts.keys.refresh
         enabled: page.visible
         onActivated: page.refresh()
     }

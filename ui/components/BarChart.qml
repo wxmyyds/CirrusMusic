@@ -63,6 +63,9 @@ FocusScope {
     }
     Keys.onLeftPressed: move(currentIndex - 1)
     Keys.onRightPressed: move(currentIndex + 1)
+    // Space is the chart's, before a single-key shortcut.
+    Keys.onShortcutOverride: event => event.accepted = event.key === Qt.Key_Space
+        && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))
     Keys.onPressed: event => {
         if (event.key === Qt.Key_Home) {
             move(0);
