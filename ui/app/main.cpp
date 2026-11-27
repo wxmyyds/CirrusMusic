@@ -8,6 +8,7 @@
 #include "desktop.h"
 #include "diagnostics.h"
 #include "gpu_preference.h"
+#include "infrastructure/runtime/backend_runtime.h"
 #include "library.h"
 #include "logging/log.h"
 #include "logging/logger.h"
@@ -210,6 +211,27 @@ int main(int argc, char* argv[])
     // What is playing, for desktop lyrics and status bars, while the user lets it (Linux).
     backend.nowPlaying().follow(presentation->settings(), presentation->player(),
                                 presentation->lyrics());
+    // A backend that did not start is told as such (App.startupProblem), not as offline.
+    QObject::connect(&backend.runtime().facade(), &cirrus::application::BackendFacade::started,
+                     presentation, [presentation](cirrus::application::StartupError error) {
+                         using Error = cirrus::application::StartupError;
+                         using Startup = cirrus::ui::App::Startup;
+                         switch (error) {
+                         case Error::None:
+                         case Error::GuestBootstrap:
+                             return;
+                         case Error::NewerStorage:
+                             return presentation->setStartupProblem(Startup::NewerData);
+                         case Error::StorageFull:
+                             return presentation->setStartupProblem(Startup::DiskFull);
+                         case Error::StorageLocked:
+                             return presentation->setStartupProblem(Startup::DataInUse);
+                         case Error::Storage:
+                             return presentation->setStartupProblem(Startup::DataBroken);
+                         case Error::Configuration:
+                             return presentation->setStartupProblem(Startup::Failed);
+                         }
+                     });
     // The reports say whether a song is liked, as the official app does (is_heart).
     backend.reporter().setLikedLookup([presentation](const cirrus::domain::SongId& song) {
         return presentation->library()->isLiked(song.value);

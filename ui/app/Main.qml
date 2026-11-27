@@ -257,6 +257,22 @@ AppWindow {
         }
     }
 
+    // The backend did not start (App.startupProblem): said once, plainly, instead of
+    // every page looking offline.
+    Dialog {
+        id: startupDialog
+        title: qsTr("Cirrus 没能启动")
+        supportingText: App.startupProblem
+        acceptText: qsTr("知道了")
+    }
+    Connections {
+        target: App
+        function onStartupProblemChanged() {
+            if (App.startupProblem !== "")
+                startupDialog.open();
+        }
+    }
+
     // A newer release found on its own (docs/tasks/update-check.md §4).
     Connections {
         target: App.updates
