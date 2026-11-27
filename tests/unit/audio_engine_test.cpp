@@ -114,11 +114,23 @@ class AudioEngineTest : public QObject
 
     void init()
     {
-        const bool hasOutput = !QMediaDevices::defaultAudioOutput().isNull();
+        const auto output = QMediaDevices::defaultAudioOutput();
+        const bool hasOutput = !output.isNull();
 #ifdef Q_OS_LINUX
         QVERIFY2(hasOutput, "Private PulseAudio output disappeared");
 #else
         QVERIFY2(hasOutput, "Native audio tests require a default system audio output device");
+#endif
+#ifdef Q_OS_WIN
+        const auto expectedEndpoint = qgetenv("CIRRUS_TEST_AUDIO_ENDPOINT_ID");
+        if (qEnvironmentVariableIsSet("GITHUB_ACTIONS"))
+            QVERIFY2(!expectedEndpoint.isEmpty(), "CI must provision the trusted native audio endpoint");
+        if (!expectedEndpoint.isEmpty()) {
+            qInfo() << "Qt default audio output:" << output.id() << output.description();
+            QVERIFY2(output.isDefault(), "Qt must identify the system default output");
+            QCOMPARE(output.id().toLower(), expectedEndpoint.toLower());
+        }
+#endif
 #endif
         m_dir = std::make_unique<QTemporaryDir>(QCoreApplication::applicationDirPath() +
                                                 QStringLiteral("/audio-engine-XXXXXX"));

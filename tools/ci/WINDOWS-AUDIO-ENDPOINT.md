@@ -1,136 +1,82 @@
-# Windows 原生音频测试端点：阻塞记录
+# Windows 原生音频测试端点
 
-调查日期：2026-11-27。基线：`fix/agents-audit-remediation` /
-`d4defd0b8020ff9bab35d53fcb9e5ceda0bac3d9`。
+Windows 测试 job 在依赖准备和编译之前运行 [`prepare-windows-audio.ps1`](prepare-windows-audio.ps1)，只在临时 Actions runner 安装固定版本的系统虚拟输出端点。生产构建和产品安装器不调用此脚本，驱动不进入产品包或 Release artifact。
 
-## 结论与本次改动
+## 固定来源与信任边界
 
-**当前不能把官方 VB-CABLE 接入视为已经可用的 Windows CI 修复。**
-官网下载包具有 AMD64、ARM64 驱动和签名结构，但官网、包内 README 和官方手册均要求安装后重启。
-本次没有取得当前原生 Windows runner 上免重启安装、签名信任验证、端点枚举及真实 Qt 消费的证据。
-按本任务“不得中断 runner 重启，无法证明则记录阻塞”的约束，停止安装链路实施。
-这不是对所有可能的免重启安装方式作出技术上不可能的判断。
+- 官方版本：**VB-CABLE Pack46**。
+- 下载地址：`https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack46.zip`。
+- 锁定 SHA-256：`bc44e8974191a5a2427d6c979e2dab08dbb09925f3f435dfa2f0ba3e45b6eb90`；2026-11-27 实测大小 `1324680` bytes。
+- 包含 AMD64 与 ARM64 SYS；INF `vbMmeCable64_win10.inf` 的驱动版本为 `10/31/2026,3.5.2.0`，硬件 ID 为 `VBAudioVACWDM`。
+- 官方 setup 为 AMD64 `VBCABLE_Setup_x64.exe`；包没有独立 ARM64 setup EXE。ARM64 runner 依赖 Windows 的 setup 执行支持，但驱动、PowerShell、MSVC、Qt 和测试进程均要求原生 ARM64。
 
-本次只将 `tests/unit/audio_engine_test.cpp` 中设备缺失的 `QSKIP` 改为失败断言；
-保留 Linux 私有 PulseAudio 检查及所有既有用例断言。
-这会暴露缺少输出设备的原生测试环境，不能使尚无端点的 Windows job 通过。
-没有修改音频核心、`.github/workflows/ci.yml`、生产打包或安装器；
-没有加入未验证的安装命令、PowerShell 脚本、fake Qt sink、重启绕过或新的 skip。
-由于没有新增 PowerShell 脚本，不存在可报告的新脚本语法或 PSScriptAnalyzer 验证结果。
+本次下载的静态清单（hash 是实测值，不是厂商提供的签名替代物）：
 
-## 旧 CI 的实际证据
-
-读取的 run：[45935196737](https://github.com/wxmyyds/CirrusMusic/actions/runs/45935196737)，
-创建时间 `2026-11-27T03:36:54Z`。API 返回的实际 `headSha` 为
-`a76fa303bd8122659c35d22106f973ac633c8607`，分支为 `sync/upstream-master-4378ed0`，
-不是本次基线 SHA。不过两者的 Git tree 均为
-`dc23d31118942510af6d5584bdab2f68e29ea0ea`，`git diff` 无差异。
-因此只能称为基线同树的历史结果，不能当作本次新提交的验收。
-
-| 架构 | Job ID | 日志中的 OS / image | Image version | AudioEngineTest 实际汇总 |
-| --- | --- | --- | --- | --- |
-| x86_64 | `140296826367` | Windows Server 2022 `10.0.20348` / `windows-2022` | `20261123.376.1` | 2 passed, 0 failed, **17 skipped** |
-| arm64 | `140296826340` | Windows 11 Enterprise `10.0.26200` / `windows-11-vs2026-arm64` | `20261115.219.1` | 2 passed, 0 failed, **17 skipped** |
-
-分别下载并读取了下列测试报告 artifact 中的 `Testing/Temporary/LastTest.log`；
-每个报告均有 17 条 `AudioEngineTest` 的 `no audio output device` 跳过信息。
-也读取了 `junit.xml`，没有以顶层 job success 代替用例结果。
-
-| Artifact | ID | 下载外层 ZIP 的实测 SHA-256（与 API digest 一致） |
-| --- | --- | --- |
-| `test-results-Windows-x86_64` | `15171298778` | `83c6ca200270a08066c8b3563f966a3f8ab27cf74475a2b3ca832be892cf23ac` |
-| `test-results-Windows-arm64` | `15172309220` | `1f4f238c327fdc9a2188a52e4addfec701b975abb759cb5caaaebbfd47dd565d` |
-
-以上 image 信息来自该次 run 的日志，不保证未来重新调度时仍使用同一 image 版本。
-
-## 官方候选包与本次实测清单
-
-本次读取的[官方下载页](https://vb-audio.com/Cable/)推荐的是 **Pack46**，标注
-`NOV 2026 / XP to WIN11 32/64 bits/Arm64`，并非旧的 Pack45。
-固定版本下载地址：
-
-`https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack46.zip`
-
-2026-11-27 通过 HTTPS 实际下载，未执行其中任何程序：
-
-- 文件大小：`1324680` bytes。
-- ZIP SHA-256：`bc44e8974191a5a2427d6c979e2dab08dbb09925f3f435dfa2f0ba3e45b6eb90`。
-- HTTP `Last-Modified`：`Sat, 31 Oct 2026 10:17:59 GMT`。
-- `vbMmeCable64_win10.inf`：`DriverVer = 10/31/2026,3.5.2.0`。
-- INF 使用 `CatalogFile=vbaudio_cable64_win10.cat`；同时包含
-  `NTamd64.10.0...16299`、`NTARM64.10.0...16299` manufacturer/install sections。
-- 硬件 ID 字符串为 `VBAudioVACWDM`。
-
-| 包内文件 | 实测 SHA-256 | 静态架构/用途 |
+| 包内文件 | SHA-256 | 架构/用途 |
 | --- | --- | --- |
 | `vbMmeCable64_win10.inf` | `cecf9181b6c85842d707330efc594824a749a1d9e01db46eba0e60e72f0a66ee` | AMD64 / ARM64 安装节 |
 | `vbaudio_cable64_win10.cat` | `5d24c17858b49ad83bb856c66c24c5c2aecdb89cbaae2f8179c15d351124fa9f` | INF 指定的 catalog |
-| `vbaudio_cable64_win10.sys` | `7ebcbbe7004d185f7b29613cd27fdc2dd71c1712224b767a74d2f66bdc33a7ef` | PE machine `0x8664`，AMD64 |
-| `vbaudio_cable64arm_win10.sys` | `85c217af826c2e1d478b52afc7c2248889c8478030d44e8134bd4c23b8915216` | PE machine `0xaa64`，ARM64 |
-| `VBCABLE_Setup_x64.exe` | `734c35dfa6d98f48782a451633ceb471166ec70d60482fd89a1123d0ee3c4f41` | PE machine `0x8664`，AMD64 安装器 |
-| `readme.txt` | `f865f3e78e37006d48e56c93f51eff4ca79acda9969854400d79bfa3db38a8d5` | 含必须重启的安装说明 |
+| `vbaudio_cable64_win10.sys` | `7ebcbbe7004d185f7b29613cd27fdc2dd71c1712224b767a74d2f66bdc33a7ef` | AMD64 |
+| `vbaudio_cable64arm_win10.sys` | `85c217af826c2e1d478b52afc7c2248889c8478030d44e8134bd4c23b8915216` | ARM64 |
+| `VBCABLE_Setup_x64.exe` | `734c35dfa6d98f48782a451633ceb471166ec70d60482fd89a1123d0ee3c4f41` | AMD64 setup |
+| `readme.txt` | `f865f3e78e37006d48e56c93f51eff4ca79acda9969854400d79bfa3db38a8d5` | 安装说明 |
 
-包中没有单独的原生 ARM64 setup EXE。驱动本身为原生 ARM64，不应把 AMD64 安装器的
-存在误认为驱动架构不支持 ARM64，也不能据此声称安装器已经在 Windows 11 ARM64 上验证。
-官方手册明确声明 Windows 10/11 ARM64 支持；该声明和静态架构检查都不等于当前 runner 安装成功。
-x64 runner 实际是 Windows Server 2022；上述下载页/手册措辞没有单独明确确认这个 Server image 的支持。
+脚本在解压、执行包内程序前校验整个 ZIP；内容变化即失败。Windows 上还要求 `Get-AuthenticodeSignature` 返回 `Valid` 且 publisher 精确匹配：
 
-为避免沿用旧版本假设，也实际下载检查了仍可访问的官方旧地址
-`https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack45.zip`：
-`1318877` bytes，SHA-256
-`b950e39f01af1d04ea623c8f6d8eb9b6ea5c477c637295fabf20631c85116bfb`；
-其 README 同样要求重启。该旧包不是本次官网推荐包，也没有被接入 CI。
+| 文件 | publisher |
+| --- | --- |
+| `VBCABLE_Setup_x64.exe` | `BUREL VINCENT Entrepreneur individuel` |
+| `vbaudio_cable64_win10.cat` | `Microsoft Windows Hardware Compatibility Publisher` |
 
-这些哈希是本次下载的实测值，不是厂商发布的校验值，也不证明 URL 永久不可变。
-未来实现必须在执行/安装前校验锁定的哈希，字节变化时失败，不能自动接受新哈希。
+f6c8827 的 ARM64 与 x64 runner evidence 均记录 setup 签名 `Valid`、publisher 与预期一致；ARM64 的 Windows PnP 日志进一步记录 catalog WHQL 评分并成功加载驱动。脚本不改变签名策略、信任根或驱动强制签名设置；静态解析证书名称不能替代 Windows 信任链验证。
 
-## 签名证据的边界
+## 唯一安装与验收链路
 
-对 Pack46 的 setup 和两个目标 SYS，静态解析 PE certificate table 后使用
-`openssl pkcs7 -inform DER -print_certs` 读取证书材料；catalog 同样可以读取 PKCS#7 证书。
+1. 仅允许管理员权限的 Windows Actions runner，并核对 OS 与 PowerShell 原生架构。
+2. 下载固定 ZIP、校验哈希及可信签名后运行官方 setup `-i -h`。明确的非零退出码或 `3010` / `1641` 重启状态失败，不重试安装。
+3. 安装器两分钟内正常退出时，继续核对退出码。若它仍等待，脚本不会仅凭超时判成功：只有同一 Pack46 驱动的 PnP 状态、签名、内核服务和活动默认端点都通过，才终止仍等待的 setup 进程，并记录超时/终止状态；任何检查未通过仍失败。
+4. 依次刷新 `AudioEndpointBuilder`、`Audiosrv` 并确认 Running；不重启 runner、不修改 registry、不另行选择端点。
+5. 最多等待 60 秒，要求唯一 `CABLE Input (VB-Audio Virtual Cable)` render `AudioEndpoint` 状态为 `OK`；通过 `IMMDeviceEnumerator` 确认它是 Active 的 `eRender / eMultimedia` 默认端点。核对一个 `3.5.2.0`、已签名、问题码为零的 PnP 绑定及 Running 的 `VBAudioVACMME` 驱动服务。
+6. 将实际 MMDevice ID 经 `GITHUB_ENV` 提供给 AudioEngine 测试。Windows Actions 每例都要求 Qt `QMediaDevices::defaultAudioOutput()` 存在、默认标志为真且 ID 匹配。
+7. 现有 AudioEngine 用例沿生产路径打开默认 `QAudioSink`，验证播放、结束、seek、暂停和衔接。音量为零策略与原有断言保留；这不是物理扬声器可听性测试。设备缺失直接失败，不使用 `QSKIP`、fake sink 或弱化断言。
 
-- `VBCABLE_Setup_x64.exe` 和两个 SYS 的外层签名结构含证书 subject
-  `BUREL VINCENT Entrepreneur individuel`，issuer 为
-  `GlobalSign GCC R45 EV CodeSigning CA 2020`。
-- catalog 的证书材料含 `Microsoft Windows Hardware Compatibility Publisher`，issuer 为
-  `Microsoft Windows Third Party Component CA 2014`。
+设备枚举只证明 Qt 指向预期端点；真实打开/消费须由 AudioEngine 用例证明。`ready-for-qt-tests` 只表示脚本的系统检查通过，不等于 Qt 播放验收通过。
 
-**这只是包内签名结构及证书元数据，不是 Windows Authenticode/kernel policy 验证成功。**
-本机为 Linux，没有执行 `Get-AuthenticodeSignature`、`signtool verify /kp`、catalog 成员哈希验证、
-Windows 信任链/时间戳验证或驱动加载。尝试用 OpenSSL CMS 直接验证 catalog 时因其封装格式报
-ASN.1 tag 错误，未取得通过结果；不能把证书解析成功描述为签名验证通过。
-这也不构成对包签名无效的判断。
+## Actions 证据与当前边界
 
-## 明确的重启阻塞
+### 上游同步基线的缺设备证据
 
-三个官方材料一致：
+历史 run [45935196737](https://github.com/wxmyyds/CirrusMusic/actions/runs/45935196737) 的实际 SHA 为 `a76fa303bd8122659c35d22106f973ac633c8607`，与 `d4defd0b8020ff9bab35d53fcb9e5ceda0bac3d9` 同 tree，但不是相同 commit。该 run 两个 Windows 架构的 AudioEngineTest 均为 2 passed、0 failed、17 skipped，skip 原因为 `no audio output device`；这是旧 tree 的缺设备证据，不是端点修复验收。
 
-1. 下载页安装说明要求安装后和卸载后重启。
-2. Pack46 内 `readme.txt` 第 45 行：`To finalize installation, you must reboot your computer.`
-3. [官方 Reference Manual](https://vb-audio.com/Cable/VBCABLE_ReferenceManual.pdf)，
-   October 2024 / revision 3，第 4 页安装步骤 3 同样要求重启。
-   本次下载手册的 SHA-256 为
-   `e1574293a9b57cea7e5a0299ff809d7a819aad91ebac737e5209e596fcb700e0`。
+### 固定 Pack46 的实际测试
 
-没有获得厂商对当前两个 runner image 的免重启安装保证，也没有取得相应新 SHA Actions 实测。
-因此不能以启动 `AudioEndpointBuilder`/`Audiosrv`、忽略重启返回码、仅将 INF 加入 Driver Store、
-延时等待、重试安装或强制声明默认设备来代替此条件。
+端点实现 SHA **`f6c882793879bf8d6b9c72a46c161ac146d44ab7`**，run [45980084660](https://github.com/wxmyyds/CirrusMusic/actions/runs/45980084660)：
 
-## 后续可以解除阻塞的验收证据
+- **Windows ARM64 job `140441577789`**：`prepare-windows-audio.ps1` 记录 `ready-for-qt-tests`；系统默认端点、签名驱动、问题码和运行服务检查均通过。AudioEngine CTest 通过，CI 日志记录这组真实默认端点用例完成。整份 job **仍失败**：`tst_backend_runtime.exe` 的 QtTest 用例报告 55 passed、0 failed，进程退出时发生 `0xc0000005`，附近符号为 `QtMultimediaPrivate::refreshWarmupClient`；CTest 因 `backend_runtime (SEGFAULT)` 失败。不能把该架构整个 job 称为通过。
+- **Windows x64 job `140441577860`**：setup 两分钟未退出，脚本在进入独立端点验收前失败。上传的 `setupapi.dev.log` 显示签名 catalog 通过 WHQL 验证、PnP 驱动安装和设备启动成功；但该版本脚本未记录后续端点默认状态，且没有 x64 AudioEngine 运行结果。不能从安装日志推断 Qt 播放成功。
+- 因上述阻塞，后续源码修改仅允许在超时后执行严格的端点与驱动检查；该修改尚无当前 SHA 的 Actions 证据。尤其 x64 的立即可用性仍待实际验证。
 
-只有在确认符合免重启约束的安装路径后，才应加入实际 CI 配置：
+## 厂商重启建议
 
-- 只在 `ci.yml` 的 Windows 测试 job 安装，生产依赖、包和安装器不引用驱动。
-- 下载前锁定版本 URL；运行任何包内程序前校验 SHA-256，检查系统/INF/SYS 架构，
-  验证 Authenticode、kernel-policy 签名及 catalog 对目标 INF/SYS 的成员覆盖。
-- 在原生 AMD64 和 ARM64 runner 上取得实际安装结果；遇到需要重启的状态立即失败，
-  不重启、中断或以重连 runner 的方式绕过。
-- 确认 `AudioEndpointBuilder` 和 `Audiosrv` 为 Running；取得目标 render endpoint 的身份及 Active 状态，
-  将其设置为默认播放端，并由真实 `QMediaDevices` 枚举和核对默认端点。
-- 运行原有 `AudioEngineTest`，证明生产 Qt backend 真正打开并消费系统端点，保留全部既有断言；
-  不能仅以设备管理器、registry、服务启动、枚举列表或安装器退出码作为验收。
-- 对新增 PowerShell 脚本进行 parser/PSScriptAnalyzer 静态检查，并读取两个原生 Windows job 的实际测试报告。
+官方下载页、Pack46 `readme.txt` 与[官方手册](https://vb-audio.com/Cable/VBCABLE_ReferenceManual.pdf)建议安装后重启；README 原文为 `To finalize installation, you must reboot your computer.`。f6c8827 的 ARM64 runner 在未重启的 job 中通过实际 Qt AudioEngine 用例，说明该 runner 会话当时能够消费该端点，但不能据此宣称所有 Windows 版本/机器均免重启。脚本不重启 runner；若 setup 明确报告重启状态，或设备未在当前会话达到前述运行状态，必须失败。
 
-本次没有本地配置、构建、安装或运行项目测试；没有启动任何新 Actions run。
-最终环境可用性、Qt 打开/消费及测试结论只能来自后续完整新源码 SHA 的 Actions，
-不能复用上述同树旧 run、Linux 静态检查或签名元数据作为成功证据。
+第三方 Chocolatey 社区包的免重启报告不能代替当前版本证据；本 CI 不调用旧 Pack43/旧 INF 配方，也不以暂存 INF、强行指定默认设备、重试安装或跳过用例绕过限制。
+
+## 失败诊断与验证范围
+
+脚本尽可能在 `${RUNNER_TEMP}/cirrus-windows-audio-evidence/` 写出：
+
+- `endpoint.json`：实际 checkout 完整 SHA、OS/进程架构、包哈希、签名状态、publisher、证书 thumbprint、安装退出码、安装器超时/终止状态、服务、端点 ID、驱动和错误信息。
+- `installer-stdout.txt`、`installer-stderr.txt` 与 Windows `setupapi.dev.log`。
+
+这些文件与测试报告随 `test-results-Windows-x86_64` / `test-results-Windows-arm64` artifact 保留 3 天；仅供测试审计，不影响产品包清单。不能以本机静态分析、签名元数据、旧 SHA 或 agent 推论代替新 SHA 的 Windows 原生 job 和实际 QtTest 报告。当前超时处理的修改尚未经过 Windows Actions；读取其后续完整 SHA 结果前，不宣称端点工作完成。
+
+本地不安装驱动、不配置/编译/运行项目测试。PowerShell/PnP/COM/Qt 行为只以原生 Windows Actions 的实际证据为准。
+
+## 历史包和签名调查
+
+2026-11-27 下载的 Pack46 原始 INF/catalog/SYS/setup 静态 hash 如上；INF 中 catalog 为 `vbaudio_cable64_win10.cat`，包含 AMD64、ARM64 安装节。静态解析 PE/PKCS#7 只曾用于确定待校验 publisher；最终受信任状态以 Windows `Get-AuthenticodeSignature` 和 PnP catalog 校验日志为准。官方旧地址 Pack45 曾实测 SHA-256 `b950e39f01af1d04ea623c8f6d8eb9b6ea5c477c637295fabf20631c85116bfb`，未接入 CI。
+
+Windows Server 2022 x64 的支持范围与 Windows 11 ARM64 不应相互推断；未来若 runner image、Pack46 字节或 setup 行为变化，必须按真实目标重新验证。
+
+**证据边界：**上述具体运行结果仅绑定标出的完整源码 SHA 与 run/job。当前 timeout follow-up 未运行，ARM64 job 有 backend_runtime 失败，x64 尚无 AudioEngine 证据；这份说明不代表整体修复验收完成。

@@ -196,6 +196,12 @@ jobs:
           ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
 
+      - name: Prepare trusted native Windows audio endpoint
+        shell: pwsh
+        run: |
+          ./tools/ci/prepare-windows-audio.ps1 -Architecture '${{ matrix.arch }}' `
+            -EvidenceDirectory "$env:RUNNER_TEMP/cirrus-windows-audio-evidence"
+
       - name: Set up Windows test dependencies
         uses: ./.github/actions/setup-windows
         with:
@@ -248,6 +254,7 @@ jobs:
             build/junit.xml
             build/Testing/Temporary/LastTest.log
             build/Testing/Temporary/LastTestsFailed.log
+            ${{ runner.temp }}/cirrus-windows-audio-evidence/
           if-no-files-found: warn
 
   macos-tests:

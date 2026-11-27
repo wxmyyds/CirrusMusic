@@ -114,6 +114,8 @@ Windows/macOS 的 Qt Multimedia 与 Cirrus 解码器可能各有不同 SONAME �
 
 Windows x86_64 使用 `windows-2022` 原生 MSVC，ARM64 使用 `windows-11-arm` 原生 MSVC；vcpkg 的目标与 host triplet 均匹配 CPU。MSVC CRT 来源固定为当前 `VCToolsRedistDir`、编译器目标 ABI 与工具集版本对应的目录；`runtime.py` 从主程序和全部插件的真实 DLL 导入闭包部署所需 CRT，逐一核对架构和来源，不复制整组候选文件，也不以构建机预装 CRT 满足包内依赖。主程序及部署 DLL 检查 PE 架构、运行依赖和必要运行库。安装器 `AppId` 保持一致，x64 与 ARM64 目录/文件名及最低系统要求分别生成。更新器根据应用构建架构选择对应安装器，仍验证 fork 下载地址和 GitHub SHA-256，不用另一个 CPU 的资产替代。
 
+Windows 测试 job 在依赖准备与编译前运行 `tools/ci/prepare-windows-audio.ps1`，下载锁定 SHA-256 的官方 VB-CABLE Pack46，要求安装器及 catalog 签名可信，并验证原生驱动、服务、Active render 端点和系统 multimedia 默认 ID。AudioEngine 测试逐例核对 Qt 默认端点 ID，缺设备直接失败。官方说明要求重启；当前临时 runner 是否能立即生效仍须由新源码 SHA 的原生 CI 证明，不能忽略重启状态或跳过测试。签名、端点、安装诊断证据随 `test-results-Windows-x86_64` / `test-results-Windows-arm64` 保存 3 天；详情见 [Windows 音频端点说明](../tools/ci/WINDOWS-AUDIO-ENDPOINT.md)。驱动只用于测试，不进入生产包或 Release 清单。
+
 Windows 安装器未作发行者签名。x64 目标为 Windows 10/11；ARM64 目标为 Windows 11 22H2 及更新版本。
 
 macOS ARM64 使用 `macos-15`，x86_64 使用 `macos-15-intel`，均原生编译并要求 macOS 15。`macdeployqt` 部署依赖，脚本按目标 CPU 检查全部 Mach-O、拒绝构建机路径，然后 ad-hoc 签名并验证，再生成含 `/Applications` 链接的 DMG。两种架构均为预览，未经 Apple 公证；云端检查不代替用户真机安装和桌面交互测试。
