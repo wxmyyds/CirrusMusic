@@ -50,7 +50,11 @@ function Get-DeviceAncestors([string] $InstanceId) {
     for ($depth = 0; $depth -lt 16; $depth++) {
         $property = Get-PnpDeviceProperty -InstanceId $current -KeyName 'DEVPKEY_Device_Parent' `
             -ErrorAction SilentlyContinue
-        $parent = if ($property) { [string]$property.Data } else { '' }
+        $parent = ''
+        if ($property) {
+            $data = $property.PSObject.Properties['Data']
+            if ($data -and $data.Value) { $parent = [string]$data.Value }
+        }
         if ([string]::IsNullOrWhiteSpace($parent)) { break }
         $ancestors.Add($parent)
         if ($parent -ieq $current) { break }

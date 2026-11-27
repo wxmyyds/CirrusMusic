@@ -54,7 +54,8 @@ f6c8827 的 ARM64 与 x64 runner evidence 均记录 setup 签名 `Valid`、publi
 
 - **Windows ARM64 job `140441577789`**：`prepare-windows-audio.ps1` 记录 `ready-for-qt-tests`；系统默认端点、签名驱动、问题码和运行服务检查均通过。AudioEngine CTest 通过，CI 日志记录这组真实默认端点用例完成。整份 job **仍失败**：`tst_backend_runtime.exe` 的 QtTest 用例报告 55 passed、0 failed，进程退出时发生 `0xc0000005`，附近符号为 `QtMultimediaPrivate::refreshWarmupClient`；CTest 因 `backend_runtime (SEGFAULT)` 失败。不能把该架构整个 job 称为通过。
 - **Windows x64 job `140441577860`**：setup 两分钟未退出，脚本在进入独立端点验收前失败。上传的 `setupapi.dev.log` 显示签名 catalog 通过 WHQL 验证、PnP 驱动安装和设备启动成功；但该版本脚本未记录后续端点默认状态，且没有 x64 AudioEngine 运行结果。不能从安装日志推断 Qt 播放成功。
-- run [46007066286](https://github.com/wxmyyds/CirrusMusic/actions/runs/46007066286)，SHA `1c2e8a462077947d8c55f02631ec37e83f72c3b5`，实际执行了安装超时后的独立检查；Windows Server x64 暴露默认 render endpoint 名为 `Speakers (VB-Audio Virtual Cable)`，旧 name-based matcher 因期待 `CABLE Input ...` 而失败。该 run 因而没有 x64 Qt AudioEngine 结果。当前未提交的 matcher 改为沿 render endpoint 的 PnP parent chain 匹配已验证驱动 instance ID，再核默认 MMDevice ID；此身份关联改动尚未在 Actions 运行。
+- run [46007066286](https://github.com/wxmyyds/CirrusMusic/actions/runs/46007066286)，SHA `1c2e8a462077947d8c55f02631ec37e83f72c3b5`，实际执行了安装超时后的独立检查；Windows Server x64 暴露默认 render endpoint 名为 `Speakers (VB-Audio Virtual Cable)`，旧 name-based matcher 因期待 `CABLE Input ...` 而失败。该 run 因而没有 x64 Qt AudioEngine 结果。
+- run [46019549594](https://github.com/wxmyyds/CirrusMusic/actions/runs/46019549594)，SHA `1a8a78603afcd7ac564ca61857e85de1328fde78`，测试了新的 PnP parent-chain matcher，但 Windows x64 与 ARM64 都在端点枚举阶段失败：`Get-PnpDeviceProperty` 对部分节点返回的对象没有 `Data` 属性，脚本直接访问时中止。尚未证实端点 parent chain 是否能匹配目标驱动，也没有该 SHA 的 Qt AudioEngine 结果。当前脚本改为把缺失 `Data` 的节点视为无 parent 并继续沿链检查；这仍需新 SHA 的 Windows Actions 验证。
 
 ## 厂商重启建议
 
@@ -69,7 +70,7 @@ f6c8827 的 ARM64 与 x64 runner evidence 均记录 setup 签名 `Valid`、publi
 - `endpoint.json`：实际 checkout 完整 SHA、OS/进程架构、包哈希、签名状态、publisher、证书 thumbprint、安装退出码、安装器超时/终止状态、服务、默认端点及其 PnP parent chain、驱动和错误信息。
 - `installer-stdout.txt`、`installer-stderr.txt` 与 Windows `setupapi.dev.log`。
 
-这些文件与测试报告随 `test-results-Windows-x86_64` / `test-results-Windows-arm64` artifact 保留 3 天；仅供测试审计，不影响产品包清单。不能以本机静态分析、签名元数据、旧 SHA 或 agent 推论代替新 SHA 的 Windows 原生 job 和实际 QtTest 报告。SHA `1c2e8a462077947d8c55f02631ec37e83f72c3b5` 已运行安装超时后的检查，但 x64 在旧 FriendlyName 条件处失败；当前基于 PnP parent identity 的修正尚未经过 Actions。不能宣称端点工作完成。
+这些文件与测试报告随 `test-results-Windows-x86_64` / `test-results-Windows-arm64` artifact 保留 3 天；仅供测试审计，不影响产品包清单。不能以本机静态分析、签名元数据、旧 SHA 或 agent 推论代替新 SHA 的 Windows 原生 job 和实际 QtTest 报告。SHA `1a8a786...` 已执行 PnP parent-chain 识别，但两个 Windows 架构都因部分 PnP 属性对象没有 `Data` 字段而在端点匹配前失败。当前属性读取已对缺失字段做显式处理，尚未经过 Actions；不能宣称端点工作完成。
 
 本地不安装驱动、不配置/编译/运行项目测试。PowerShell/PnP/COM/Qt 行为只以原生 Windows Actions 的实际证据为准。
 
@@ -79,4 +80,4 @@ f6c8827 的 ARM64 与 x64 runner evidence 均记录 setup 签名 `Valid`、publi
 
 Windows Server 2022 x64 的支持范围与 Windows 11 ARM64 不应相互推断；未来若 runner image、Pack46 字节或 setup 行为变化，必须按真实目标重新验证。
 
-**证据边界：**上述具体运行结果仅绑定标出的完整源码 SHA 与 run/job。timeout follow-up 已在 `1c2e8a4...` 实际执行，但 x64 端点识别失败；同一 run 的 ARM64 端点准备通过后在编译阶段失败，未运行 QtTest。更改后的 PnP parent identity 匹配尚未由 Actions 验证；此前 `f6c8827...` 的 ARM64 AudioEngine 用例通过，但该 job 因 backend_runtime 崩溃失败。本文不代表整体修复验收完成。
+**证据边界：**上述具体运行结果仅绑定标出的完整源码 SHA 与 run/job。timeout follow-up 已在 `1c2e8a4...` 执行，但 x64 因 FriendlyName 匹配失败；PnP parent-chain matcher 在 `1a8a786...` 执行后，两个 Windows 架构都因 PnP 返回对象缺少 `Data` 属性而失败在端点枚举阶段。当前 guard 尚未由 Actions 验证；此前 `f6c8827...` 的 ARM64 AudioEngine 用例通过，但该 job 因 backend_runtime 崩溃失败。本文不代表整体修复验收完成。
