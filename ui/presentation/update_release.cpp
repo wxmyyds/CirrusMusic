@@ -121,7 +121,7 @@ namespace
 constexpr qint64 kMaximumInstallerBytes = 512LL * 1024 * 1024;
 
 std::optional<Asset> releaseAssetOf(const QJsonArray& assets, const QString& version,
-                                    const QString& name, bool verifyWindowsSetup)
+                                 const QString& name, bool verifyWindowsSetup)
 {
     if (name.isEmpty())
         return std::nullopt;
@@ -136,7 +136,7 @@ std::optional<Asset> releaseAssetOf(const QJsonArray& assets, const QString& ver
             return std::nullopt;
         if (!verifyWindowsSetup)
             return asset;
-        asset.size = qint64(object.value(QLatin1String("size")).toDouble());
+        asset.size = object.value(QLatin1String("size")).toInteger(-1);
         const QString digest = object.value(QLatin1String("digest")).toString();
         static const QRegularExpression sha256(QStringLiteral("^sha256:([0-9a-f]{64})$"));
         const auto match = sha256.match(digest);
@@ -177,7 +177,7 @@ QString notesToPlainText(const QString& markdown)
 }
 
 std::optional<Release> parseRelease(const QByteArray& json, Package package,
-                                    Architecture architecture)
+                                  Architecture architecture)
 {
     QJsonParseError error;
     const QJsonDocument document = QJsonDocument::fromJson(json, &error);
@@ -202,8 +202,8 @@ std::optional<Release> parseRelease(const QByteArray& json, Package package,
     if (!isReleasePage(release.page))
         return std::nullopt;
     const QString name = assetName(release.version, package, architecture);
-    release.asset = releaseAssetOf(object.value(QLatin1String("assets")).toArray(),
-                                   release.version, name, package == Package::WindowsSetup);
+    release.asset = releaseAssetOf(object.value(QLatin1String("assets")).toArray(), release.version,
+                                   name, package == Package::WindowsSetup);
     return release;
 }
 } // namespace cirrus::ui::updates

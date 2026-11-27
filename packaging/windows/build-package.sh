@@ -10,6 +10,8 @@ case "$arch" in
     *) echo "::error::Unsupported Windows architecture: $arch"; exit 1 ;;
 esac
 [[ "${GITHUB_ACTIONS:-}" == true ]] || { echo 'Run packaging through GitHub Actions'; exit 1; }
+# The same target selected by setup-windows must drive the compiler and update identity.
+[[ "${VSCMD_ARG_TGT_ARCH:?}" == "$asset_arch" ]]
 [[ "${VCPKG_TRIPLET:?}" == "$expected_triplet" ]]
 : "${DEPS:?}" "${QT_ROOT_DIR:?}" "${VCPKG_INSTALLED:?}"
 : "${CIRRUS_CMAKE_PREFIX_PATH:?}" "${CIRRUS_PKG_CONFIG_EXECUTABLE:?}" "${CIRRUS_OPENSSL_ROOT:?}"
@@ -30,6 +32,7 @@ cmake -S . -B "$build" -G Ninja \
     -DCIRRUS_BUILD_GALLERY=OFF \
     -DCIRRUS_EXECUTABLE=Cirrus \
     -DCIRRUS_PACKAGE=windows \
+    -DCIRRUS_PACKAGE_ARCH="$arch" \
     -DCIRRUS_DEPLOY_QT=ON \
     -DCMAKE_INSTALL_BINDIR=. \
     -DCIRRUS_RUNTIME_DIRS="$DEPS/bin;$VCPKG_INSTALLED/$VCPKG_TRIPLET/bin"

@@ -118,8 +118,8 @@ set_target_properties(appCirrusMusic PROPERTIES
 
 # Shown in Settings › About.
 target_compile_definitions(appCirrusMusic PRIVATE CIRRUS_VERSION="${PROJECT_VERSION}")
-// The package identity (arch, debian, fedora, windows, macos) and target architecture
-// (x86_64 or arm64); both empty for development builds.
+# The package identity (arch, debian, fedora, windows, macos) and target architecture
+# (x86_64 or arm64); both empty for development builds.
 set(CIRRUS_PACKAGE "" CACHE STRING "Package format family: arch, debian, fedora, windows, macos or empty")
 set(CIRRUS_PACKAGE_ARCH "" CACHE STRING "Target package architecture: x86_64, arm64 or empty")
 target_compile_definitions(appCirrusMusic PRIVATE

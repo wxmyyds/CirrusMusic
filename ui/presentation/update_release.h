@@ -44,7 +44,7 @@ bool isNewer(QStringView latest, QStringView current);
 // GitHub's latest-release JSON; nullopt when it is malformed, a draft, a pre-release,
 // has no usable version or its page is not the project's (isReleasePage).
 std::optional<Release> parseRelease(const QByteArray& json, Package package,
-                                    Architecture architecture);
+                                  Architecture architecture);
 // A release page of the project on GitHub (https only): the only page the app opens
 // for an update.
 bool isReleasePage(const QUrl& url);

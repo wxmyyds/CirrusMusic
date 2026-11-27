@@ -29,28 +29,6 @@ constexpr int kTimeoutMs = 15 * 1000;
 // The installer's download is aborted after this long without a byte.
 constexpr int kDownloadStallMs = 30 * 1000;
 
-updates::Package releasePackage(UpdateCheck::Install install)
-{
-    switch (install) {
-    case UpdateCheck::Arch:
-        return updates::Package::Arch;
-    case UpdateCheck::Debian:
-        return updates::Package::Debian;
-    case UpdateCheck::Fedora:
-        return updates::Package::Fedora;
-    case UpdateCheck::WindowsSetup:
-        return updates::Package::WindowsSetup;
-    case UpdateCheck::WindowsZip:
-        return updates::Package::WindowsZip;
-    case UpdateCheck::MacDmg:
-        return updates::Package::MacDmg;
-    case UpdateCheck::Development:
-    case UpdateCheck::UnknownPackage:
-        return updates::Package::Unknown;
-    }
-    return updates::Package::Unknown;
-}
-
 updates::Architecture packageArchitecture(const QString& architecture)
 {
     if (architecture == QLatin1String("x86_64"))
@@ -92,30 +70,33 @@ qint64 UpdateCheck::lastCheck() const
     return std::max<qint64>(0, m_settings->updatesLastCheck());
 }
 
-bool UpdateCheck::canCheckAutomatically() const { return m_install != Development; }
+bool UpdateCheck::canCheckAutomatically() const
+{
+    return m_package != updates::Package::Unknown &&
+           m_architecture != updates::Architecture::Unknown;
+}
 
 void UpdateCheck::setPackage(const QString& package, const QString& architecture)
 {
     m_architecture = packageArchitecture(architecture);
-    if (package.isEmpty()) {
-        m_install = Development;
-    } else if (package == QLatin1String("arch")) {
-        m_install = Arch;
+    if (package == QLatin1String("arch")) {
+        m_package = updates::Package::Arch;
     } else if (package == QLatin1String("debian")) {
-        m_install = Debian;
+        m_package = updates::Package::Debian;
     } else if (package == QLatin1String("fedora")) {
-        m_install = Fedora;
+        m_package = updates::Package::Fedora;
     } else if (package == QLatin1String("windows")) {
         // The installer and zip share one build; Inno Setup leaves its uninstaller.
         const QDir dir(QCoreApplication::applicationDirPath());
-        m_install = QFileInfo::exists(dir.filePath(QStringLiteral("unins000.exe"))) ? WindowsSetup
-                                                                                    : WindowsZip;
-        if (m_install == WindowsSetup)
+        m_package = QFileInfo::exists(dir.filePath(QStringLiteral("unins000.exe")))
+                        ? updates::Package::WindowsSetup
+                        : updates::Package::WindowsZip;
+        if (m_package == updates::Package::WindowsSetup)
             removeDownloads();
     } else if (package == QLatin1String("macos")) {
-        m_install = MacDmg;
+        m_package = updates::Package::MacDmg;
     } else {
-        m_install = UnknownPackage;
+        m_package = updates::Package::Unknown;
     }
     schedule();
 }
@@ -168,7 +149,7 @@ void UpdateCheck::finish(QNetworkReply* reply, bool manual)
     Failure failure = NoFailure;
     if (httpStatus == 200) {
         if (const auto release =
-                updates::parseRelease(reply->readAll(), releasePackage(m_install), m_architecture)) {
+                updates::parseRelease(reply->readAll(), m_package, m_architecture)) {
             // A download of another version is no longer wanted.
             if (release->version != m_release.version && m_download != NoDownload) {
                 cancelDownload();
@@ -227,7 +208,7 @@ void UpdateCheck::setState(Status status, Failure failure)
 bool UpdateCheck::openDownload() const
 {
     if (m_release.asset && updates::isDownloadUrl(m_release.asset->url, m_release.version,
-                                                   m_release.asset->name)) {
+                                                m_release.asset->name)) {
         log::info(lcUiNav, "update.open_asset");
         return QDesktopServices::openUrl(m_release.asset->url);
     }
@@ -244,8 +225,8 @@ bool UpdateCheck::openRelease() const
 
 bool UpdateCheck::canInstall() const
 {
-    return m_install == WindowsSetup && m_release.asset && m_release.asset->size > 0 &&
-           !m_release.asset->sha256.isEmpty() &&
+    return m_package == updates::Package::WindowsSetup && m_release.asset &&
+           m_release.asset->size > 0 && !m_release.asset->sha256.isEmpty() &&
            updates::isNewer(m_release.version, QCoreApplication::applicationVersion());
 }
 

@@ -34,7 +34,6 @@ class UpdateCheck : public QObject
     QML_UNCREATABLE("Use App.updates")
     Q_PROPERTY(int status READ status NOTIFY changed)   // UpdateCheck.Status
     Q_PROPERTY(int failure READ failure NOTIFY changed) // UpdateCheck.Failure
-    Q_PROPERTY(int install READ install CONSTANT)       // UpdateCheck.Install
     Q_PROPERTY(QString latestVersion READ latestVersion NOTIFY changed)
     Q_PROPERTY(QString title READ title NOTIFY changed)
     Q_PROPERTY(QString notes READ notes NOTIFY changed)
@@ -42,7 +41,7 @@ class UpdateCheck : public QObject
     // Milliseconds since the epoch, 0 when unknown (for App.format).
     Q_PROPERTY(qint64 publishedAt READ publishedAt NOTIFY changed)
     Q_PROPERTY(qint64 lastCheck READ lastCheck NOTIFY changed)
-    // Whether it checks on its own in this build (a packaged one).
+    // Whether it checks on its own in this build (a known package and architecture).
     Q_PROPERTY(bool canCheckAutomatically READ canCheckAutomatically CONSTANT)
     // Whether this copy downloads and installs the update itself (Windows installer).
     Q_PROPERTY(bool canInstall READ canInstall NOTIFY changed)
@@ -55,9 +54,6 @@ class UpdateCheck : public QObject
     Q_ENUM(Status)
     enum Failure { NoFailure, Network, Limited, Invalid };
     Q_ENUM(Failure)
-    // How this copy was installed: what to download for an update.
-    enum Install { Development, UnknownPackage, Arch, Debian, Fedora, WindowsSetup, WindowsZip, MacDmg };
-    Q_ENUM(Install)
     // The installer's download: not started, under way, downloaded and checked, or not.
     enum Download { NoDownload, Downloading, Downloaded, DownloadFailed };
     Q_ENUM(Download)
@@ -66,11 +62,13 @@ class UpdateCheck : public QObject
 
     [[nodiscard]] int status() const { return m_status; }
     [[nodiscard]] int failure() const { return m_failure; }
-    [[nodiscard]] int install() const { return m_install; }
     [[nodiscard]] QString latestVersion() const { return m_release.version; }
     [[nodiscard]] QString title() const { return m_release.title; }
     [[nodiscard]] QString notes() const { return m_release.notes; }
-    [[nodiscard]] QString assetName() const { return m_release.asset ? m_release.asset->name : QString(); }
+    [[nodiscard]] QString assetName() const
+    {
+        return m_release.asset ? m_release.asset->name : QString();
+    }
     [[nodiscard]] qint64 publishedAt() const;
     [[nodiscard]] qint64 lastCheck() const;
     [[nodiscard]] bool canCheckAutomatically() const;
@@ -78,13 +76,14 @@ class UpdateCheck : public QObject
     [[nodiscard]] int download() const { return m_download; }
     [[nodiscard]] qreal downloadProgress() const;
 
-    // The build's package identity and architecture from CMake. Empty package and
-    // architecture identify a development build; unknown nonempty values still check
-    // releases but never guess an asset. Call once, before the event loop.
+    // The build's package identity and target architecture from CMake. Development
+    // builds use empty values. Unknown values permit only manual release checks and
+    // never guess an asset. Windows setup/zip is refined once at startup from the
+    // install directory. Call once, before the event loop.
     void setPackage(const QString& package, const QString& architecture);
 
     Q_INVOKABLE void check();
-    // Opens the exact matching release asset, or the release page if identity is unknown.
+    // Opens the exact matching release asset, or the release page if no asset matches.
     Q_INVOKABLE bool openDownload() const;
     // The release page in the browser; false when there is none (or not GitHub's).
     Q_INVOKABLE bool openRelease() const;
@@ -120,7 +119,7 @@ class UpdateCheck : public QObject
     [[nodiscard]] QString downloadFolder() const;
 
     AppSettings* m_settings;
-    Install m_install = Development;
+    updates::Package m_package = updates::Package::Unknown;
     updates::Architecture m_architecture = updates::Architecture::Unknown;
     Status m_status = Idle;
     Failure m_failure = NoFailure;

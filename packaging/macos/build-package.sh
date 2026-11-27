@@ -53,6 +53,7 @@ PKG_CONFIG_PATH="$deps/lib/pkgconfig" cmake -S "$root" -B "$build" -G Ninja \
     -DCIRRUS_BUILD_GALLERY=OFF \
     -DCIRRUS_EXECUTABLE=Cirrus \
     -DCIRRUS_PACKAGE=macos \
+    -DCIRRUS_PACKAGE_ARCH="$arch" \
     -DCIRRUS_DEPLOY_QT=ON
 cmake --build "$build" --parallel "${JOBS:-4}"
 

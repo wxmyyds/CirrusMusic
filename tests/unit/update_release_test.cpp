@@ -1,14 +1,75 @@
-// The update check's pure parts (ui/presentation/update_release.h): versions, GitHub's
-// latest-release answer, the release page rule and the notes as plain text.
+// The update check's pure parts: release metadata, exact package/architecture assets,
+// installer verification and notes. Expected filenames are the production contract.
 #include "update_release.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QStringList>
 #include <QtTest>
+
+#include <utility>
 
 using namespace cirrus::ui::updates;
 using namespace Qt::StringLiterals;
+
+namespace
+{
+struct PackageAsset {
+    Package package;
+    Architecture architecture;
+    const char* name;
+};
+
+constexpr std::array<PackageAsset, 12> kAssets{{
+    {Package::Arch, Architecture::X86_64, "cirrus-0.5.0-1-x86_64.pkg.tar.zst"},
+    {Package::Arch, Architecture::Arm64, "cirrus-0.5.0-1-aarch64.pkg.tar.zst"},
+    {Package::Debian, Architecture::X86_64, "cirrus_0.5.0_amd64.deb"},
+    {Package::Debian, Architecture::Arm64, "cirrus_0.5.0_arm64.deb"},
+    {Package::Fedora, Architecture::X86_64, "cirrus-0.5.0-1.fc44.x86_64.rpm"},
+    {Package::Fedora, Architecture::Arm64, "cirrus-0.5.0-1.fc44.aarch64.rpm"},
+    {Package::WindowsSetup, Architecture::X86_64, "Cirrus-0.5.0-windows-x64-setup.exe"},
+    {Package::WindowsSetup, Architecture::Arm64, "Cirrus-0.5.0-windows-arm64-setup.exe"},
+    {Package::WindowsZip, Architecture::X86_64, "Cirrus-0.5.0-windows-x64.zip"},
+    {Package::WindowsZip, Architecture::Arm64, "Cirrus-0.5.0-windows-arm64.zip"},
+    {Package::MacDmg, Architecture::X86_64, "Cirrus-0.5.0-macos-x86_64.dmg"},
+    {Package::MacDmg, Architecture::Arm64, "Cirrus-0.5.0-macos-arm64.dmg"},
+}};
+
+QUrl downloadUrl(const QString& name)
+{
+    return QUrl(u"https://github.com/wxmyyds/CirrusMusic/releases/download/v0.5.0/"_s + name);
+}
+
+QJsonObject asset(const QString& name)
+{
+    return {{u"name"_s, name},
+            {u"size"_s, 1234},
+            {u"browser_download_url"_s, downloadUrl(name).toString()},
+            {u"digest"_s, u"sha256:"_s + QString(64, u'a')}};
+}
+
+QByteArray releaseJson(const QJsonArray& assets)
+{
+    return QJsonDocument(QJsonObject{
+                             {u"tag_name"_s, u"v0.5.0"_s},
+                             {u"html_url"_s,
+                              u"https://github.com/wxmyyds/CirrusMusic/releases/tag/v0.5.0"_s},
+                             {u"assets"_s, assets}})
+        .toJson();
+}
+
+QJsonArray allAssets()
+{
+    QJsonArray assets;
+    for (const auto& entry : kAssets)
+        assets.append(asset(QString::fromLatin1(entry.name)));
+    // Old distribution formats and library sources must never become an update.
+    for (const auto* name : {"Cirrus-0.5.0-x86_64.AppImage", "Cirrus-0.5.0-library-sources.tar.xz"})
+        assets.append(asset(QString::fromLatin1(name)));
+    return assets;
+}
+} // namespace
 
 class UpdateReleaseTest : public QObject
 {
@@ -63,132 +124,171 @@ class UpdateReleaseTest : public QObject
             " \"html_url\": \"https://github.com/wxmyyds/CirrusMusic/releases/tag/v0.1.2\","
             " \"published_at\": \"2026-11-20T08:00:00Z\","
             " \"body\": \"### 修复\\r\\n\\r\\n- 一处 **问题**。\\r\\n\"}";
-        const auto release = parseRelease(json, WindowsArchitecture::Unknown);
+        const auto release = parseRelease(json, Package::Unknown, Architecture::Unknown);
         QVERIFY(release);
         QCOMPARE(release->version, u"0.1.2"_s);
         QCOMPARE(release->title, u"Cirrus 0.1.2"_s);
         QCOMPARE(release->notes, u"修复\n\n• 一处 问题。"_s);
         QCOMPARE(release->published, QDateTime(QDate(2026, 11, 20), QTime(8, 0), QTimeZone::UTC));
+        QVERIFY(!release->asset);
     }
 
     void rejectsWhatIsNotARelease()
     {
-        QVERIFY(!parseRelease("not json", WindowsArchitecture::Unknown));
+        const auto invalid = [](const QByteArray& json) {
+            return !parseRelease(json, Package::Unknown, Architecture::Unknown);
+        };
+        QVERIFY(invalid("not json"));
         const char* page =
             "\"html_url\": \"https://github.com/wxmyyds/CirrusMusic/releases/tag/v0.2.0\"";
-        const auto invalid = [](const QByteArray& json) {
-            return !parseRelease(json, WindowsArchitecture::Unknown);
-        };
-        QVERIFY(
-            invalid(QByteArray("{\"tag_name\": \"v0.2.0\", \"prerelease\": true, ") + page + '}'));
+        QVERIFY(invalid(QByteArray("{\"tag_name\": \"v0.2.0\", \"prerelease\": true, ") + page + '}'));
         QVERIFY(invalid(QByteArray("{\"tag_name\": \"v0.2.0\", \"draft\": true, ") + page + '}'));
         QVERIFY(invalid(QByteArray("{\"tag_name\": \"nightly\", ") + page + '}'));
         QVERIFY(invalid("{\"tag_name\": \"v0.2.0\", \"html_url\": \"https://example.com/x\"}"));
     }
 
-    void findsTheWindowsInstaller()
+    void selectsOnlyThePackageAndArchitecture_data()
     {
-        const QByteArray head =
-            "{\"tag_name\": \"v0.5.0\", \"draft\": false, \"prerelease\": false,"
-            " \"html_url\": \"https://github.com/wxmyyds/CirrusMusic/releases/tag/v0.5.0\","
-            " \"assets\": [";
-        const QByteArray zip = "{\"name\": \"Cirrus-0.5.0-windows-x64.zip\", \"size\": 9,"
-                               " \"browser_download_url\": "
-                               "\"https://github.com/wxmyyds/CirrusMusic/releases/download/v0.5.0/"
-                               "Cirrus-0.5.0-windows-x64.zip\","
-                               " \"digest\": \"sha256:" +
-                               QByteArray(64, 'a') + "\"}";
-        const auto setup = [](const QByteArray& url, const QByteArray& digest, int size) {
-            return "{\"name\": \"Cirrus-0.5.0-windows-x64-setup.exe\", \"size\": " +
-                   QByteArray::number(size) + ", \"browser_download_url\": \"" + url +
-                   "\", \"digest\": \"" + digest + "\"}";
-        };
-        const QByteArray url = "https://github.com/wxmyyds/CirrusMusic/releases/download/v0.5.0/"
-                               "Cirrus-0.5.0-windows-x64-setup.exe";
-        const QByteArray digest = "sha256:" + QByteArray(62, '0') + "ff";
-
-        const auto release = parseRelease(head + zip + ", " + setup(url, digest, 1234) + "]}",
-                                          WindowsArchitecture::X86_64);
-        QVERIFY(release && release->installer);
-        QCOMPARE(release->installer->name, u"Cirrus-0.5.0-windows-x64-setup.exe"_s);
-        QCOMPARE(release->installer->url, QUrl(QString::fromLatin1(url)));
-        QCOMPARE(release->installer->size, 1234);
-        QCOMPARE(release->installer->sha256, QByteArray(31, '\0') + '\xff');
-
-        // The release is still one; only its installer is not taken.
-        const auto without = [&](const QByteArray& asset) {
-            const auto r = parseRelease(head + asset + "]}", WindowsArchitecture::X86_64);
-            return r && !r->installer;
-        };
-        QVERIFY(without(zip));
-        QVERIFY(without(setup("https://github.com/Guang233/CirrusMusic/releases/download/v0.5.0/"
-                              "Cirrus-0.5.0-windows-x64-setup.exe",
-                              digest, 1234)));
-        QVERIFY(without(setup(url, "sha1:" + QByteArray(40, '0'), 1234)));
-        QVERIFY(without(setup(url, "sha256:" + QByteArray(64, 'A'), 1234)));
-        QVERIFY(without(setup(url, digest, 0)));
-        QVERIFY(without(setup("http://github.com/wxmyyds/CirrusMusic/releases/download/v0.5.0/"
-                              "Cirrus-0.5.0-windows-x64-setup.exe",
-                              digest, 1234)));
-        QVERIFY(without(setup("https://github.com/wxmyyds/CirrusMusic/releases/download/v0.4.0/"
-                              "Cirrus-0.5.0-windows-x64-setup.exe",
-                              digest, 1234)));
-        QVERIFY(without(setup("https://example.com/wxmyyds/CirrusMusic/releases/download/v0.5.0/"
-                              "Cirrus-0.5.0-windows-x64-setup.exe",
-                              digest, 1234)));
-        QVERIFY(without(setup(url + "?x=1", digest, 1234)));
+        QTest::addColumn<int>("package");
+        QTest::addColumn<int>("architecture");
+        QTest::addColumn<QString>("expected");
+        for (const auto& entry : kAssets)
+            QTest::newRow(entry.name) << int(entry.package) << int(entry.architecture)
+                                      << QString::fromLatin1(entry.name);
     }
 
-    void selectsOnlyTheBuildArchitecturesInstaller()
+    void selectsOnlyThePackageAndArchitecture()
     {
-        QCOMPARE(installerName(u"0.5.0", WindowsArchitecture::X86_64),
-                 u"Cirrus-0.5.0-windows-x64-setup.exe"_s);
-        QCOMPARE(installerName(u"0.5.0", WindowsArchitecture::Arm64),
-                 u"Cirrus-0.5.0-windows-arm64-setup.exe"_s);
-        QVERIFY(installerName(u"0.5.0", WindowsArchitecture::Unknown).isEmpty());
+        QFETCH(int, package);
+        QFETCH(int, architecture);
+        QFETCH(QString, expected);
+        const auto kind = Package(package);
+        const auto cpu = Architecture(architecture);
+        QCOMPARE(assetName(u"0.5.0", kind, cpu), expected);
+        // Check another version to ensure filenames are not fixed to the fixture.
+        QString next = expected;
+        next.replace(u"0.5.0"_s, u"1.12.3"_s);
+        QCOMPARE(assetName(u"1.12.3", kind, cpu), next);
 
-        const auto asset = [](WindowsArchitecture architecture) {
-            const QString name = installerName(u"0.5.0", architecture);
-            return QJsonObject{
-                {u"name"_s, name},
-                {u"size"_s, 1234},
-                {u"browser_download_url"_s,
-                 u"https://github.com/wxmyyds/CirrusMusic/releases/download/v0.5.0/"_s + name},
-                {u"digest"_s, u"sha256:"_s + QString(64, u'a')}};
-        };
-        const auto release = [](const QJsonArray& assets, WindowsArchitecture architecture) {
-            const QJsonObject json{
-                {u"tag_name"_s, u"v0.5.0"_s},
-                {u"html_url"_s, u"https://github.com/wxmyyds/CirrusMusic/releases/tag/v0.5.0"_s},
-                {u"assets"_s, assets}};
-            return parseRelease(QJsonDocument(json).toJson(), architecture);
-        };
-        const auto x64 = asset(WindowsArchitecture::X86_64);
-        const auto arm64 = asset(WindowsArchitecture::Arm64);
-        // Asset order must not choose the CPU: check both orderings for each build.
-        for (auto architecture : {WindowsArchitecture::X86_64, WindowsArchitecture::Arm64}) {
-            for (const auto& assets : {QJsonArray{x64, arm64}, QJsonArray{arm64, x64}}) {
-                const auto parsed = release(assets, architecture);
-                QVERIFY(parsed && parsed->installer);
-                QCOMPARE(parsed->installer->name, installerName(u"0.5.0", architecture));
-                QCOMPARE(parsed->installer->sha256, QByteArray(32, '\xaa'));
+        const QJsonArray assets = allAssets();
+        QJsonArray reversed;
+        for (qsizetype i = assets.size(); i > 0; --i)
+            reversed.append(assets.at(i - 1));
+        for (const auto& ordered : {assets, reversed}) {
+            const auto parsed = parseRelease(releaseJson(ordered), kind, cpu);
+            QVERIFY(parsed && parsed->asset);
+            QCOMPARE(parsed->asset->name, expected);
+            QCOMPARE(parsed->asset->url, downloadUrl(expected));
+            if (kind == Package::WindowsSetup) {
+                QCOMPARE(parsed->asset->size, qint64(1234));
+                QCOMPARE(parsed->asset->sha256, QByteArray(32, '\xaa'));
+            } else {
+                QCOMPARE(parsed->asset->size, qint64(0));
+                QVERIFY(parsed->asset->sha256.isEmpty());
             }
-            const auto other = architecture == WindowsArchitecture::X86_64 ? arm64 : x64;
-            const auto wrong = release(QJsonArray{other}, architecture);
-            QVERIFY(wrong && !wrong->installer);
-
-            auto mismatched = asset(architecture);
-            mismatched[u"browser_download_url"_s] = other[u"browser_download_url"_s];
-            const auto wrongUrl = release(QJsonArray{mismatched}, architecture);
-            QVERIFY(wrongUrl && !wrongUrl->installer);
-
-            auto unverified = asset(architecture);
-            unverified.remove(u"digest"_s);
-            const auto noDigest = release(QJsonArray{unverified}, architecture);
-            QVERIFY(noDigest && !noDigest->installer);
         }
-        const auto unknown = release(QJsonArray{x64, arm64}, WindowsArchitecture::Unknown);
-        QVERIFY(unknown && !unknown->installer);
+
+        QJsonArray others;
+        for (const auto& value : assets)
+            if (value.toObject().value(u"name"_s).toString() != expected)
+                others.append(value);
+        const auto missing = parseRelease(releaseJson(others), kind, cpu);
+        QVERIFY(missing && !missing->asset);
+        const auto empty = parseRelease(releaseJson({}), kind, cpu);
+        QVERIFY(empty && !empty->asset);
+
+        auto mismatched = asset(expected);
+        const QString otherName = others.first().toObject().value(u"name"_s).toString();
+        mismatched[u"browser_download_url"_s] = downloadUrl(otherName).toString();
+        const auto wrongUrl = parseRelease(releaseJson({mismatched}), kind, cpu);
+        QVERIFY(wrongUrl && !wrongUrl->asset);
+
+        // Browser downloads do not require installer metadata. Setups must have it.
+        auto unverified = asset(expected);
+        unverified.remove(u"digest"_s);
+        unverified.remove(u"size"_s);
+        const auto noDigest = parseRelease(releaseJson({unverified}), kind, cpu);
+        QVERIFY(noDigest);
+        QCOMPARE(noDigest->asset.has_value(), kind != Package::WindowsSetup);
+    }
+
+    void unknownIdentityNeverSelectsAnAsset()
+    {
+        const auto json = releaseJson(allAssets());
+        for (const auto cpu : {Architecture::Unknown, Architecture::X86_64, Architecture::Arm64}) {
+            QVERIFY(assetName(u"0.5.0", Package::Unknown, cpu).isEmpty());
+            const auto parsed = parseRelease(json, Package::Unknown, cpu);
+            QVERIFY(parsed && !parsed->asset);
+            QVERIFY(isReleasePage(parsed->page)); // manual checks can still open the release
+        }
+        for (const auto& entry : kAssets) {
+            QVERIFY(assetName(u"0.5.0", entry.package, Architecture::Unknown).isEmpty());
+            const auto parsed = parseRelease(json, entry.package, Architecture::Unknown);
+            QVERIFY(parsed && !parsed->asset);
+        }
+    }
+
+    void rejectsUnsafeAssetUrls()
+    {
+        // The URL rules apply to every package, including those opened in a browser.
+        for (const auto& entry : kAssets) {
+            const QString name = QString::fromLatin1(entry.name);
+            const QString valid = downloadUrl(name).toString();
+            QStringList invalid{valid + u"?x=1", valid + u"#fragment"};
+            for (const auto& replacement : {
+                     std::pair{u"https://"_s, u"http://"_s},
+                     std::pair{u"github.com/"_s, u"example.com/"_s},
+                     std::pair{u"github.com/"_s, u"github.com.evil.example/"_s},
+                     std::pair{u"github.com/"_s, u"user@github.com/"_s},
+                     std::pair{u"github.com/"_s, u"github.com:443/"_s},
+                     std::pair{u"/wxmyyds/"_s, u"/Guang233/"_s},
+                     std::pair{u"/v0.5.0/"_s, u"/v0.4.0/"_s},
+                 }) {
+                QString url = valid;
+                invalid.append(url.replace(replacement.first, replacement.second));
+            }
+            for (const auto& url : invalid) {
+                auto unsafe = asset(name);
+                unsafe[u"browser_download_url"_s] = url;
+                const auto parsed =
+                    parseRelease(releaseJson({unsafe}), entry.package, entry.architecture);
+                QVERIFY2(parsed && !parsed->asset, qPrintable(url));
+            }
+        }
+    }
+
+    void rejectsUnverifiedWindowsInstallers()
+    {
+        for (const auto& entry : kAssets) {
+            if (entry.package != Package::WindowsSetup)
+                continue;
+            const auto setup = asset(QString::fromLatin1(entry.name));
+            const auto rejects = [&](const QJsonObject& candidate) {
+                const auto parsed =
+                    parseRelease(releaseJson({candidate}), entry.package, entry.architecture);
+                return parsed && !parsed->asset;
+            };
+            for (const auto& digest : {u""_s, u"sha1:"_s + QString(40, u'0'),
+                                       u"sha256:"_s + QString(64, u'A'),
+                                       u"sha256:"_s + QString(63, u'a')}) {
+                auto candidate = setup;
+                candidate[u"digest"_s] = digest;
+                QVERIFY(rejects(candidate));
+            }
+            for (const QJsonValue& size : {QJsonValue(0), QJsonValue(-1), QJsonValue(1.5),
+                                           QJsonValue(qint64(512LL * 1024 * 1024 + 1)),
+                                           QJsonValue(1e30), QJsonValue(u"1234"_s)}) {
+                auto candidate = setup;
+                candidate[u"size"_s] = size;
+                QVERIFY(rejects(candidate));
+            }
+            auto maximum = setup;
+            maximum[u"size"_s] = qint64(512LL * 1024 * 1024);
+            const auto parsed =
+                parseRelease(releaseJson({maximum}), entry.package, entry.architecture);
+            QVERIFY(parsed && parsed->asset);
+            QCOMPARE(parsed->asset->size, qint64(512LL * 1024 * 1024));
+        }
     }
 
     void writesTheNotesAsPlainText()
