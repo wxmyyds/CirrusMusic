@@ -1,6 +1,7 @@
 #pragma once
 
 #include "loadable_model.h"
+#include "playlist_order_revision.h"
 #include "types.h"
 
 #include <QStringList>
@@ -53,6 +54,8 @@ class PlaylistOrderModel : public LoadableModel
     Q_INVOKABLE void sortBy(int field);
     Q_INVOKABLE void reverse();
     Q_INVOKABLE void ensureLoaded(int first, int last);
+    // Restores the most recently acknowledged order before a confirmed leave.
+    Q_INVOKABLE void discardChanges();
     // One request with the whole order; `saved` or `notice` follows.
     Q_INVOKABLE void save();
 
@@ -79,6 +82,7 @@ class PlaylistOrderModel : public LoadableModel
     SongListModel* m_songs;
     SongDetailLoader* m_details;
     QStringList m_savedOrder;
+    PlaylistOrderRevision m_revision;
     bool m_changed = false;
     int m_pendingSort = -1;
     Request m_saveRequest;

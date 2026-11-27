@@ -33,6 +33,7 @@ PlaylistOrderModel::PlaylistOrderModel(QObject* parent)
                 noticed("playlist_order.details_failed", tr("没能取回全部歌曲信息，请稍后再试")));
         }
     });
+    followAccount();
 }
 
 void PlaylistOrderModel::setPlaylistKey(const QString& key)
@@ -65,7 +66,13 @@ Request PlaylistOrderModel::load()
 
 void PlaylistOrderModel::clear()
 {
+    const bool wasSaving = saving();
     m_saveRequest.cancel();
+    if (wasSaving)
+        emit savingChanged();
+    m_pendingSort = -1;
+    emit sortPendingChanged();
+    m_revision.changed();
     m_details->clear();
     m_songs->clear();
     m_savedOrder.clear();
@@ -85,13 +92,23 @@ void PlaylistOrderModel::updateChanged()
 
 void PlaylistOrderModel::moveRows(const QList<int>& rows, int gap)
 {
+    if (saving())
+        return;
+    const QStringList before = m_songs->keys();
     m_songs->moveRows(rows, gap);
+    if (m_songs->keys() != before)
+        m_revision.changed();
     updateChanged();
 }
 
 void PlaylistOrderModel::reverse()
 {
+    if (saving())
+        return;
+    const QStringList before = m_songs->keys();
     m_songs->reverse();
+    if (m_songs->keys() != before)
+        m_revision.changed();
     updateChanged();
 }
 
@@ -99,6 +116,8 @@ void PlaylistOrderModel::ensureLoaded(int first, int last) { m_details->ensureLo
 
 void PlaylistOrderModel::sortBy(int field)
 {
+    if (saving() || field < Title || field > Duration)
+        return;
     if (m_songs->allLoaded()) {
         applySort(field);
         return;
@@ -110,8 +129,21 @@ void PlaylistOrderModel::sortBy(int field)
     m_details->loadAll();
 }
 
+void PlaylistOrderModel::discardChanges()
+{
+    if (saving())
+        return;
+    m_pendingSort = -1;
+    emit sortPendingChanged();
+    m_songs->reset(m_savedOrder, m_songs->loadedSongs());
+    m_revision.changed();
+    updateChanged();
+}
+
 void PlaylistOrderModel::applySort(int field)
 {
+    if (saving())
+        return;
     QCollator collator;
     collator.setNumericMode(true);
     collator.setCaseSensitivity(Qt::CaseInsensitive);
@@ -125,6 +157,7 @@ void PlaylistOrderModel::applySort(int field)
             return song.title;
         }
     };
+    const QStringList before = m_songs->keys();
     m_songs->sortRows([&](const SongInfo& a, const SongInfo& b) {
         if (field == Duration) {
             // Unknown durations (-1) last.
@@ -135,24 +168,29 @@ void PlaylistOrderModel::applySort(int field)
         return collator.compare(text(a), text(b)) < 0;
     });
     emit sortPendingChanged();
+    if (m_songs->keys() != before)
+        m_revision.changed();
     updateChanged();
 }
 
 void PlaylistOrderModel::save()
 {
-    if (!m_changed || saving())
+    if (!m_changed || saving() || sortPending())
         return;
-    const QStringList order = m_songs->keys();
+    const auto snapshot = m_revision.snapshot(m_songs->keys());
     m_saveRequest = App::instance()->librarySource()->reorderPlaylist(
-        m_key, order, [this, order](Outcome<bool> outcome) {
+        m_key, snapshot.order, [this, snapshot](Outcome<bool> outcome) {
             m_saveRequest.release();
             emit savingChanged();
-            if (outcome.value) {
-                m_savedOrder = order;
+            if (outcome.value && !outcome.failure) {
+                // The server committed the submitted snapshot even if local edits somehow
+                // happened while it was in flight. Keep those edits as a new pending order.
+                m_savedOrder = snapshot.order;
                 updateChanged();
                 App::instance()->library()->notifyPlaylistChanged(m_key);
                 emit notice(noticed("playlist_order.saved", tr("已保存歌曲顺序")));
-                emit saved();
+                if (m_revision.isCurrent(snapshot, m_songs->keys()))
+                    emit saved();
                 return;
             }
             const bool signedOut = outcome.failure && outcome.failure->kind == failure::SignedOut;

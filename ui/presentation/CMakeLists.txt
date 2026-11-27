@@ -56,6 +56,7 @@ qt_add_qml_module(cirrus_presentation
         playlist_page_model.cpp
         playlist_order_model.h
         playlist_order_model.cpp
+        playlist_order_revision.h
         collection_list_model.h
         collection_list_model.cpp
         album_page_model.h

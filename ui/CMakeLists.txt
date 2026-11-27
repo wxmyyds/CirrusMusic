@@ -32,6 +32,11 @@ add_subdirectory(player)
 add_subdirectory(samples)
 add_subdirectory(app)
 
+if(BUILD_TESTING)
+    find_package(Qt6 REQUIRED COMPONENTS Test)
+    add_subdirectory("${PROJECT_SOURCE_DIR}/tests/qml" "${CMAKE_BINARY_DIR}/tests/qml")
+endif()
+
 # Development preview of themes, controls and pages; never part of a release package.
 option(CIRRUS_BUILD_GALLERY "Build the UI gallery (appCirrusGallery)" ON)
 if(CIRRUS_BUILD_GALLERY)

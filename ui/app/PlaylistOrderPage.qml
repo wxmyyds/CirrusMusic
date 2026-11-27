@@ -18,6 +18,7 @@ Item {
     readonly property bool hasChanges: orderModel.changed
     // Set once the user chose to leave (saved or discarded): AppShell.back() goes.
     property bool leaving: false
+    onVisibleChanged: if (visible) leaving = false
 
     // Rows: x and width inside the page, as on the playlist page.
     readonly property real rowX: Math.max(24, (width - 1200) / 2)
@@ -39,15 +40,43 @@ Item {
     property real dragStartY: 0
     property int dropGap: -1
 
-    function leave(): void {
+    // A navigation request is held until the user discards or the current save succeeds.
+    property var pendingNavigation: null
+
+    function requestLeave(action: var): void {
+        if (leaving) {
+            action();
+            return;
+        }
+        if (pendingNavigation)
+            return;
+        pendingNavigation = action;
+        if (orderModel.saving)
+            return;
         if (orderModel.changed)
             discardDialog.open();
         else
-            close();
+            finishLeave();
+    }
+    function finishLeave(): void {
+        const action = pendingNavigation;
+        pendingNavigation = null;
+        leaving = true;
+        if (action)
+            action();
+        else
+            shell.back();
+    }
+    function cancelLeave(): void {
+        pendingNavigation = null;
+    }
+    function leave(): void {
+        requestLeave(() => shell.back());
     }
     function close(): void {
-        leaving = true;
-        shell.back();
+        if (!pendingNavigation)
+            pendingNavigation = () => shell.back();
+        finishLeave();
     }
 
     function keyAt(row: int): string {
@@ -143,6 +172,17 @@ Item {
         onSaved: page.close()
     }
 
+    Connections {
+        target: orderModel
+        function onSavingChanged() {
+            if (!orderModel.saving)
+                Qt.callLater(() => {
+                    if (!orderModel.saving && page.pendingNavigation)
+                        page.cancelLeave();
+                });
+        }
+    }
+
     PageState {
         id: pageState
         anchors.fill: parent
@@ -158,13 +198,14 @@ Item {
 
     Shortcut {
         sequences: App.shortcuts.keys.saveOrder
-        enabled: page.visible && orderModel.changed
+        enabled: page.visible && orderModel.changed && !orderModel.saving && !orderModel.sortPending
         onActivated: orderModel.save()
     }
 
     Item {
         id: content
         anchors.fill: parent
+        enabled: !orderModel.saving
         opacity: pageState.contentOpacity
         visible: opacity > 0
 
@@ -208,7 +249,7 @@ Item {
                 Button {
                     id: sortButton
                     variant: Md.Tonal
-                    enabled: orderModel.songs.count > 1 && !orderModel.sortPending
+                    enabled: orderModel.songs.count > 1 && !orderModel.sortPending && !orderModel.saving
                     glyph: Symbols.sort
                     trailingGlyph: Symbols.expand_more
                     text: qsTr("快速排序")
@@ -246,7 +287,7 @@ Item {
                 }
                 Button {
                     variant: Md.Filled
-                    enabled: orderModel.changed && !orderModel.saving
+                    enabled: orderModel.changed && !orderModel.saving && !orderModel.sortPending
                     text: orderModel.saving ? qsTr("正在保存…") : qsTr("保存")
                     onClicked: orderModel.save()
                 }
@@ -641,6 +682,13 @@ Item {
         supportingText: qsTr("修改还没有保存，离开后会丢失。")
         acceptText: qsTr("放弃")
         rejectText: qsTr("继续调整")
-        onAccepted: page.close()
+        onAccepted: {
+            orderModel.discardChanges();
+            if (!orderModel.changed)
+                page.finishLeave();
+            else
+                page.cancelLeave();
+        }
+        onRejected: page.cancelLeave()
     }
 }

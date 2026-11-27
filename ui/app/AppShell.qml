@@ -128,22 +128,44 @@ Item {
             App.settings.railExpanded = rail.expanded;
     }
 
+    function guardNavigation(action: var): bool {
+        const order = stack.currentItem as PlaylistOrderPage;
+        if (!order || order.leaving)
+            return false;
+        order.requestLeave(action);
+        return true;
+    }
+
     // A new page on top, in the current section; forward history ends here.
     function go(component: Component, properties: var) {
-        visit(component, properties, rail.currentIndex, PageStack.Kind.Forward);
+        const section = rail.currentIndex;
+        const action = () => visit(component, properties, section, PageStack.Kind.Forward);
+        if (guardNavigation(action))
+            return;
+        action();
     }
 
     // A rail destination, as a new history entry (fading in). Nothing happens when it
     // is the page already shown.
     function select(index: int) {
-        if (!large)
-            rail.expanded = false;
-        const top = stack.entries[stack.entries.length - 1];
-        if (top && top.component === destinations[index].page)
+        if (index < 0 || index >= destinations.length)
             return;
-        visit(destinations[index].page, {
-            shell: shell
-        }, index, PageStack.Kind.Fade);
+        const top = stack.entries[stack.entries.length - 1];
+        if (top && top.component === destinations[index].page) {
+            if (!large)
+                rail.expanded = false;
+            return;
+        }
+        const action = () => {
+            if (!large)
+                rail.expanded = false;
+            visit(destinations[index].page, {
+                shell: shell
+            }, index, PageStack.Kind.Fade);
+        };
+        if (guardNavigation(action))
+            return;
+        action();
     }
 
     function visit(component: Component, properties: var, section: int, transition: int) {
@@ -240,8 +262,13 @@ Item {
 
     // Searches from anywhere: the search page shows the results.
     function search(text: string) {
-        openSearch();
-        searchModelObject.submit(text);
+        const action = () => {
+            openSearch();
+            searchModelObject.submit(text);
+        };
+        if (guardNavigation(action))
+            return;
+        action();
     }
 
     // A link the web opened the client with (App.linkRequested, docs/ui/pages/open-links.md):
@@ -251,28 +278,33 @@ Item {
             notify(qsTr("暂不支持这类链接"));
             return;
         }
-        if (covered)
-            uncoverRequested();
-        switch (target) {
-        case App.LinkSong:
-            openSong(key);
-            break;
-        case App.LinkPlaylist:
-            openPlaylist(key);
-            break;
-        case App.LinkAlbum:
-            openAlbum(key);
-            break;
-        case App.LinkArtist:
-            openArtist(key);
-            break;
-        case App.LinkPodcast:
-            openPodcast(key);
-            break;
-        case App.LinkUser:
-            openUser(key);
-            break;
-        }
+        const action = () => {
+            if (covered)
+                uncoverRequested();
+            switch (target) {
+            case App.LinkSong:
+                openSong(key);
+                break;
+            case App.LinkPlaylist:
+                openPlaylist(key);
+                break;
+            case App.LinkAlbum:
+                openAlbum(key);
+                break;
+            case App.LinkArtist:
+                openArtist(key);
+                break;
+            case App.LinkPodcast:
+                openPodcast(key);
+                break;
+            case App.LinkUser:
+                openUser(key);
+                break;
+            }
+        };
+        if (guardNavigation(action))
+            return;
+        action();
     }
     Connections {
         target: App
@@ -361,8 +393,13 @@ Item {
     // A discover tab (0 playlists, 1 charts, 2 artists, 3 new albums): the home page's
     // "查看全部".
     function openDiscover(tab: int) {
-        discoverTab = tab;
-        select(1);
+        const action = () => {
+            discoverTab = tab;
+            select(1);
+        };
+        if (guardNavigation(action))
+            return;
+        action();
     }
 
     function openRecent() {
@@ -437,37 +474,41 @@ Item {
     function back() {
         if (stack.depth < 2)
             return;
-        // Unsaved changes to a song order: the page asks first, then comes back here.
-        const order = stack.currentItem as PlaylistOrderPage;
-        if (order && order.hasChanges && !order.leaving) {
-            order.leave();
+        const action = () => {
+            const leaving = stack.entries[stack.entries.length - 1];
+            if (!stack.pop())
+                return;
+            coverFlight.backward(leaving.item, stack.currentItem);
+            // An editing page left is done with, not something to go forward to.
+            if (leaving.component !== playlistOrderPage)
+                forwardEntries = forwardEntries.concat([{
+                        component: leaving.component,
+                        properties: leaving.properties,
+                        section: sections[sections.length - 1]
+                    }]);
+            sections = sections.slice(0, -1);
+            rail.currentIndex = sections[sections.length - 1];
+        };
+        if (guardNavigation(action))
             return;
-        }
-        const leaving = stack.entries[stack.entries.length - 1];
-        if (!stack.pop())
-            return;
-        coverFlight.backward(leaving.item, stack.currentItem);
-        // An editing page left is done with, not something to go forward to.
-        if (leaving.component !== playlistOrderPage)
-            forwardEntries = forwardEntries.concat([{
-                    component: leaving.component,
-                    properties: leaving.properties,
-                    section: sections[sections.length - 1]
-                }]);
-        sections = sections.slice(0, -1);
-        rail.currentIndex = sections[sections.length - 1];
+        action();
     }
 
     function forward() {
         if (!canGoForward)
             return;
-        const next = forwardEntries[forwardEntries.length - 1];
-        forwardEntries = forwardEntries.slice(0, -1);
-        sections = sections.concat([next.section]);
-        rail.currentIndex = next.section;
-        stack.push(next.component, next.properties,
-                   next.component === destinations[next.section].page ? PageStack.Kind.Fade
-                                                                      : PageStack.Kind.Forward);
+        const action = () => {
+            const next = forwardEntries[forwardEntries.length - 1];
+            forwardEntries = forwardEntries.slice(0, -1);
+            sections = sections.concat([next.section]);
+            rail.currentIndex = next.section;
+            stack.push(next.component, next.properties,
+                       next.component === destinations[next.section].page ? PageStack.Kind.Fade
+                                                                          : PageStack.Kind.Forward);
+        };
+        if (guardNavigation(action))
+            return;
+        action();
     }
 
     Component.onCompleted: {
@@ -569,9 +610,15 @@ Item {
             anchors.topMargin: Math.max(0, shell.topInset - panel.y)
             clip: true
             // The trail in the log: which page, with which ids (logging-v2 §4.1).
-            onCurrentItemChanged: if (currentItem)
-                                      App.diagnostics.pageShown(currentItem, depth,
-                                                                entries[entries.length - 1].properties)
+            onCurrentItemChanged: {
+                if (currentItem) {
+                    App.diagnostics.pageShown(currentItem, depth,
+                                              entries[entries.length - 1].properties);
+                    const order = currentItem as PlaylistOrderPage;
+                    if (order)
+                        order.leaving = false;
+                }
+            }
         }
         // A card's cover flying to the page it opened, and back (expressive.md §5).
         CoverFlight {
