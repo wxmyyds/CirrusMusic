@@ -60,9 +60,9 @@ class AccountMembership : public QObject
     void forgetSaved();
     [[nodiscard]] MembershipEvidence evidence() const;
 
-    template <class T> Reply<T> guard(Reply<T> reply) const
+    template <class T> Reply<T> guard(Reply<T> reply)
     {
-        return [weak = QPointer<const AccountMembership>(this), generation = m_generation,
+        return [weak = QPointer<AccountMembership>(this), generation = m_generation,
                 account = m_account, reply = std::move(reply)](Outcome<T> outcome) {
             if (weak && weak->m_generation == generation && weak->m_queries.account &&
                 weak->m_queries.account() == account)
