@@ -908,8 +908,13 @@ void TogetherSession::sendReplace()
         return;
     const auto list = localList();
     if (list.display.isEmpty() || inStep()) {
-        if (m_afterReplace && inStep() && roomOrder().contains(m_afterReplace->target))
-            sendPlay(*std::exchange(m_afterReplace, std::nullopt));
+        if (m_afterReplace) {
+            const auto target = m_afterReplace->target;
+            if (!localOrder().contains(target))
+                m_afterReplace.reset();
+            else if (inStep() && roomOrder().contains(target))
+                sendPlay(*std::exchange(m_afterReplace, std::nullopt));
+        }
         return;
     }
     auto versions = m_versions;
@@ -948,8 +953,13 @@ void TogetherSession::sendReplace()
                            if (!self || m_state != State::Active || m_generation != generation ||
                                m_context != context)
                                return;
-                           if (m_afterReplace && roomOrder().contains(m_afterReplace->target))
-                               sendPlay(*std::exchange(m_afterReplace, std::nullopt));
+                           if (m_afterReplace) {
+                               const auto target = m_afterReplace->target;
+                               if (!localOrder().contains(target))
+                                   m_afterReplace.reset();
+                               else if (roomOrder().contains(target))
+                                   sendPlay(*std::exchange(m_afterReplace, std::nullopt));
+                           }
                            if (!self || m_state != State::Active || m_generation != generation ||
                                m_context != context)
                                return;

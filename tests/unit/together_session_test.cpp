@@ -552,7 +552,7 @@ class TogetherSessionTest : public QObject
         // report debounce while acknowledging REPLACE #1. The latest target must win.
         QTest::qWait(20);
         QCOMPARE(h.count(TogetherKind::Play), playsBefore);
-        h.timing.reportMs = 100;
+        h.timing.reportMs = 1000;
         h.together.setTiming(h.timing);
         QVERIFY(h.player.replaceQueue({{"10"}, {"11"}}));
         h.publish(PlaybackState::Playing, 2000);
