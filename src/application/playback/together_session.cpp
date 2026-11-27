@@ -944,11 +944,8 @@ void TogetherSession::sendReplace()
                            if (!self || m_state != State::Active || m_generation != generation ||
                                m_context != context)
                                return;
-                           if (m_afterReplace) {
-                               auto play = std::exchange(m_afterReplace, std::nullopt);
-                               if (roomOrder().contains(play->target))
-                                   sendPlay(*play);
-                           }
+                           if (m_afterReplace && roomOrder().contains(m_afterReplace->target))
+                               sendPlay(*std::exchange(m_afterReplace, std::nullopt));
                            if (!self || m_state != State::Active || m_generation != generation ||
                                m_context != context)
                                return;

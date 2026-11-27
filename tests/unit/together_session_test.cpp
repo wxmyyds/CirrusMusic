@@ -538,6 +538,32 @@ class TogetherSessionTest : public QObject
         QCOMPARE(std::get<TogetherReplaceQueue>(next.request.action).versions,
                  (QList<TogetherVersion>{{kMe, 2}}));
     }
+    void playWaitsForTheReplacementThatContainsItsTarget()
+    {
+        Harness h;
+        h.createActive();
+        QVERIFY(h.player.replaceQueue({{"7"}, {"8"}}));
+        const auto first = h.take(TogetherKind::ReplaceQueue);
+        QCOMPARE(std::get<TogetherReplaceQueue>(first.request.action).list.display,
+                 (QList<SongId>{{"7"}, {"8"}}));
+
+        // Playback changes while REPLACE #1 is still in flight. Its acknowledged list
+        // cannot contain this target; retain the play command for the follow-up REPLACE.
+        QVERIFY(h.player.replaceQueue({{"10"}, {"11"}}));
+        h.publish(PlaybackState::Playing, 2000);
+        QTest::qWait(20);
+        QCOMPARE(h.count(TogetherKind::Play), 1); // only createActive's initial play
+
+        h.reply(first, Harness::ok());
+        const auto second = h.take(TogetherKind::ReplaceQueue);
+        QCOMPARE(std::get<TogetherReplaceQueue>(second.request.action).list.display,
+                 (QList<SongId>{{"10"}, {"11"}}));
+        QCOMPARE(h.count(TogetherKind::Play), 1);
+
+        h.reply(second, Harness::ok());
+        const auto play = h.take(TogetherKind::Play);
+        QCOMPARE(std::get<TogetherPlay>(play.request.action).target.value, "10");
+    }
     void joinsAndPlaysTheRoomsList()
     {
         Harness h;

@@ -177,6 +177,8 @@ class AudioEngineFailureTest : public QObject
         AudioEngine engine(store);
         engine.m_active = engine.m_ready = true;
         engine.m_token = LoadToken{{}, 2};
+        engine.m_ticker.start();
+        QVERIFY(engine.m_ticker.isActive());
         auto old = std::make_shared<AudioEngine::Producer>();
         engine.m_producer = old;
         QList<PlaybackEvent> events;
@@ -185,6 +187,7 @@ class AudioEngineFailureTest : public QObject
         engine.m_producer = std::make_shared<AudioEngine::Producer>();
         flushCallbacks();
         QVERIFY(engine.m_active);
+        QVERIFY(engine.m_ticker.isActive());
         QVERIFY(events.isEmpty());
 
         // Also replace between the error callback and fail()'s deferred stop, keeping
@@ -193,6 +196,7 @@ class AudioEngineFailureTest : public QObject
         engine.m_producer = std::make_shared<AudioEngine::Producer>();
         flushCallbacks();
         QVERIFY(engine.m_active);
+        QVERIFY(engine.m_ticker.isActive());
         QVERIFY(events.isEmpty());
     }
 };

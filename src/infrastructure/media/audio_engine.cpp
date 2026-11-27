@@ -873,8 +873,15 @@ void AudioEngine::fail(LoadToken token, PlaybackError error)
     m_meter.breakInterval();
     m_ticker.stop();
     QTimer::singleShot(0, this, [this, producer = m_producer, token, error] {
-        if (!m_active || token != m_token || producer != m_producer)
+        if (!m_active || token != m_token)
             return;
+        if (producer != m_producer) {
+            // A device reopen or seek may replace the producer before this deferred stop.
+            // fail() stopped the ticker, while reopening producers do not emit opened().
+            if (m_ready && m_producer && !m_ticker.isActive())
+                m_ticker.start();
+            return;
+        }
         stop();
         emit event({token, Kind::Failure, {}, 0, {error}});
     });

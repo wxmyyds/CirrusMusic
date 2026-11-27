@@ -435,7 +435,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # SDK library through CMAKE_PREFIX_PATH after reading a system .pc file.
     set(ENV{PKG_CONFIG_ALLOW_SYSTEM_LIBS} 1)
 endif()
-pkg_check_modules(CIRRUS_FFMPEG REQUIRED IMPORTED_TARGET ${cirrus_ffmpeg_search_options}
+pkg_check_modules(CIRRUS_FFMPEG REQUIRED IMPORTED_TARGET GLOBAL ${cirrus_ffmpeg_search_options}
     libavformat>=59 libavcodec>=59.24.100 libavutil>=57.24.100 libswresample>=4.5.100)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     foreach(library IN LISTS CIRRUS_FFMPEG_LINK_LIBRARIES)
