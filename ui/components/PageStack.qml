@@ -33,8 +33,6 @@ Item {
     property real outgoingFromOpacity: 1
     property real outgoingFromX: 0
     property real outgoingFromScale: 1
-    // Destroyed when the transition settles (a popped page), else hidden.
-    property bool destroyOutgoing: false
     // Set while begin() rearranges pages, so stopping the spring does not finish().
     property bool starting: false
 
@@ -54,9 +52,9 @@ Item {
                 item: item,
                 state: undefined
             }]);
-        trim();
         begin(item, transition === PageStack.Kind.Fade ? PageStack.Kind.Fade : PageStack.Kind.Forward,
-              false, previous);
+              previous);
+        trim();
         return item;
     }
 
@@ -68,7 +66,6 @@ Item {
         if (progress.target === 1 && incoming === leaving.item && kind === PageStack.Kind.Forward
                 && outgoing === entries[entries.length - 2].item) {
             entries = entries.slice(0, -1);
-            destroyOutgoing = false;
             progress.target = 0;
             return true;
         }
@@ -80,7 +77,7 @@ Item {
                 back.item.restoreState(back.state);
             entries = entries.slice(); // notify currentItem
         }
-        begin(back.item, PageStack.Kind.Back, true, leaving.item);
+        begin(back.item, PageStack.Kind.Back, leaving.item);
         return true;
     }
 
@@ -98,7 +95,7 @@ Item {
                 item: item,
                 state: undefined
             }];
-        begin(item, PageStack.Kind.Fade, true, previous);
+        begin(item, PageStack.Kind.Fade, previous);
         return item;
     }
 
@@ -118,7 +115,8 @@ Item {
         const keep = Math.max(1, cachedPages);
         for (let i = 0; i < entries.length - keep; ++i) {
             const entry = entries[i];
-            if (!entry.item || entry.item === outgoing)
+            if (!entry.item || entry.item === outgoing || entry.item === incoming
+                    || entry.item === currentItem)
                 continue;
             if (typeof entry.item.saveState === "function")
                 entry.state = entry.item.saveState();
@@ -128,26 +126,28 @@ Item {
     }
 
     // `from` leaves (null for the first page), `next` arrives.
-    function begin(next: Item, transition: int, destroyLeaving: bool, from: Item) {
+    function begin(next: Item, transition: int, from: Item) {
         starting = true;
 
-        // A page still leaving from the previous transition goes at once; a page still
-        // arriving leaves from where it is on screen.
-        if (outgoing && outgoing !== from && outgoing !== next)
-            settleOutgoing();
-        if (from && from === incoming && progress.running) {
-            outgoingFromOpacity = from.opacity;
-            outgoingFromX = from.x;
-            outgoingFromScale = from.scale;
-        } else {
-            outgoingFromOpacity = 1;
-            outgoingFromX = 0;
-            outgoingFromScale = 1;
-        }
+        // Either participant can be obsolete, especially the incoming page of a
+        // reversed push. Detach both bindings before settling or reusing the items.
+        const oldIncoming = incoming;
+        const oldOutgoing = outgoing;
+        const fromOpacity = from ? from.opacity : 1;
+        const fromX = from ? from.x : 0;
+        const fromScale = from ? from.scale : 1;
+        incoming = null;
+        outgoing = null;
+        if (oldIncoming && oldIncoming !== from && oldIncoming !== next)
+            settlePage(oldIncoming, false);
+        if (oldOutgoing && oldOutgoing !== oldIncoming && oldOutgoing !== from && oldOutgoing !== next)
+            settlePage(oldOutgoing, false);
 
+        outgoingFromOpacity = fromOpacity;
+        outgoingFromX = fromX;
+        outgoingFromScale = fromScale;
         kind = transition;
         outgoing = from;
-        destroyOutgoing = destroyLeaving;
         incoming = next;
         if (outgoing)
             outgoing.enabled = false;
@@ -172,14 +172,15 @@ Item {
         return !root.Window.activeFocusItem || root.Window.activeFocusItem === root.Window.contentItem;
     }
 
-        function settleOutgoing() {
-        if (!outgoing)
+    // Entries own cached pages; transition references own removed pages until
+    // they settle. Every retired participant is released through this one path.
+    function settlePage(page: Item, shown: bool) {
+        if (!page)
             return;
-        if (destroyOutgoing)
-            outgoing.destroy();
+        if (entries.some(entry => entry.item === page))
+            resetPage(page, shown);
         else
-            resetPage(outgoing, false);
-        outgoing = null;
+            page.destroy();
     }
 
     function resetPage(page: Item, shown: bool) {
@@ -192,19 +193,15 @@ Item {
 
     // Called when the spring comes to rest.
     function finish() {
-        if (progress.target === 1) {
-            settleOutgoing();
-            if (incoming)
-                resetPage(incoming, true);
-        } else {
-            // A reversed push: the pushed page goes, the page under it is current again.
-            if (incoming)
-                incoming.destroy();
-            if (outgoing)
-                resetPage(outgoing, true);
-            outgoing = null;
-        }
+        const arrived = incoming;
+        const left = outgoing;
+        const forward = progress.target === 1;
         incoming = null;
+        outgoing = null;
+        settlePage(arrived, forward);
+        if (left !== arrived)
+            settlePage(left, !forward);
+        trim();
     }
 
     // Reduced motion: a quick cross-fade, no movement.
