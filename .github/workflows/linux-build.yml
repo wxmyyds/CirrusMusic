@@ -139,16 +139,48 @@ jobs:
           path: ${{ env.CCACHE_DIR }}
           key: ${{ env.CIRRUS_CCACHE_KEY }}
 
+      - name: Validate exact native package
+        id: package
+        run: |
+          set -euo pipefail
+          versions=()
+          mapfile -t versions < <(sed -nE 's/^project\(CirrusMusic VERSION ([0-9]+\.[0-9]+\.[0-9]+)([[:space:]]|\)).*/\1/p' CMakeLists.txt)
+          if (( ${#versions[@]} != 1 )); then
+            echo '::error::Expected exactly one project version in CMakeLists.txt'
+            exit 1
+          fi
+          version=${versions[0]}
+          [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          case "$DISTRIBUTION:$TARGET_ARCH" in
+            arch:x86_64) expected="cirrus-$version-1-x86_64.pkg.tar.zst" ;;
+            arch:arm64) expected="cirrus-$version-1-aarch64.pkg.tar.zst" ;;
+            debian:x86_64) expected="cirrus_${version}_amd64.deb" ;;
+            debian:arm64) expected="cirrus_${version}_arm64.deb" ;;
+            fedora:x86_64) expected="cirrus-$version-1.fc44.x86_64.rpm" ;;
+            fedora:arm64) expected="cirrus-$version-1.fc44.aarch64.rpm" ;;
+            *) echo "::error::Unsupported package target: $DISTRIBUTION/$TARGET_ARCH"; exit 2 ;;
+          esac
+
+          shopt -s nullglob
+          packages=(dist/cirrus-*.pkg.tar.zst dist/cirrus_*.deb dist/cirrus-*.rpm)
+          if (( ${#packages[@]} != 1 )) || [[ ${packages[0]} != "dist/$expected" ]]; then
+            printf '::error::Expected only dist/%s; found: %s\n' "$expected" "${packages[*]:-none}"
+            exit 1
+          fi
+          package=${packages[0]}
+          if [[ ! -f $package || -L $package || ! -s $package ]]; then
+            echo "::error::Package must be a non-empty regular non-symlink file: $package"
+            exit 1
+          fi
+          printf 'path=%s\n' "$package" >> "$GITHUB_OUTPUT"
+
       - name: Upload native package
         uses: actions/upload-artifact@v7
         with:
           name: cirrus-linux-${{ matrix.distribution }}-${{ matrix.arch }}
           retention-days: 1
           overwrite: ${{ github.run_attempt > 1 }}
-          path: |
-            dist/cirrus-*.pkg.tar.zst
-            dist/cirrus_*.deb
-            dist/cirrus-*.rpm
+          path: ${{ steps.package.outputs.path }}
           if-no-files-found: error
 
       - name: Upload bundled-library sources separately

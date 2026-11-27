@@ -1,30 +1,18 @@
 # 参与开发
 
-感谢你愿意帮忙。这份文档说明怎么构建、测试，代码大致怎么分层，以及提交时的约定。
+感谢你愿意帮忙。构建、自动化测试、打包和安装均通过 GitHub Actions 执行；操作入口见 [README](README.md#从源码构建)，工作流及产物细节见[打包与发布](packaging/README.md)。本指南说明代码分层和协作约定。
 
-## 开发环境
+## 本地静态检查
 
-依赖见 [README](README.md#从源码构建)。开发构建打开测试和界面组件预览（gallery）：
+本机不配置或构建项目、不运行自动化测试或应用，也不打包、安装。允许执行不写入项目产物的定向静态检查，例如：
 
-```bash
-cmake --preset linux-dev            # 用 Qt 官方安装器的 Qt：见 CMakeUserPresets.json.example
-cmake --build --preset linux-dev
-./build/linux-dev/appCirrusMusic
-```
+- `git diff --check`
+- `bash -n <脚本>`、Python/YAML 语法检查
+- `clang-format --dry-run --Werror <C++ 文件>`
+- 已有 `actionlint` 对工作流做静态校验
+- `git apply --check <补丁>`，以及源码、归档和二进制文件清单检查
 
-- `appCirrusMusic` 启动后就会连接网易云，并读写 `~/.local/share/Cirrus`、`~/.cache/Cirrus` 和系统钥匙串。测试时请把 `XDG_DATA_HOME`、`XDG_CACHE_HOME`、`XDG_CONFIG_HOME`、`XDG_STATE_HOME` 指到一个固定的目录（不要在 `/tmp` 下，缓存会拒绝其他用户可写的目录），也不要反复用全新的目录启动：网易云会限制新的匿名注册。
-- 它是单实例的：已经有一个在运行时，再启动只会激活那一个。
-- `appCirrusGallery` 展示主题和全部控件，改界面控件时用它对照；`--grab out.png --page buttons` 可以截图。
-
-## 测试
-
-```bash
-QT_QPA_PLATFORM=offscreen dbus-run-session -- \
-    ctest --test-dir build/linux-dev --output-on-failure --no-tests=error
-cmake --build build/linux-dev --target all_qmllint
-```
-
-测试都是离线的：网络请求由假的传输层回放，不会访问网易云。界面没有自动化测试，在 gallery 和真实应用里检查。
+静态检查不能替代 Actions 上绑定当前完整源码提交的构建与测试结果。
 
 ## 代码结构
 

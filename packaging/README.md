@@ -60,7 +60,7 @@ gh workflow run macos-build.yml --ref feat/debian-system-qt -f architecture=x86_
 | macOS x86_64 | `Cirrus-<版本>-macos-x86_64.dmg` | `cirrus-macos-x86_64` |
 | 共享库源码 | `Cirrus-<版本>-library-sources.tar.xz` | `cirrus-library-sources` |
 
-十组目标共十二个二进制安装包；库源码单独上传为 `cirrus-library-sources` artifact，不放入任何平台安装包 artifact。每次 Linux 构建只由一个选中的 job 收集源码：完整矩阵优先 Debian x86_64，筛选构建使用选中目标中的一个。源码归档包含固定版本的 FFmpeg、QtKeychain 原始源码，供全部随包部署目标共用；其中 FFmpeg 原始源码供 macOS 和 Fedora 的最小 E-AC-3 库共用。
+十组目标共十二个二进制安装包；库源码单独上传为 `cirrus-library-sources` artifact，不放入任何平台安装包 artifact。Linux job 根据检出的项目版本、发行版和架构生成唯一预期包名，上传前确认 `dist/` 中只有该名称匹配的包文件，且其为非空、非符号链接的普通文件；同一校验也拒绝其他发行版扩展名的残留包。Release consumer 按本表中的精确文件名逐 artifact 校验文件集合，并继续核对完整 artifact 清单、非空性、符号链接和重复名称。每次 Linux 构建只由一个选中的 job 收集源码：完整矩阵优先 Debian x86_64，筛选构建使用选中目标中的一个。源码归档包含固定版本的 FFmpeg、QtKeychain 原始源码，供全部随包部署目标共用；其中 FFmpeg 原始源码供 macOS 和 Fedora 的最小 E-AC-3 库共用。
 
 版本唯一来源为 `CMakeLists.txt` 中的 `project(CirrusMusic VERSION x.y.z)`；Release 标签必须为 `vx.y.z`，说明来自 [resources/CHANGELOG.md](../resources/CHANGELOG.md) 的唯一版本章节；该文件只保留当前待发布版本。版本号相同的分支包可能包含不同提交，下载时核对运行来源和提交 SHA。
 

@@ -34,7 +34,7 @@
 - 继续使用上游 C++ 的 `Hct`、`Cam16`、对比度、量化、评分等基础算法；`TemperatureCache` 与 `DislikeAnalyzer` 改用移植版本，因为上游 C++ 版本与 TS 结果不一致。
 - 每个方案的色调计算带缓存（TS 只缓存 HCT），复制出的方案缓存为空。
 - **验证**：164 个种子（150 个伪随机 + 14 个边界色）× 9 个变体 × 明暗 × 5 档对比度 × 2 个规范，共 1,649,840 个颜色与同一提交编译的 TS 逐一比较，84 个（0.005%）不同，均为某一通道相差 1 的浮点舍入。Release 下生成一套 55 个角色约 0.8 ms。
-- 上游 `cpp/dynamiccolor` 与 `cpp/scheme` 保留在仓库中并参与构建，但 Cirrus 不再使用。
+- 上游 `cpp/dynamiccolor` 与 `cpp/scheme` 源码保留在仓库中用于上游跟踪，但 UI 使用 `cirrus/` 中的 TypeScript 移植，不将这两组上游 `.cc` 文件加入默认 `cirrus_mcu` target。其余实际依赖的上游基础算法继续编译。
 
 ## 更新方法
 

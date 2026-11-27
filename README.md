@@ -51,7 +51,7 @@
 
 ## 从源码构建
 
-**该操作需要通过 GitHub Actions 执行。** 在 Actions 选择待构建分支，再运行 `Linux build`、`Windows build` 或 `macOS build`，填写需要构建的源码 `ref`，完成后下载对应架构 artifact。
+**该操作需要通过 GitHub Actions 执行。** 在 Actions 选择待构建分支，再运行 `Linux build`、`Windows build` 或 `macOS build`，填写需要构建的源码 `ref`，完成后下载对应架构 artifact。本机只进行不写入项目产物的静态检查，见 [贡献指南](CONTRIBUTING.md#本地静态检查)。
 
 Linux 构建包含 Arch、Debian、Fedora 的 ARM64 与 x86_64 六个原生发行版 job；Windows 和 macOS 各两个原生架构 job。`CI` 独立执行 Linux、Windows、macOS 测试，不生成安装包。
 

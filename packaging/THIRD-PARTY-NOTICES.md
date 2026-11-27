@@ -5,9 +5,10 @@ by or sponsored by NetEase. Cirrus itself is licensed under the MIT License (`LI
 next to this file).
 
 Cirrus uses the following software. The license texts are in `licenses/` next to this
-file. The upstream LGPL sources are unmodified. The application dynamically links the
-bundled libraries. On Fedora, the private EAC3 shared library contains statically linked
-FFmpeg objects; its complete bridge sources and build configuration are under
+file. Upstream LGPL sources are unmodified. Packages dynamically link applicable system or
+bundled shared libraries, except that Windows QtKeychain is statically linked into
+`Cirrus.exe`. On Fedora, the private EAC3 shared library contains statically linked FFmpeg
+objects; its complete bridge sources and build configuration are under
 `packaging/linux/fedora/` in the Cirrus source. Compatible shared libraries can be replaced
 in the package's `lib/` or `lib64/`, next to `Cirrus.exe`, or in the macOS Frameworks directory.
 

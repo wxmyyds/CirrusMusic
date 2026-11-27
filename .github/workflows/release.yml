@@ -155,6 +155,8 @@ jobs:
           hashes = {}
           for artifact, names in expected.items():
               directory = artifacts / artifact
+              if directory.is_symlink() or not directory.is_dir():
+                  raise SystemExit(f'{artifact}: expected a real artifact directory')
               children = list(directory.iterdir())
               if {path.name for path in children} != names:
                   raise SystemExit(f'{artifact}: wrong package inventory')
