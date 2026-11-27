@@ -242,7 +242,9 @@ class AudioEngineTest : public QObject
         m_engine->pause();
         QTest::qWait(300);
         m_engine->seek(180000);
-        QTRY_VERIFY_WITH_TIMEOUT(has(Kind::SeekConfirmed), 3000);
+        // The native ARM64 runner completed the range seek just beyond the old 3 s
+        // deadline. Keep the confirmation mandatory with a bounded scheduling allowance.
+        QTRY_VERIFY_WITH_TIMEOUT(has(Kind::SeekConfirmed), 5000);
         QCOMPARE(first(Kind::SeekConfirmed).value, 180000);
         // The download went there (the chunk of byte 180 000; opening asked for the end's),
         // and it plays on from there.

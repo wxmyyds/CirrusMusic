@@ -53,11 +53,21 @@ class SingleInstanceTest : public QObject
         const QString lockPath = directory.filePath(QStringLiteral("instance.lock"));
         QFile staleLock(lockPath);
         QVERIFY(staleLock.open(QIODevice::WriteOnly));
+        const QString hostName = QSysInfo::machineHostName();
+        const QString applicationName = QCoreApplication::applicationName();
         const QByteArray lockContents = QByteArrayLiteral("2147483647\n") +
-                                        QSysInfo::machineHostName().toUtf8() + '\n' +
-                                        QCoreApplication::applicationName().toUtf8() + '\n';
+                                        applicationName.toUtf8() + '\n' + hostName.toUtf8() + '\n';
         QCOMPARE(staleLock.write(lockContents), qint64(lockContents.size()));
         staleLock.close();
+
+        QLockFile lockInfo(lockPath);
+        qint64 lockPid = 0;
+        QString lockHostName;
+        QString lockApplicationName;
+        QVERIFY(lockInfo.getLockInfo(&lockPid, &lockHostName, &lockApplicationName));
+        QCOMPARE(lockPid, qint64(2147483647));
+        QCOMPARE(lockHostName, hostName);
+        QCOMPARE(lockApplicationName, applicationName);
 
         const QString socketPath = directory.filePath(QStringLiteral("instance.socket"));
         QFile staleSocket(socketPath);

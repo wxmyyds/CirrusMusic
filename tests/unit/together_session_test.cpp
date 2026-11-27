@@ -21,6 +21,7 @@ struct Harness {
     BackendFacade facade;
     ListeningSession player{facade};
     TogetherSession together{facade, player};
+    TogetherSession::Timing timing;
     Harness()
     {
         QObject::connect(&facade, &BackendFacade::playbackRequested, &facade,
@@ -47,15 +48,14 @@ struct Harness {
         e.session = session;
         facade.deliver(e);
         together.setClock([this] { return clock; });
-        TogetherSession::Timing t;
-        t.pollMs = 10;
-        t.statusMs = 1000000;
-        t.heartbeatMs = 1000000;
-        t.lostMs = 60000;
-        t.reportMs = 5;
-        t.replaceMs = 5;
-        t.leaveMs = 200;
-        together.setTiming(t);
+        timing.pollMs = 10;
+        timing.statusMs = 1000000;
+        timing.heartbeatMs = 1000000;
+        timing.lostMs = 60000;
+        timing.reportMs = 5;
+        timing.replaceMs = 5;
+        timing.leaveMs = 200;
+        together.setTiming(timing);
     }
     PlaybackCommand latestPlay() const
     {
@@ -548,8 +548,12 @@ class TogetherSessionTest : public QObject
         QCOMPARE(std::get<TogetherReplaceQueue>(first.request.action).list.display,
                  (QList<SongId>{{"7"}, {"8"}}));
 
-        // Playback changes while REPLACE #1 is still in flight. Its acknowledged list
-        // cannot contain this target; retain the play command for the follow-up REPLACE.
+        // Let the first target become deferred, then keep the newer action inside its
+        // report debounce while acknowledging REPLACE #1. The latest target must win.
+        QTest::qWait(20);
+        QCOMPARE(h.count(TogetherKind::Play), playsBefore);
+        h.timing.reportMs = 100;
+        h.together.setTiming(h.timing);
         QVERIFY(h.player.replaceQueue({{"10"}, {"11"}}));
         h.publish(PlaybackState::Playing, 2000);
         QTest::qWait(20);

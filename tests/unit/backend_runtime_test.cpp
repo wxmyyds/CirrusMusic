@@ -3575,5 +3575,7 @@ void BackendRuntimeTest::togetherHttpThroughThread()
     QCOMPARE(state->wrongThread.load(), 0);
     QCOMPARE(state->created.load(), state->destroyed.load());
 }
-QTEST_GUILESS_MAIN(BackendRuntimeTest)
+// QGuiApplication initializes the main-thread COM apartment before the production
+// Qt Multimedia backend is created on BackendRuntime's worker thread.
+QTEST_MAIN(BackendRuntimeTest)
 #include "backend_runtime_test.moc"

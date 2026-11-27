@@ -853,6 +853,10 @@ void TogetherSession::playbackChanged(const PlaybackSnapshot& s)
                          std::clamp<qint64>(s.song == old.song ? s.positionMs : 0, 0, kProgressMax),
                          0,
                          trigger};
+    // A newer local action supersedes a play waiting behind a queue replacement immediately;
+    // the report debounce must not leave the earlier target eligible for an acknowledgement.
+    if (m_afterReplace)
+        m_afterReplace = m_out;
     m_reportTimer.start(m_timing.reportMs);
 }
 
