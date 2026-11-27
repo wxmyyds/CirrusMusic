@@ -223,6 +223,7 @@ static BackendFactories factories(std::shared_ptr<SharedState> state, Gate& gate
         manager->plans = {Plan{"{}", 503}}; // never contacts a real key registrar
         return std::make_unique<netease::HttpTransport>(std::move(manager));
     };
+    f.playback = [] { return std::make_unique<FakePlaybackBackend>(); };
     return f;
 }
 
@@ -280,6 +281,7 @@ class BackendRuntimeTest : public QObject
         QCoreApplication::setApplicationName(QUuid::createUuid().toString(QUuid::Id128));
     }
     void startLoginCloseRestore();
+    void productionPlaybackBackendLifecycle();
     void heartbeatRequestCanceledOnSessionChange();
     void detailIdentityAndPlaylistLibraryBounds();
     void musicQueriesThroughThread();
@@ -373,7 +375,6 @@ void BackendRuntimeTest::biliLyricsAndCookieThroughThread()
         plans.append(lyric);
     }
     auto f = factories(state, gate, std::move(plans));
-    f.playback = [] { return std::make_unique<FakePlaybackBackend>(); };
     f.biliAccountHttp = [] {
         auto manager = std::make_unique<FakeGetManager>();
         manager->plans = {biliJson("{\"code\":0,\"data\":{\"isLogin\":true,\"uname\":\"Synthetic\"}}")};
@@ -1253,6 +1254,29 @@ void BackendRuntimeTest::detailIdentityAndPlaylistLibraryBounds()
     QCOMPARE(state->wrongThread.load(), 0);
 }
 
+void BackendRuntimeTest::productionPlaybackBackendLifecycle()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto state = std::make_shared<SharedState>();
+    Gate gate;
+    const BackendConfig config{directory.filePath(QStringLiteral("state.sqlite")),
+                               QStringLiteral("synthetic-production-playback")};
+    seed(config.databasePath, *state);
+    auto options = factories(state, gate);
+    options.playback = {}; // Exercise BackendRuntime's production AudioEngine composition.
+    BackendRuntime runtime(config, std::move(options));
+    auto& facade = runtime.facade();
+    QSignalSpy started(&facade, &BackendFacade::started), stopped(&facade, &BackendFacade::stopped);
+    facade.start();
+    QTRY_COMPARE(started.size(), 1);
+    QCOMPARE(qvariant_cast<StartupError>(started.first().first()), StartupError::None);
+    facade.close();
+    QTRY_COMPARE(stopped.size(), 1);
+    QCOMPARE(state->created.load(), state->destroyed.load());
+    QCOMPARE(state->wrongThread.load(), 0);
+}
+
 void BackendRuntimeTest::heartbeatRequestCanceledOnSessionChange()
 {
     QTemporaryDir directory;
@@ -1265,7 +1289,6 @@ void BackendRuntimeTest::heartbeatRequestCanceledOnSessionChange()
     auto plans = loginPlans();
     plans.append(Plan{"", 200, -1}); // stays in flight until the session change cancels it
     auto options = factories(state, gate, std::move(plans));
-    options.playback = [] { return std::make_unique<FakePlaybackBackend>(); };
     BackendRuntime runtime(config, std::move(options));
     cirrus::ui::BackendCatalog catalog(runtime);
     cirrus::ui::BackendPlayback playback(runtime, catalog);

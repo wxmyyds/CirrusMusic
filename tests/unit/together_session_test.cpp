@@ -123,10 +123,10 @@ struct Harness {
         r.providerCode = 200;
         return r;
     }
-    static TogetherRoom room(QList<QString> members = {kMe})
+    static TogetherRoom room(QList<QString> members = {kMe}, QString creator = kMe)
     {
         TogetherRoom r{kRoom};
-        r.creatorId = kMe;
+        r.creatorId = std::move(creator);
         for (const auto& m : members)
             r.members.append(TogetherMember{m, QStringLiteral("synthetic"), {}});
         return r;
@@ -162,7 +162,7 @@ struct Harness {
         return p;
     }
     // Creates a room from the queue 1, 2, 3 playing 2; ends active.
-    void createActive()
+    void createActive(const QString& account = kMe)
     {
         QVERIFY(player.replaceQueue({{"1"}, {"2"}, {"3"}}, 1));
         publish(PlaybackState::Playing, 5000);
@@ -173,14 +173,14 @@ struct Harness {
         reply(take(TogetherKind::Status), r);
         r = ok();
         r.resultType = QStringLiteral("NEW_ROOM");
-        r.room = room();
+        r.room = room({account}, account);
         reply(take(TogetherKind::Create), r);
         const auto q = take(TogetherKind::ReplaceQueue);
         const auto& a = std::get<TogetherReplaceQueue>(q.request.action);
         QCOMPARE(a.list.display, (QList<SongId>{{"1"}, {"2"}, {"3"}}));
         QCOMPARE(a.list.anchor.value, "2");
         QCOMPARE(a.list.anchorPosition, 1);
-        QCOMPARE(a.versions, (QList<TogetherVersion>{{kMe, 0}}));
+        QCOMPARE(a.versions, (QList<TogetherVersion>{{account, 0}}));
         publish(PlaybackState::Playing, 5000);
         reply(q, ok());
         const auto play = take(TogetherKind::Play);
@@ -542,6 +542,7 @@ class TogetherSessionTest : public QObject
     {
         Harness h;
         h.createActive();
+        const int playsBefore = h.count(TogetherKind::Play);
         QVERIFY(h.player.replaceQueue({{"7"}, {"8"}}));
         const auto first = h.take(TogetherKind::ReplaceQueue);
         QCOMPARE(std::get<TogetherReplaceQueue>(first.request.action).list.display,
@@ -552,13 +553,13 @@ class TogetherSessionTest : public QObject
         QVERIFY(h.player.replaceQueue({{"10"}, {"11"}}));
         h.publish(PlaybackState::Playing, 2000);
         QTest::qWait(20);
-        QCOMPARE(h.count(TogetherKind::Play), 1); // only createActive's initial play
+        QCOMPARE(h.count(TogetherKind::Play), playsBefore);
 
         h.reply(first, Harness::ok());
         const auto second = h.take(TogetherKind::ReplaceQueue);
         QCOMPARE(std::get<TogetherReplaceQueue>(second.request.action).list.display,
                  (QList<SongId>{{"10"}, {"11"}}));
-        QCOMPARE(h.count(TogetherKind::Play), 1);
+        QCOMPARE(h.count(TogetherKind::Play), playsBefore);
 
         h.reply(second, Harness::ok());
         const auto play = h.take(TogetherKind::Play);
@@ -630,6 +631,55 @@ class TogetherSessionTest : public QObject
         QCOMPARE(h.count(TogetherKind::End), 0);
         QTest::qWait(30);
         QCOMPARE(h.count(TogetherKind::Queue), 1); // the loop stopped
+    }
+    void lateCompletionAfterAccountSwitchCannotAffectTheNewSession()
+    {
+        Harness h;
+        h.createActive();
+        QVERIFY(h.player.replaceQueue({{"7"}, {"8"}}));
+        const auto oldReplace = h.take(TogetherKind::ReplaceQueue);
+
+        h.session = {{QUuid::createUuid(), 2}, SessionPhase::Authenticated,
+                     QStringLiteral("300")};
+        BackendEvent account;
+        account.kind = BackendEvent::Kind::Session;
+        account.session = h.session;
+        h.facade.deliver(account);
+        QCOMPARE(h.together.state(), TogetherSession::State::Idle);
+
+        h.createActive(QStringLiteral("300"));
+        const int sent = h.count(TogetherKind::Play);
+        QSignalSpy listSent(&h.together, &TogetherSession::listSent);
+        const auto listsBefore = listSent.size();
+        h.reply(oldReplace, Harness::ok());
+        QTest::qWait(20);
+        QCOMPARE(h.together.state(), TogetherSession::State::Active);
+        QVERIFY(h.together.saved());
+        QCOMPARE(h.together.saved()->accountId, QStringLiteral("300"));
+        QCOMPARE(h.count(TogetherKind::Play), sent);
+        QCOMPARE(listSent.size(), listsBefore);
+    }
+    void lateCompletionFromPriorRoomGenerationCannotAffectNewRoom()
+    {
+        Harness h;
+        h.createActive();
+        QVERIFY(h.player.replaceQueue({{"7"}, {"8"}}));
+        const auto oldReplace = h.take(TogetherKind::ReplaceQueue);
+
+        h.together.leave();
+        const auto end = h.take(TogetherKind::End);
+        h.reply(end, Harness::ok());
+        QCOMPARE(h.together.state(), TogetherSession::State::Idle);
+        h.createActive();
+
+        const auto sent = h.count(TogetherKind::Play);
+        QSignalSpy listSent(&h.together, &TogetherSession::listSent);
+        const auto listsBefore = listSent.size();
+        h.reply(oldReplace, Harness::ok());
+        QTest::qWait(20);
+        QCOMPARE(h.together.state(), TogetherSession::State::Active);
+        QCOMPARE(h.count(TogetherKind::Play), sent);
+        QCOMPARE(listSent.size(), listsBefore);
     }
     void leaves()
     {
