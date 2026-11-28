@@ -25,6 +25,9 @@ Item {
     id: table
 
     required property SortedSongsModel songs
+    // Opt-in frame probe, active only during table scrolling; see PageStack.
+    readonly property bool traceFrameStalls:
+        Qt.application.arguments.indexOf("--trace-ui-jank") >= 0
     property Component headerContent
     // Under the rows (e.g. the next page loading).
     property Component footerContent
@@ -904,6 +907,16 @@ Item {
                 }
             }
         }
+    }
+
+    // Log only slow frames while this table is actively scrolling, so a capture can
+    // distinguish delegate/render pressure from page-incubation and transition stalls.
+    FrameAnimation {
+        running: table.traceFrameStalls && list.moving && table.visible
+        onTriggered: if (frameTime >= 0.05)
+                         console.warn("SongTable frame stall:", Math.round(frameTime * 1000),
+                                      "ms; rows", list.count, "contentY",
+                                      Math.round(list.contentY))
     }
 
     ColumnTitles {

@@ -4,10 +4,8 @@ import Cirrus.Theme
 import Cirrus.Controls
 import Cirrus.Components
 
-// Settings (docs/ui/pages/settings.md): one long page of groups, each its own file
-// under settings/ built from the row types there; on wide windows an index of the
-// groups on the left follows the scroll and jumps to a group. A new group is one line
-// in `groups` below: the index picks it up.
+// groups under `settings/`; on wide windows an index of the groups on the left follows
+// the scroll and jumps to a group. Add each new group to `sections` and `groups` below.
 PageScaffold {
     id: page
 

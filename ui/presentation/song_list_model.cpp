@@ -195,6 +195,8 @@ void SongListModel::fill(const QStringList& requested, const QList<SongInfo>& de
     for (const SongInfo& song : details)
         byKey.insert(song.key, &song);
     const QSet<QString> wanted(requested.cbegin(), requested.cend());
+    int firstChanged = -1;
+    int lastChanged = -1;
     for (int row = 0; row < rowCount(); ++row) {
         Row& entry = m_rows[row];
         if (entry.loaded || !wanted.contains(entry.song.key))
@@ -206,7 +208,14 @@ void SongListModel::fill(const QStringList& requested, const QList<SongInfo>& de
         } else {
             entry.missing = true;
         }
-        emit dataChanged(index(row), index(row));
+        if (firstChanged < 0)
+            firstChanged = row;
+        lastChanged = row;
+    }
+    if (firstChanged >= 0) {
+        // A batch can fill many rows. Keep the role list empty so proxies with custom
+        // multi-role sort/filter logic re-evaluate once per response, not once per row.
+        emit dataChanged(index(firstChanged), index(lastChanged));
     }
 }
 

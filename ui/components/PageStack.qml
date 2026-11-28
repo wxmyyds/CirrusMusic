@@ -361,7 +361,9 @@ Item {
         trim();
     }
 
-    // Reduced motion: a quick cross-fade, no movement.
+    // Opt-in probe: launch with --trace-ui-jank to log stalls during incubation/transitions.
+    readonly property bool traceFrameStalls:
+        Qt.application.arguments.indexOf("--trace-ui-jank") >= 0
     readonly property bool reduced: Theme.motion.reduced
 
     Spring {
@@ -370,6 +372,15 @@ Item {
         threshold: 0.001
         onRunningChanged: if (!running && !root.starting && (root.incoming || root.outgoing))
                               root.finish()
+    }
+
+    // Record stalls during the two costly navigation phases without tracing idle frames.
+    FrameAnimation {
+        running: root.traceFrameStalls && (root.creating || progress.running)
+        onTriggered: if (frameTime >= 0.05)
+                         console.warn("PageStack frame stall:", Math.round(frameTime * 1000),
+                                      "ms;", root.creating ? "incubating" : "transition",
+                                      "depth", root.depth)
     }
 
     // Opacity and geometry of both pages, derived from the one progress value.
