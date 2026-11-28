@@ -22,15 +22,19 @@ Item {
     property real bottomRightRadius: radius
     property real bottomLeftRadius: radius
 
-    readonly property bool rippleSupported: GraphicsInfo.api !== GraphicsInfo.Software
-                                            && GraphicsInfo.api !== GraphicsInfo.Unknown
+    // Asked on the first press only: hundreds of layers, most never pressed, each kept
+    // a GraphicsInfo and a ripple shader effect of their own.
+    function rippleSupported(): bool {
+        return GraphicsInfo.api !== GraphicsInfo.Software && GraphicsInfo.api !== GraphicsInfo.Unknown;
+    }
+    property bool pressedOnce: false
 
     Accessible.ignored: true
 
     Spring {
         id: overlay
         target: root.dragged ? Theme.state.dragged
-              : root.pressed && !root.rippleSupported ? Theme.state.pressed
+              : root.pressed && !root.rippleSupported() ? Theme.state.pressed
               : root.focused ? Theme.state.focus
               : root.hovered ? Theme.state.hover : 0
         spec: Theme.motion.fastEffects
@@ -49,18 +53,20 @@ Item {
     }
 
     onPressedChanged: {
-        if (!rippleSupported)
+        if (!rippleSupported())
             return;
-        if (pressed)
+        if (pressed) {
+            pressedOnce = true; // loads the ripple, synchronously
             (rippleLoader.item as Ripple)?.start(pressX, pressY);
-        else
+        } else {
             (rippleLoader.item as Ripple)?.release();
+        }
     }
 
     Loader {
         id: rippleLoader
         anchors.fill: parent
-        active: root.rippleSupported
+        active: root.pressedOnce
         sourceComponent: Ripple {
             rippleColor: root.color
             radii: Qt.vector4d(root.topLeftRadius, root.topRightRadius, root.bottomRightRadius,

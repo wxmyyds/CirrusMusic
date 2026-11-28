@@ -677,23 +677,27 @@ Item {
                             size: 20
                             color: ColorScope.scheme.primary
                         }
-                        IconButton {
+                        // The row's buttons exist only while they show: a page has dozens
+                        // of rows, and each button is a few dozen objects.
+                        Loader {
                             anchors.right: parent.right
                             anchors.rightMargin: -6
                             anchors.verticalCenter: parent.verticalCenter
-                            visible: row.hovered && row.loaded
-                            enabled: table.playable
-                            size: Md.XSmall
-                            focusPolicy: Qt.NoFocus
-                            showToolTip: false
-                            glyph: row.playing ? Symbols.pause : Symbols.play_arrow
-                            iconFill: 1
-                            text: row.playing ? qsTr("暂停") : qsTr("播放")
-                            onClicked: {
-                                if (row.current)
-                                    App.player.playPause();
-                                else
-                                    table.play(row.index);
+                            active: row.hovered && row.loaded
+                            sourceComponent: IconButton {
+                                enabled: table.playable
+                                size: Md.XSmall
+                                focusPolicy: Qt.NoFocus
+                                showToolTip: false
+                                glyph: row.playing ? Symbols.pause : Symbols.play_arrow
+                                iconFill: 1
+                                text: row.playing ? qsTr("暂停") : qsTr("播放")
+                                onClicked: {
+                                    if (row.current)
+                                        App.player.playPause();
+                                    else
+                                        table.play(row.index);
+                                }
                             }
                         }
                     }
@@ -820,21 +824,42 @@ Item {
                         onActivated: table.albumRequested(row.albumKey)
                     }
 
-                    IconButton {
+                    // The like button while hovered; otherwise its icon alone, drawn as the
+                    // idle button draws it (a standard XSmall icon button).
+                    Item {
                         x: table.likedX + (table.likedWidth - width) / 2
+                        width: 32
+                        height: 32
                         anchors.verticalCenter: parent.verticalCenter
                         visible: table.showLiked && row.loaded
-                        size: Md.XSmall
-                        focusPolicy: Qt.NoFocus
-                        checkable: true
-                        checked: row.liked
-                        iconFill: row.liked ? 1 : 0
-                        pops: true
-                        glyph: Symbols.favorite
-                        text: row.liked ? qsTr("取消喜欢") : qsTr("喜欢")
-                        onToggled: {
-                            table.setLiked(row.key, checked);
-                            checked = Qt.binding(() => row.liked);
+
+                        Icon {
+                            anchors.centerIn: parent
+                            visible: !likeButton.active
+                            glyph: Symbols.favorite
+                            size: 20
+                            fill: row.liked ? 1 : 0
+                            color: row.liked ? ColorScope.scheme.primary
+                                             : ColorScope.scheme.onSurfaceVariant
+                        }
+                        Loader {
+                            id: likeButton
+                            anchors.centerIn: parent
+                            active: row.hovered
+                            sourceComponent: IconButton {
+                                size: Md.XSmall
+                                focusPolicy: Qt.NoFocus
+                                checkable: true
+                                checked: row.liked
+                                iconFill: row.liked ? 1 : 0
+                                pops: true
+                                glyph: Symbols.favorite
+                                text: row.liked ? qsTr("取消喜欢") : qsTr("喜欢")
+                                onToggled: {
+                                    table.setLiked(row.key, checked);
+                                    checked = Qt.binding(() => row.liked);
+                                }
+                            }
                         }
                     }
 
@@ -850,17 +875,19 @@ Item {
                     }
                 }
 
-                IconButton {
-                    id: more
+                Loader {
                     x: parent.width - 16 - table.moreWidth + (table.moreWidth - width) / 2
                     anchors.verticalCenter: parent.verticalCenter
-                    size: Md.XSmall
-                    focusPolicy: Qt.NoFocus
-                    opacity: row.hovered || row.showsFocus || songMenu.row === row.index ? 1 : 0
-                    enabled: row.loaded
-                    glyph: Symbols.more_vert
-                    text: qsTr("更多")
-                    onClicked: table.openMenu(row.index, more, 0, more.height)
+                    active: row.hovered || row.showsFocus || songMenu.row === row.index
+                    sourceComponent: IconButton {
+                        id: more
+                        size: Md.XSmall
+                        focusPolicy: Qt.NoFocus
+                        enabled: row.loaded
+                        glyph: Symbols.more_vert
+                        text: qsTr("更多")
+                        onClicked: table.openMenu(row.index, more, 0, more.height)
+                    }
                 }
             }
         }

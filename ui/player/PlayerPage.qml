@@ -625,6 +625,7 @@ FocusScope {
                     anchors.fill: parent
                     colors: colors
                     positionMs: clock.positionMs
+                    live: page.visible
                     visible: page.view === 1
                     onCopyRequested: songInfo.open()
                 }

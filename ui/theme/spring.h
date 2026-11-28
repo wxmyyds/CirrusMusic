@@ -61,7 +61,7 @@ class Spring : public QObject, public QQmlParserStatus
     void restartSegment();
     void settle();
 
-    Driver* m_driver;
+    Driver* m_driver = nullptr; // made on the first motion
     SpringSpec m_spec = Motion::spec(Motion::DefaultSpatial);
     qreal m_target = 0;
     qreal m_value = 0;
