@@ -1275,16 +1275,36 @@ void BackendRuntimeTest::productionPlaybackBackendLifecycle()
     const BackendConfig config{directory.filePath(QStringLiteral("state.sqlite")),
                                QStringLiteral("synthetic-production-playback")};
     seed(config.databasePath, *state);
+    for (int cycle = 0; cycle < 3; ++cycle) {
+        auto options = factories(state, gate);
+        options.playback = {}; // Exercise BackendRuntime's production AudioEngine composition.
+        BackendRuntime runtime(config, std::move(options));
+        auto& facade = runtime.facade();
+        QSignalSpy started(&facade, &BackendFacade::started),
+            stopped(&facade, &BackendFacade::stopped);
+        facade.start();
+        QTRY_COMPARE(started.size(), 1);
+        QCOMPARE(qvariant_cast<StartupError>(started.first().first()), StartupError::None);
+        facade.close();
+        QTRY_COMPARE(stopped.size(), 1);
+        QCOMPARE(state->created.load(), state->destroyed.load());
+        QCOMPARE(state->wrongThread.load(), 0);
+    }
+
+    // Close can overtake the application-thread preparation. It must still drain,
+    // and a late prepared notification must never restart the stopped worker.
     auto options = factories(state, gate);
-    options.playback = {}; // Exercise BackendRuntime's production AudioEngine composition.
+    options.playback = {};
     BackendRuntime runtime(config, std::move(options));
     auto& facade = runtime.facade();
     QSignalSpy started(&facade, &BackendFacade::started), stopped(&facade, &BackendFacade::stopped);
     facade.start();
-    QTRY_COMPARE(started.size(), 1);
-    QCOMPARE(qvariant_cast<StartupError>(started.first().first()), StartupError::None);
     facade.close();
     QTRY_COMPARE(stopped.size(), 1);
+    // Worker replies are queued: close() changes the facade state before delivery,
+    // so even an already-produced startup reply must be suppressed on every OS.
+    QCOMPARE(started.size(), 0);
+    QCOMPARE(facade.state(), BackendState::Stopped);
     QCOMPARE(state->created.load(), state->destroyed.load());
     QCOMPARE(state->wrongThread.load(), 0);
 }

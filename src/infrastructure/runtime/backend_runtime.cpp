@@ -33,6 +33,10 @@
 #include <QPointer>
 #include <QThread>
 #include <QTimer>
+#ifdef Q_OS_WIN
+#include <QCoreApplication>
+#include <QMediaDevices>
+#endif
 
 #include <atomic>
 
@@ -40,6 +44,28 @@ namespace cirrus::runtime
 {
 using namespace application;
 using Kind = BackendEvent::Kind;
+
+#ifdef Q_OS_WIN
+// Qt 6.11's audio provider is an application static, but its COM apartment and
+// QObject affinity belong to its first caller. Initialize it on the application
+// thread, which outlives every backend worker and also destroys that static.
+class NativeAudioStartup final : public QObject
+{
+    Q_OBJECT
+  public:
+    void prepare()
+    {
+        Q_ASSERT(QThread::currentThread() == QCoreApplication::instance()->thread());
+        setParent(QCoreApplication::instance());
+        (void)QMediaDevices::audioOutputs();
+        emit ready();
+        deleteLater();
+    }
+
+  signals:
+    void ready();
+};
+#endif
 
 // Only this empty shell moves threads. All thread-affine members are constructed
 // by start()/assemble(), already executing inside the backend event loop.
@@ -918,11 +944,27 @@ BackendRuntime::BackendRuntime(BackendConfig config, BackendFactories factories,
     }
     auto* thread = new QThread; // self-deletes after finish; never destroyed while running
     thread->setObjectName(QStringLiteral("backend"));
+#ifdef Q_OS_WIN
+    const bool nativePlayback = !factories.playback;
+#endif
     auto* worker = new BackendWorker(std::move(config), std::move(factories));
     worker->moveToThread(thread);
     auto outcome = std::make_shared<std::atomic_bool>(false);
-    connect(m_facade, &BackendFacade::startRequested, worker, &BackendWorker::start,
-            Qt::QueuedConnection);
+#ifdef Q_OS_WIN
+    if (nativePlayback) {
+        auto* audioStartup = new NativeAudioStartup;
+        audioStartup->moveToThread(QCoreApplication::instance()->thread());
+        connect(m_facade, &BackendFacade::startRequested, audioStartup,
+                &NativeAudioStartup::prepare, Qt::QueuedConnection);
+        connect(audioStartup, &NativeAudioStartup::ready, worker, &BackendWorker::start,
+                Qt::QueuedConnection);
+        connect(thread, &QThread::finished, audioStartup, &QObject::deleteLater);
+    } else
+#endif
+    {
+        connect(m_facade, &BackendFacade::startRequested, worker, &BackendWorker::start,
+                Qt::QueuedConnection);
+    }
     connect(m_facade, &BackendFacade::commandRequested, worker, &BackendWorker::command,
             Qt::QueuedConnection);
     if (m_state) {

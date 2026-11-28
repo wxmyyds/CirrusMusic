@@ -64,9 +64,10 @@ struct BackendFactories {
         commentV3Issuer; // same-thread, no real issuer in offline tests
 };
 
-// Composition root only; the template app does not instantiate it yet.
-// Owns a caller-thread facade and a self-draining backend thread. Destruction
-// requests asynchronous close, never blocks the caller. The process event loop
+// Composition root: owns a caller-thread facade and a self-draining backend thread.
+// Native Windows playback first initializes Qt's application-lifetime audio provider
+// on the application thread, then starts the worker. Destruction requests
+// asynchronous close, never blocks the caller. The process event loop
 // must stay alive until facade.stopped(); destroying this handle is NOT erasure.
 class BackendRuntime final : public QObject
 {
