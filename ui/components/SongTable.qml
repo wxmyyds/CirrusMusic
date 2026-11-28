@@ -386,6 +386,8 @@ Item {
         anchors.fill: parent
         model: table.songs
         clip: true
+        cacheBuffer: table.rowPitch * 4
+        reuseItems: true
         spacing: 2
         bottomMargin: 24 + PageInsets.bottom
         // Overshoots and springs back at the ends.
