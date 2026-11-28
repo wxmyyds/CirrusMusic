@@ -13,10 +13,10 @@ PageScaffold {
 
     required property AppShell shell
 
-    readonly property real indexWidth: 200
-    readonly property bool wide: width >= 24 + indexWidth + 32 + 560 + 24
-    readonly property real contentX: wide ? 24 + indexWidth + 32 : 24
-    readonly property real contentWidth: Math.min(width - contentX - 24, 720)
+    readonly property real indexWidth: 160
+    readonly property bool wide: width >= 640
+    readonly property real contentX: wide ? 16 + indexWidth + 16 : 24
+    readonly property real contentWidth: Math.min(width - contentX - 16, 720)
     // The groups in order, for the index.
     property list<SettingsGroup> sections
     // The group at the top of the view.
@@ -58,6 +58,7 @@ PageScaffold {
     }
 
     title: qsTr("设置")
+    onVisibleChanged: if (visible) Qt.callLater(collectSections)
     // The groups are in place before onChildrenChanged would notice them.
     Component.onCompleted: Qt.callLater(collectSections)
 
@@ -73,7 +74,7 @@ PageScaffold {
             focusIndex = next;
         }
 
-        x: 24
+        x: 16
         y: 8
         // Above the page-wide Flickable (declared after it for the Tab order).
         z: 1
