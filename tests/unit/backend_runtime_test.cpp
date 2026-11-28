@@ -3644,6 +3644,21 @@ int main(int argc, char* argv[])
     TESTLIB_SELFCOVERAGE_START(BackendRuntimeTest)
     QTest::Internal::callInitMain<BackendRuntimeTest>();
     QTEST_MAIN_SETUP()
+#ifdef Q_OS_WIN
+    // Observe application teardown before Qt Multimedia's application-static cleanup is
+    // registered by the first QMediaDevices use in the runtime worker.
+    QObject::connect(QCoreApplication::instance(), &QObject::destroyed, [](QObject*) {
+        APTTYPE apartment = APTTYPE_CURRENT;
+        APTTYPEQUALIFIER qualifier = APTTYPEQUALIFIER_NONE;
+        const HRESULT result = CoGetApartmentType(&apartment, &qualifier);
+        std::fprintf(stderr,
+                     "CIRRUS_AUDIO_THREAD event=application-destroyed tid=%lu "
+                     "apartment_hr=0x%08lx apartment=%d qualifier=%d\n",
+                     static_cast<unsigned long>(GetCurrentThreadId()),
+                     static_cast<unsigned long>(result), static_cast<int>(apartment),
+                     static_cast<int>(qualifier));
+    }, Qt::DirectConnection);
+#endif
     BackendRuntimeTest test;
     QTEST_SET_MAIN_SOURCE_PATH
     const int result = QTest::qExec(&test, argc, argv);

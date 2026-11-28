@@ -7,6 +7,27 @@
 #include <cmath>
 #include <cstring>
 #include <numbers>
+#ifdef CIRRUS_TEST_AUDIO_THREAD_DIAGNOSTICS
+#include <objbase.h>
+#include <cstdio>
+#include <windows.h>
+
+namespace
+{
+void logAudioThreadApartment(const char* event)
+{
+    APTTYPE apartment = APTTYPE_CURRENT;
+    APTTYPEQUALIFIER qualifier = APTTYPEQUALIFIER_NONE;
+    const HRESULT result = CoGetApartmentType(&apartment, &qualifier);
+    std::fprintf(stderr,
+                 "CIRRUS_AUDIO_THREAD event=%s tid=%lu apartment_hr=0x%08lx apartment=%d "
+                 "qualifier=%d\n",
+                 event, static_cast<unsigned long>(GetCurrentThreadId()),
+                 static_cast<unsigned long>(result), static_cast<int>(apartment),
+                 static_cast<int>(qualifier));
+}
+} // namespace
+#endif
 
 namespace cirrus::media
 {
@@ -94,9 +115,18 @@ void FadeTail::mix(float* data, qsizetype frames, float gain, bool limit)
 AudioOutput::AudioOutput(QObject* parent) : QObject(parent), m_devices(new QMediaDevices(this))
 {
     connect(m_devices, &QMediaDevices::audioOutputsChanged, this, &AudioOutput::devicesChanged);
+#ifdef CIRRUS_TEST_AUDIO_THREAD_DIAGNOSTICS
+    logAudioThreadApartment("audio-output-created-after-device-connect");
+#endif
 }
 
-AudioOutput::~AudioOutput() { close(); }
+AudioOutput::~AudioOutput()
+{
+#ifdef CIRRUS_TEST_AUDIO_THREAD_DIAGNOSTICS
+    logAudioThreadApartment("audio-output-destroyed");
+#endif
+    close();
+}
 
 bool AudioOutput::open()
 {
