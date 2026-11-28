@@ -8,6 +8,9 @@
 #include <cstring>
 #include <numbers>
 #ifdef CIRRUS_TEST_AUDIO_THREAD_DIAGNOSTICS
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <objbase.h>
 #include <cstdio>
 #include <windows.h>

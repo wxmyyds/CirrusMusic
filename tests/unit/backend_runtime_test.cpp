@@ -3647,7 +3647,8 @@ int main(int argc, char* argv[])
 #ifdef Q_OS_WIN
     // Observe application teardown before Qt Multimedia's application-static cleanup is
     // registered by the first QMediaDevices use in the runtime worker.
-    QObject::connect(QCoreApplication::instance(), &QObject::destroyed, [](QObject*) {
+    QObject::connect(QCoreApplication::instance(), &QObject::destroyed,
+                     QCoreApplication::instance(), [](QObject*) {
         APTTYPE apartment = APTTYPE_CURRENT;
         APTTYPEQUALIFIER qualifier = APTTYPEQUALIFIER_NONE;
         const HRESULT result = CoGetApartmentType(&apartment, &qualifier);
