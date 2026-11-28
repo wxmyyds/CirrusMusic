@@ -13,25 +13,18 @@ PageScaffold {
 
     required property AppShell shell
 
-    readonly property real indexWidth: 160
-    readonly property bool wide: width >= 640
+    readonly property real indexWidth: 220
+    readonly property bool wide: width >= 720
     readonly property real contentX: wide ? 16 + indexWidth + 16 : 24
     readonly property real contentWidth: Math.min(width - contentX - 16, 720)
-    // The groups in order, for the index.
-    property list<SettingsGroup> sections
+    // The groups in order, for the index. Use explicit object references: the page may
+    // be asynchronously incubated, so observing children during construction can expose
+    // a partial list to the index.
+    property var sections: [accountGroup, playbackGroup, lyricsGroup, playerGroup,
+                            appearanceGroup, windowGroup, shareGroup, storageGroup,
+                            diagnosticsGroup, shortcutGroup, aboutGroup]
     // The group at the top of the view.
     property int current: 0
-
-    function collectSections(): void {
-        const found = [];
-        for (let i = 0; i < groups.children.length; ++i) {
-            const group = groups.children[i] as SettingsGroup;
-            if (group && group.visible)
-                found.push(group);
-        }
-        sections = found;
-        updateCurrent();
-    }
 
     function updateCurrent(): void {
         if (sections.length === 0)
@@ -58,9 +51,6 @@ PageScaffold {
     }
 
     title: qsTr("设置")
-    onVisibleChanged: if (visible) Qt.callLater(collectSections)
-    // The groups are in place before onChildrenChanged would notice them.
-    Component.onCompleted: Qt.callLater(collectSections)
 
     // The index: one Tab stop (the current group); ↑/↓ move, Enter goes there.
     Column {
@@ -146,25 +136,43 @@ PageScaffold {
             width: page.contentWidth
             topPadding: 8
             spacing: 32
-            onChildrenChanged: Qt.callLater(page.collectSections)
 
             AccountSettings {
+                id: accountGroup
                 shell: page.shell
             }
-            PlaybackSettings {}
-            LyricsSettings {}
-            PlayerSettings {}
-            AppearanceSettings {}
-            WindowSettings {}
-            ShareSettings {}
+            PlaybackSettings {
+                id: playbackGroup
+            }
+            LyricsSettings {
+                id: lyricsGroup
+            }
+            PlayerSettings {
+                id: playerGroup
+            }
+            AppearanceSettings {
+                id: appearanceGroup
+            }
+            WindowSettings {
+                id: windowGroup
+            }
+            ShareSettings {
+                id: shareGroup
+            }
             StorageSettings {
+                id: storageGroup
                 shell: page.shell
             }
             DiagnosticsSettings {
+                id: diagnosticsGroup
                 shell: page.shell
             }
-            ShortcutSettings {}
-            AboutSettings {}
+            ShortcutSettings {
+                id: shortcutGroup
+            }
+            AboutSettings {
+                id: aboutGroup
+            }
         }
     }
 
