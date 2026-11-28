@@ -34,6 +34,7 @@
 #include <QThread>
 #include <QTimer>
 #ifdef Q_OS_WIN
+#include <QAudioDevice>
 #include <QCoreApplication>
 #include <QMediaDevices>
 #endif
