@@ -30,6 +30,7 @@
 #include "infrastructure/storage/listening_state_service.h"
 
 #include <QDir>
+#include <QPointer>
 #include <QThread>
 #include <QTimer>
 
@@ -1035,11 +1036,17 @@ BackendRuntime::BackendRuntime(BackendConfig config, BackendFactories factories,
         },
         Qt::DirectConnection);
     connect(thread, &QThread::finished, worker, &QObject::deleteLater);
-    connect(
-        thread, &QThread::finished, m_facade,
-        [facade = m_facade, outcome] { facade->finishClose(outcome->load()); },
-        Qt::QueuedConnection);
-    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+    const QPointer<application::BackendFacade> facade = m_facade;
+    connect(thread, &QThread::finished, thread,
+            [thread, facade, outcome] {
+                // finished() precedes native thread-local cleanup. Do not publish shutdown
+                // completion until wait() joins that cleanup; callers may then exit Qt safely.
+                thread->wait();
+                if (facade)
+                    facade->finishClose(outcome->load());
+                thread->deleteLater();
+            },
+            Qt::QueuedConnection);
     thread->start(); // idle event loop only; no IO until explicit facade.start()
 }
 
