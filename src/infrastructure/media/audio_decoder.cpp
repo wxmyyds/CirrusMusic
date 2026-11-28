@@ -290,6 +290,8 @@ bool AudioDecoder::decodeSome()
         }
         m_again = 0;
         if (m_packet->stream_index == m_streamIndex) {
+            if (m_packet->flags & AV_PKT_FLAG_CORRUPT)
+                m_linear = false;
             const int sent = avcodec_send_packet(m_codec, m_packet);
             if (sent == AVERROR_INVALIDDATA || sent == AVERROR(EAGAIN))
                 m_linear = false; // skipped packets cannot certify the entire file

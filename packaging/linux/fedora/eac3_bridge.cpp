@@ -130,6 +130,8 @@ int cirrus_eac3_receive(CirrusEac3* decoder, const float** pcm, int* frames, int
         return CIRRUS_EAC3_ERROR;
     };
     const auto* frame = decoder->frame;
+    const bool corrupt =
+        frame->decode_error_flags || (frame->flags & AV_FRAME_FLAG_CORRUPT);
     if (frame->sample_rate != decoder->rate || frame->ch_layout.nb_channels <= 0 ||
         frame->ch_layout.nb_channels > 8)
         return fail();
@@ -163,7 +165,7 @@ int cirrus_eac3_receive(CirrusEac3* decoder, const float** pcm, int* frames, int
     *frames = made;
     *pts = frame->best_effort_timestamp;
     av_frame_unref(decoder->frame);
-    return CIRRUS_EAC3_FRAME;
+    return corrupt ? CIRRUS_EAC3_CORRUPT_FRAME : CIRRUS_EAC3_FRAME;
 }
 
 void cirrus_eac3_reset(CirrusEac3* decoder)

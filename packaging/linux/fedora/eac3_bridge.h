@@ -13,7 +13,8 @@ enum CirrusEac3Status {
     CIRRUS_EAC3_NEED_INPUT = 1,
     CIRRUS_EAC3_END = 2,
     CIRRUS_EAC3_INVALID_DATA = 3,
-    CIRRUS_EAC3_ERROR = 4
+    CIRRUS_EAC3_ERROR = 4,
+    CIRRUS_EAC3_CORRUPT_FRAME = 5
 };
 typedef struct CirrusEac3Config {
     int sample_rate;

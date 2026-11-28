@@ -47,8 +47,11 @@ std::vector<float> decodeAll(AudioDecoder& decoder)
 class EvidenceSource final : public media::ByteSource
 {
   public:
-    std::shared_ptr<media::LocalFileSource> file = media::LocalFileSource::open(
-        QStringLiteral(AUDIO_FIXTURES "/tone.flac"));
+    explicit EvidenceSource(const QString& name = QStringLiteral("tone.flac"))
+        : file(media::LocalFileSource::open(QStringLiteral(AUDIO_FIXTURES "/") + name))
+    {
+    }
+    std::shared_ptr<media::LocalFileSource> file;
     int successes = 0;
     QList<PlaybackError> failures;
     std::optional<PlaybackError> reason;
@@ -62,6 +65,14 @@ class EvidenceSource final : public media::ByteSource
     void decoded() override { ++successes; }
     void decodeFailed(PlaybackError error) override { failures.append(error); }
 };
+int markAudioPacketsCorrupt(AVFormatContext* format, AVPacket* packet)
+{
+    const int result = av_read_frame(format, packet);
+    if (result >= 0 && packet->stream_index >= 0 &&
+        format->streams[packet->stream_index]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO)
+        packet->flags |= AV_PKT_FLAG_CORRUPT;
+    return result;
+}
 int againCalls = 0;
 int brieflyAgain(AVFormatContext* format, AVPacket* packet)
 {
@@ -259,6 +270,47 @@ class AudioDecoderTest : public QObject
         QVERIFY(partial.atEnd());
         QVERIFY(!partial.error());
         QCOMPARE(sought->successes, 0);
+    }
+
+    void demuxCorruptPacketDoesNotCertify_data()
+    {
+        QTest::addColumn<QString>("file");
+        QTest::addColumn<QString>("format");
+        QTest::newRow("flac") << QStringLiteral("tone.flac") << QStringLiteral("flac");
+        QTest::newRow("aac") << QStringLiteral("tone_aac.m4a") << QStringLiteral("aac");
+        QTest::newRow("eac3") << QStringLiteral("tone_eac3.m4a") << QStringLiteral("eac3");
+    }
+
+    void demuxCorruptPacketDoesNotCertify()
+    {
+        QFETCH(QString, file);
+        QFETCH(QString, format);
+        auto healthyBytes = std::make_shared<EvidenceSource>(file);
+        QVERIFY(healthyBytes->file);
+        AudioDecoder healthy;
+        QVERIFY(healthy.open(healthyBytes, format));
+        const auto healthyPcm = decodeAll(healthy);
+        QVERIFY(!healthyPcm.empty());
+        QVERIFY(healthy.atEnd());
+        QVERIFY(!healthy.error());
+        QCOMPARE(healthyBytes->successes, 1);
+        QVERIFY(healthyBytes->failures.isEmpty());
+
+        auto corruptBytes = std::make_shared<EvidenceSource>(file);
+        QVERIFY(corruptBytes->file);
+        AudioDecoder corrupt;
+        QVERIFY(corrupt.open(corruptBytes, format));
+        media::AudioDecoderTestAccess::reader(corrupt, &markAudioPacketsCorrupt);
+        const auto corruptPcm = decodeAll(corrupt);
+        QVERIFY(corrupt.atEnd());
+        QCOMPARE(corruptBytes->successes, 0);
+        if (corrupt.error()) {
+            QCOMPARE(corrupt.error(), std::optional(PlaybackError::Decode));
+            QCOMPARE(corruptBytes->failures, QList<PlaybackError>{PlaybackError::Decode});
+        } else {
+            QVERIFY(!corruptPcm.empty());
+            QVERIFY(corruptBytes->failures.isEmpty());
+        }
     }
 
     void demuxErrorIsNotEof()

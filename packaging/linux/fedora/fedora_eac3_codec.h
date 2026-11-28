@@ -22,6 +22,7 @@ class FedoraEac3Decoder final
     int send(const AVPacket* packet);
     int receive();
     void flush();
+    bool frameCorrupt() const { return m_frameCorrupt; }
     const std::vector<float>& samples() const { return m_samples; }
     qint64 pts() const { return m_pts; }
 
@@ -30,5 +31,6 @@ class FedoraEac3Decoder final
     CirrusEac3* m_decoder = nullptr;
     std::vector<float> m_samples;
     qint64 m_pts = 0;
+    bool m_frameCorrupt = false;
 };
 } // namespace cirrus::media

@@ -15,7 +15,7 @@ index d9ab4e2..5168b3d 100644
 +# Fedora-only application build patch.
 +include("${PROJECT_SOURCE_DIR}/packaging/linux/fedora/eac3-backend.cmake")
 diff --git a/src/infrastructure/media/audio_decoder.cpp b/src/infrastructure/media/audio_decoder.cpp
-index 038b79a..41d82c8 100644
+index 37fa354..5e99949 100644
 --- a/src/infrastructure/media/audio_decoder.cpp
 +++ b/src/infrastructure/media/audio_decoder.cpp
 @@ -1,5 +1,6 @@
@@ -102,7 +102,7 @@ index 038b79a..41d82c8 100644
      const int count = swr_get_out_samples(m_convert, frame->nb_samples);
      if (count <= 0)
          return;
-@@ -230,19 +253,22 @@ void AudioDecoder::convert(const AVFrame* frame, qint64 skip)
+@@ -230,19 +253,26 @@ void AudioDecoder::convert(const AVFrame* frame, qint64 skip)
  bool AudioDecoder::decodeSome()
  {
      while (!m_error && !m_interrupted) {
@@ -111,7 +111,10 @@ index 038b79a..41d82c8 100644
 +            m_fedoraEac3 ? m_fedoraEac3->receive() : avcodec_receive_frame(m_codec, m_frame);
          if (got == 0) {
 -            if (m_frame->decode_error_flags || (m_frame->flags & AV_FRAME_FLAG_CORRUPT))
--                m_linear = false;
++            if (m_fedoraEac3 ? m_fedoraEac3->frameCorrupt()
++                            : (m_frame->decode_error_flags ||
++                               (m_frame->flags & AV_FRAME_FLAG_CORRUPT)))
+                 m_linear = false;
              qint64 skip = 0;
              if (m_dropUntil >= 0) {
                  const AVStream* stream = m_format->streams[m_streamIndex];
@@ -130,29 +133,27 @@ index 038b79a..41d82c8 100644
                          av_frame_unref(m_frame);
                          continue;
                      }
-@@ -277,8 +303,9 @@ bool AudioDecoder::decodeSome()
+@@ -277,7 +307,8 @@ bool AudioDecoder::decodeSome()
          if (read == AVERROR_EOF) {
              m_again = 0;
              m_inputDone = true;
 -            const int sent = avcodec_send_packet(m_codec, nullptr); // drain only real EOF
--            if (sent < 0 && sent != AVERROR_EOF) {
 +            const int sent = m_fedoraEac3 ? m_fedoraEac3->send(nullptr)
 +                                          : avcodec_send_packet(m_codec, nullptr);
-+            if (sent < 0 && sent != AVERROR_EOF && sent != AVERROR(EAGAIN)) {
+             if (sent < 0 && sent != AVERROR_EOF) {
                  failWith(PlaybackError::Decode);
                  return false;
-             }
-@@ -290,7 +317,8 @@ bool AudioDecoder::decodeSome()
-         }
-         m_again = 0;
+@@ -292,7 +323,8 @@ bool AudioDecoder::decodeSome()
          if (m_packet->stream_index == m_streamIndex) {
+             if (m_packet->flags & AV_PKT_FLAG_CORRUPT)
+                 m_linear = false;
 -            const int sent = avcodec_send_packet(m_codec, m_packet);
 +            const int sent = m_fedoraEac3 ? m_fedoraEac3->send(m_packet)
 +                                          : avcodec_send_packet(m_codec, m_packet);
              if (sent == AVERROR_INVALIDDATA || sent == AVERROR(EAGAIN))
                  m_linear = false; // skipped packets cannot certify the entire file
              // A damaged frame is skipped, as players do; anything else is fatal.
-@@ -354,8 +382,12 @@ bool AudioDecoder::seek(qint64 ms)
+@@ -356,8 +388,12 @@ bool AudioDecoder::seek(qint64 ms)
      m_format->flags &= ~AVFMT_FLAG_FAST_SEEK;
      if (sought < 0 || m_interrupted)
          return false;
@@ -205,10 +206,10 @@ index f042bab..a5a610b 100644
      SwrContext* m_convert = nullptr;
      AVPacket* m_packet = nullptr;
 diff --git a/tests/unit/audio_decoder_test.cpp b/tests/unit/audio_decoder_test.cpp
-index 3975abf..a9bb324 100644
+index f34fe31..85a0418 100644
 --- a/tests/unit/audio_decoder_test.cpp
 +++ b/tests/unit/audio_decoder_test.cpp
-@@ -128,16 +128,25 @@ class AudioDecoderTest : public QObject
+@@ -139,16 +139,25 @@ class AudioDecoderTest : public QObject
          auto s = store(server);
          auto stream = s->open(source(server.body, format));
          QVERIFY(stream);

@@ -13,6 +13,7 @@ int resultFor(int status)
 {
     switch (status) {
     case CIRRUS_EAC3_FRAME:
+    case CIRRUS_EAC3_CORRUPT_FRAME:
         return 0;
     case CIRRUS_EAC3_NEED_INPUT:
         return AVERROR(EAGAIN);
@@ -54,7 +55,10 @@ int FedoraEac3Decoder::receive()
     const float* pcm = nullptr;
     int frames = 0;
     int64_t pts = INT64_MIN;
-    const int result = resultFor(cirrus_eac3_receive(m_decoder, &pcm, &frames, &pts));
+    m_frameCorrupt = false;
+    const int status = cirrus_eac3_receive(m_decoder, &pcm, &frames, &pts);
+    m_frameCorrupt = status == CIRRUS_EAC3_CORRUPT_FRAME;
+    const int result = resultFor(status);
     if (result == 0) {
         if (frames < 0 || (frames > 0 && !pcm))
             return AVERROR_EXTERNAL;
@@ -70,5 +74,6 @@ void FedoraEac3Decoder::flush()
     cirrus_eac3_reset(m_decoder);
     m_samples.clear();
     m_pts = INT64_MIN;
+    m_frameCorrupt = false;
 }
 } // namespace cirrus::media
