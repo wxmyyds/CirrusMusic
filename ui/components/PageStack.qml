@@ -113,22 +113,8 @@ Item {
                 transition: PageStack.Kind.Back,
                 from: leaving.item
             };
-            if (back.incubator) {
-                back.incubator.forceCompletion();
-            } else {
-                back.item = create(back.component, back.properties);
-                if (!back.item) {
-                    back.activation = null;
-                    discardEntry(back, PageStack.Kind.Back, true);
-                    return true;
-                }
-                if (back.state !== undefined && typeof back.item.restoreState === "function")
-                    back.item.restoreState(back.state);
-                const activation = back.activation;
-                back.activation = null;
-                entries = entries.slice();
-                activate(back, activation.transition, activation.from);
-            }
+            if (!back.incubator)
+                startIncubation(back);
         }
         return true;
     }

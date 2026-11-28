@@ -14,7 +14,7 @@ PageScaffold {
     required property AppShell shell
 
     readonly property real indexWidth: 200
-    readonly property bool wide: width >= 24 + indexWidth + 32 + 720 + 24
+    readonly property bool wide: width >= 24 + indexWidth + 32 + 560 + 24
     readonly property real contentX: wide ? 24 + indexWidth + 32 : 24
     readonly property real contentWidth: Math.min(width - contentX - 24, 720)
     // The groups in order, for the index.

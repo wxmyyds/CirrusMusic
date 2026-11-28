@@ -94,6 +94,54 @@ class PageStackTest : public QObject
         QCOMPARE(current->property("pageId").toInt(), 2);
     }
 
+    void evictedBackPageIsIncubatedWithoutBlockingTheVisiblePage()
+    {
+        QQmlIncubationController controller;
+        QQmlEngine engine;
+        engine.setIncubationController(&controller);
+        engine.addImportPath(QString::fromUtf8(CIRRUS_QML_IMPORT_PATH));
+        QQmlComponent component(&engine, QUrl("qrc:/qt/qml/Cirrus/Test/PageStack/PageStackHarness.qml"));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> harness(component.create());
+        QVERIFY2(harness, qPrintable(component.errorString()));
+
+        auto* stack = harness->property("stack").value<QObject*>();
+        QVERIFY(stack);
+        QVERIFY(stack->setProperty("cachedPages", 1));
+        QVERIFY(QMetaObject::invokeMethod(harness.data(), "start"));
+        QVERIFY(QMetaObject::invokeMethod(harness.data(), "pushPage", Q_ARG(int, 2)));
+        controller.incubateFor(100);
+        QTRY_VERIFY_WITH_TIMEOUT(settled(stack), 5000);
+        QVERIFY(QMetaObject::invokeMethod(harness.data(), "pushPage", Q_ARG(int, 3)));
+        controller.incubateFor(100);
+        QTRY_VERIFY_WITH_TIMEOUT(settled(stack), 5000);
+
+        bool popped = false;
+        QVERIFY(QMetaObject::invokeMethod(harness.data(), "popPage", Q_RETURN_ARG(bool, popped)));
+        QVERIFY(popped);
+        QVERIFY(stack->property("creating").toBool());
+        auto* current = stack->property("currentItem").value<QQuickItem*>();
+        QVERIFY(current);
+        QCOMPARE(current->property("pageId").toInt(), 3);
+        controller.incubateFor(100);
+        QTRY_VERIFY_WITH_TIMEOUT(settled(stack), 5000);
+        current = stack->property("currentItem").value<QQuickItem*>();
+        QVERIFY(current);
+        QCOMPARE(current->property("pageId").toInt(), 2);
+
+        QVERIFY(QMetaObject::invokeMethod(harness.data(), "popPage", Q_RETURN_ARG(bool, popped)));
+        QVERIFY(popped);
+        QVERIFY(stack->property("creating").toBool());
+        current = stack->property("currentItem").value<QQuickItem*>();
+        QVERIFY(current);
+        QCOMPARE(current->property("pageId").toInt(), 2);
+        controller.incubateFor(100);
+        QTRY_VERIFY_WITH_TIMEOUT(settled(stack), 5000);
+        current = stack->property("currentItem").value<QQuickItem*>();
+        QVERIFY(current);
+        QCOMPARE(current->property("pageId").toInt(), 1);
+    }
+
     void poppingPendingDestinationDiscardsItsLateObject()
     {
         QQmlIncubationController controller;
