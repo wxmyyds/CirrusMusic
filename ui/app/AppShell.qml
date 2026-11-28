@@ -41,6 +41,11 @@ Item {
     // ({component, properties, section}) until something new is opened.
     property var sections: []
     property var forwardEntries: []
+    // Tokenized navigation sections let a failed asynchronous page creation remove the
+    // matching history entry without guessing from the current array tail.
+    property var navigationSections: ({})
+    // Card-to-page cover handoffs wait here while PageStack incubates a destination.
+    property var pendingCoverHandoffs: ({})
     // The library page's collection tab (library.md §2) and the discover page's
     // (discover.md §2), kept in App.settings.
     property int libraryTab: App.settings.libraryTab
@@ -168,14 +173,37 @@ Item {
         action();
     }
 
+    function syncSections(): void {
+        const next = [];
+        for (const entry of stack.entries) {
+            const navigation = navigationSections[entry.token];
+            next.push(navigation === undefined ? 0 : navigation.section);
+        }
+        if (next.length > 0)
+            sections = next;
+        rail.currentIndex = sections.length > 0 ? sections[sections.length - 1] : 0;
+    }
+
     function visit(component: Component, properties: var, section: int, transition: int) {
+        const restoreForward = forwardEntries;
         forwardEntries = [];
         sections = sections.concat([section]);
         rail.currentIndex = section;
         const handoff = CoverHandoff.take();
         const page = stack.push(component, properties, transition);
-        if (transition === PageStack.Kind.Forward)
-            coverFlight.forward(handoff, page);
+        const token = stack.lastToken;
+        if (page || stack.lastPushPending)
+            navigationSections[token] = {section: section, restoreForward: restoreForward};
+        else if (stack.lastPushFailed) {
+            forwardEntries = restoreForward;
+            syncSections();
+        }
+        if (transition === PageStack.Kind.Forward && handoff) {
+            if (page)
+                coverFlight.forward(handoff, page);
+            else if (stack.lastPushPending)
+                pendingCoverHandoffs[token] = handoff;
+        }
     }
 
     function openPlaylist(key: string) {
@@ -476,18 +504,19 @@ Item {
             return;
         const action = () => {
             const leaving = stack.entries[stack.entries.length - 1];
+            const leavingSection = sections[sections.length - 1];
             if (!stack.pop())
                 return;
+            delete navigationSections[leaving.token];
             coverFlight.backward(leaving.item, stack.currentItem);
             // An editing page left is done with, not something to go forward to.
-            if (leaving.component !== playlistOrderPage)
+            if (leaving.item && leaving.component !== playlistOrderPage)
                 forwardEntries = forwardEntries.concat([{
                         component: leaving.component,
                         properties: leaving.properties,
-                        section: sections[sections.length - 1]
+                        section: leavingSection
                     }]);
-            sections = sections.slice(0, -1);
-            rail.currentIndex = sections[sections.length - 1];
+            syncSections();
         };
         if (guardNavigation(action))
             return;
@@ -502,9 +531,16 @@ Item {
             forwardEntries = forwardEntries.slice(0, -1);
             sections = sections.concat([next.section]);
             rail.currentIndex = next.section;
-            stack.push(next.component, next.properties,
-                       next.component === destinations[next.section].page ? PageStack.Kind.Fade
-                                                                          : PageStack.Kind.Forward);
+            const page = stack.push(next.component, next.properties,
+                                     next.component === destinations[next.section].page
+                                     ? PageStack.Kind.Fade : PageStack.Kind.Forward);
+            const token = stack.lastToken;
+            if (page || stack.lastPushPending)
+                navigationSections[token] = {section: next.section, restoreEntry: next};
+            else if (stack.lastPushFailed) {
+                forwardEntries = forwardEntries.concat([next]);
+                syncSections();
+            }
         };
         if (guardNavigation(action))
             return;
@@ -513,6 +549,7 @@ Item {
 
     Component.onCompleted: {
         rail.snap(large && App.settings.railExpanded);
+        navigationSections = ({"0": {section: 0}});
         sections = [0];
         stack.replaceAll(homePage, {
             shell: shell
@@ -618,6 +655,32 @@ Item {
                     if (order)
                         order.leaving = false;
                 }
+            }
+        }
+        Connections {
+            target: stack
+            function onPageReady(page: var, token: int) {
+                const handoff = shell.pendingCoverHandoffs[token];
+                if (!handoff)
+                    return;
+                delete shell.pendingCoverHandoffs[token];
+                if (stack.currentItem === page)
+                    coverFlight.forward(handoff, page);
+            }
+            function onPageHandoffDiscarded(token: int) {
+                delete shell.pendingCoverHandoffs[token];
+            }
+            function onPageDiscarded(token: int, failed: bool) {
+                delete shell.pendingCoverHandoffs[token];
+                const navigation = shell.navigationSections[token];
+                delete shell.navigationSections[token];
+                if (failed && token === stack.lastToken && navigation) {
+                    if (navigation.restoreForward !== undefined)
+                        shell.forwardEntries = navigation.restoreForward;
+                    else if (navigation.restoreEntry !== undefined)
+                        shell.forwardEntries = shell.forwardEntries.concat([navigation.restoreEntry]);
+                }
+                shell.syncSections();
             }
         }
         // A card's cover flying to the page it opened, and back (expressive.md §5).

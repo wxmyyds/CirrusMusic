@@ -9,8 +9,9 @@ import Cirrus.Theme
 // - replaceAll(): new top-level destination, history cleared; fade through with the new
 //   page scaling up from 0.92
 // One progress spring drives each transition; popping during a push reverses that same
-// transition, and a new navigation mid-way starts from what is on screen. The new page
-// takes input at once. The newest `cachedPages` pages stay alive (keeping scroll
+// transition, and a new navigation mid-way starts from what is on screen. The old page
+// remains current and interactive while a destination is incubated. The newest `cachedPages`
+// pages stay alive (keeping scroll
 // position); older ones are destroyed and recreated when navigated back to, with
 // `saveState()` / `restoreState(state)` if the page defines them.
 //   PageStack { id: stack; Component.onCompleted: replaceAll(homePage) }
@@ -20,10 +21,24 @@ Item {
 
     property int cachedPages: 4
     readonly property int depth: entries.length
-    readonly property Item currentItem: entries.length > 0 ? entries[entries.length - 1].item : null
+    // The page actually on screen. Pending entries must not become current before
+    // their transition starts; this also keeps the old page interactive during loading.
+    property Item displayed: null
+    readonly property Item currentItem: displayed
+    readonly property bool creating: pendingIncubations > 0
+    property int pendingIncubations: 0
+    property int lastToken: 0
+    property bool lastPushPending: false
+    property bool lastPushFailed: false
 
-    // {component, properties, item, state}; the last one is the current page.
+    // {component, properties, item, state, token, transition, incubator, activation,
+    // canceled}; the last entry is the requested destination, even while incubating.
     property var entries: []
+    signal pageReady(var page, int token)
+    // The entry remains in history, but its card-to-page flight was superseded.
+    signal pageHandoffDiscarded(int token)
+    // The entry itself was removed or failed to create.
+    signal pageDiscarded(int token, bool failed)
 
     // The transition on screen: `incoming` becomes current, `outgoing` leaves.
     property Item incoming: null
@@ -44,85 +59,241 @@ Item {
 
     // `transition`: PageStack.Kind.Forward (default) or Fade (e.g. switching sections).
     function push(component: Component, properties: var, transition: int): Item {
-        const previous = currentItem;
-        const item = create(component, properties ?? {});
-        entries = entries.concat([{
-                component: component,
-                properties: properties ?? {},
-                item: item,
-                state: undefined
-            }]);
-        begin(item, transition === PageStack.Kind.Fade ? PageStack.Kind.Fade : PageStack.Kind.Forward,
-              previous);
+        const kind = transition === PageStack.Kind.Fade ? PageStack.Kind.Fade
+                                                         : PageStack.Kind.Forward;
+        const entry = {
+            component: component,
+            properties: properties ?? {},
+            item: null,
+            state: undefined,
+            token: ++lastToken,
+            transition: kind,
+            incubator: null,
+            activation: null,
+            canceled: false,
+            failed: false
+        };
+        entries = entries.concat([entry]);
+        lastPushPending = false;
+        lastPushFailed = false;
+        startIncubation(entry);
+        lastPushPending = !!entry.incubator;
+        lastPushFailed = entry.failed;
         trim();
-        return item;
+        return entry.item;
     }
 
     function pop(): bool {
         if (entries.length < 2)
             return false;
         const leaving = entries[entries.length - 1];
+        // A destination that has not finished incubating was never shown. Remove it
+        // without starting a reverse animation; the already-visible page remains current.
+        if (!leaving.item) {
+            discardEntry(leaving, PageStack.Kind.Back, false);
+            return true;
+        }
         // Back during the push of this very page: run that transition in reverse.
         if (progress.target === 1 && incoming === leaving.item && kind === PageStack.Kind.Forward
                 && outgoing === entries[entries.length - 2].item) {
+            const back = entries[entries.length - 2];
             entries = entries.slice(0, -1);
+            displayed = back.item;
             progress.target = 0;
             return true;
         }
         entries = entries.slice(0, -1);
         const back = entries[entries.length - 1];
-        if (!back.item) {
-            back.item = create(back.component, back.properties);
-            if (back.state !== undefined && typeof back.item.restoreState === "function")
-                back.item.restoreState(back.state);
-            entries = entries.slice(); // notify currentItem
+        if (back.item) {
+            activate(back, PageStack.Kind.Back, leaving.item);
+        } else {
+            // Reuse an in-flight page instead of creating a second copy. Completion
+            // will activate it from the page that is still visible.
+            back.activation = {
+                transition: PageStack.Kind.Back,
+                from: leaving.item
+            };
+            if (back.incubator) {
+                back.incubator.forceCompletion();
+            } else {
+                back.item = create(back.component, back.properties);
+                if (!back.item) {
+                    back.activation = null;
+                    discardEntry(back, PageStack.Kind.Back, true);
+                    return true;
+                }
+                if (back.state !== undefined && typeof back.item.restoreState === "function")
+                    back.item.restoreState(back.state);
+                const activation = back.activation;
+                back.activation = null;
+                entries = entries.slice();
+                activate(back, activation.transition, activation.from);
+            }
         }
-        begin(back.item, PageStack.Kind.Back, leaving.item);
         return true;
     }
 
     function replaceAll(component: Component, properties: var): Item {
-        const item = create(component, properties ?? {});
-        const previous = currentItem;
+        const previous = displayed;
+        const discarded = [];
         for (const entry of entries) {
+            if (entry.incubator) {
+                cancelIncubation(entry);
+                discarded.push(entry.token);
+            }
             if (entry.item && entry.item !== previous && entry.item !== incoming
                     && entry.item !== outgoing)
                 entry.item.destroy();
         }
+        const item = create(component, properties ?? {});
         entries = [{
                 component: component,
                 properties: properties ?? {},
                 item: item,
-                state: undefined
+                state: undefined,
+                token: 0,
+                transition: PageStack.Kind.Fade,
+                incubator: null,
+                activation: null,
+                canceled: false,
+                failed: false
             }];
+        displayed = item;
         begin(item, PageStack.Kind.Fade, previous);
+        for (const token of discarded)
+            pageDiscarded(token, false);
         return item;
     }
 
     function create(component: Component, properties: var): Item {
-        const item = component.createObject(root, Object.assign({
-            visible: false,
-            width: Qt.binding(() => root.width),
-            height: Qt.binding(() => root.height)
-        }, properties)) as Item;
+        const item = component.createObject(root, initialProperties(properties)) as Item;
         if (!item)
             console.warn("PageStack: cannot create page:", component.errorString());
         return item;
     }
 
+    function initialProperties(properties: var): var {
+        return Object.assign({
+                visible: false,
+                width: Qt.binding(() => root.width),
+                height: Qt.binding(() => root.height)
+            }, properties ?? {});
+    }
+
+    // QQuickWindow installs a QQmlIncubationController, so complex pages are built in
+    // idle slices instead of blocking the frame in component.createObject(). The old page
+    // remains current until the destination is ready.
+    function startIncubation(entry: var): void {
+        const incubator = entry.component.incubateObject(root, initialProperties(entry.properties));
+        if (!incubator) {
+            discardEntry(entry, null, true);
+            return;
+        }
+        entry.incubator = incubator;
+        ++pendingIncubations;
+        entries = entries.slice();
+
+        const completed = status => {
+            if (entry.incubator !== incubator || status === Component.Loading)
+                return;
+            entry.incubator = null;
+            --pendingIncubations;
+            const item = incubator.object as Item;
+            if (entry.canceled || entries.indexOf(entry) < 0) {
+                if (item)
+                    item.destroy();
+                return;
+            }
+            if (status !== Component.Ready || !item) {
+                discardEntry(entry, null, true);
+                return;
+            }
+
+            entry.item = item;
+            if (entry.state !== undefined && typeof item.restoreState === "function")
+                item.restoreState(entry.state);
+            entries = entries.slice();
+            if (entries[entries.length - 1] === entry) {
+                const activation = entry.activation;
+                entry.activation = null;
+                activate(entry, activation ? activation.transition : entry.transition,
+                         activation ? activation.from : displayed);
+            } else {
+                // It finished behind a newer destination. Keep it as a hidden cache entry,
+                // but a card flight for that abandoned navigation must not wait forever.
+                item.visible = false;
+                entry.activation = null;
+                trim();
+                pageHandoffDiscarded(entry.token);
+            }
+        };
+        incubator.onStatusChanged = completed;
+        // Without a controller (for example an offscreen QML test), incubation may
+        // already have completed before the callback is attached.
+        if (incubator.status !== Component.Loading)
+            completed(incubator.status);
+    }
+
+    function activate(entry: var, transition: int, from: Item): void {
+        if (!entry.item)
+            return;
+        const previous = from || displayed;
+        displayed = entry.item;
+        entries = entries.slice();
+        begin(entry.item, transition, previous);
+        trim();
+        pageReady(entry.item, entry.token);
+    }
+
+    // QML exposes no abort operation for the incubator returned by Component. Keep its
+    // completion callback attached and mark it canceled; a late object is destroyed there.
+    function cancelIncubation(entry: var): void {
+        if (entry.incubator)
+            entry.canceled = true;
+    }
+
+    function discardEntry(entry: var, revealTransition: var, failed: bool): void {
+        const index = entries.indexOf(entry);
+        if (index < 0)
+            return;
+        cancelIncubation(entry);
+        entry.failed = failed;
+        entries = entries.slice(0, index).concat(entries.slice(index + 1));
+        pageDiscarded(entry.token, failed);
+        ensureTopActive(revealTransition);
+    }
+
+    // A newer pending navigation can hide a page that finished first. If that newer
+    // navigation is removed or fails, reveal the now-current stack top instead of
+    // leaving a cached but invisible page as the logical destination.
+    function ensureTopActive(revealTransition: var): void {
+        if (entries.length === 0)
+            return;
+        const top = entries[entries.length - 1];
+        if (top.item && top.item !== displayed)
+            activate(top, revealTransition === undefined || revealTransition === null
+                     ? PageStack.Kind.Back : revealTransition, displayed);
+    }
+
     // Pages beyond the cache keep only their component, properties and saved state.
     function trim() {
         const keep = Math.max(1, cachedPages);
+        let changed = false;
         for (let i = 0; i < entries.length - keep; ++i) {
             const entry = entries[i];
+            // Let an old incubator finish; its completion will be destroyed here on the
+            // next trim pass. Removing its callback would leak the eventual object.
             if (!entry.item || entry.item === outgoing || entry.item === incoming
-                    || entry.item === currentItem)
+                    || entry.item === displayed)
                 continue;
             if (typeof entry.item.saveState === "function")
                 entry.state = entry.item.saveState();
             entry.item.destroy();
             entry.item = null;
+            changed = true;
         }
+        if (changed)
+            entries = entries.slice();
     }
 
     // `from` leaves (null for the first page), `next` arrives.
