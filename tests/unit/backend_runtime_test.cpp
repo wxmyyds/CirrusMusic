@@ -43,6 +43,7 @@
 #include <QSettings>
 
 #include <QDir>
+#include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -52,6 +53,17 @@
 #include <QtTest>
 
 #include <atomic>
+#include <cstring>
+
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <dbghelp.h>
+#include <cwchar>
+#include <cstdio>
+#endif
 
 using namespace cirrus;
 using namespace cirrus::application;
@@ -3575,7 +3587,71 @@ void BackendRuntimeTest::togetherHttpThroughThread()
     QCOMPARE(state->wrongThread.load(), 0);
     QCOMPARE(state->created.load(), state->destroyed.load());
 }
-// QGuiApplication initializes the main-thread COM apartment before the production
-// Qt Multimedia backend is created on BackendRuntime's worker thread.
-QTEST_MAIN(BackendRuntimeTest)
+// On Windows, keep the Qt application alive after qExec so its teardown is covered by our
+// unhandled-exception minidump handler. QGuiApplication also initializes the main-thread STA.
+#ifdef Q_OS_WIN
+namespace
+{
+LONG WINAPI captureBackendRuntimeCrash(EXCEPTION_POINTERS* exceptionPointers)
+{
+    wchar_t path[MAX_PATH]{};
+    const DWORD pathLength = GetModuleFileNameW(nullptr, path, MAX_PATH);
+    if (pathLength > 0 && pathLength < MAX_PATH) {
+        if (wchar_t* separator = std::wcsrchr(path, L'\\')) {
+            const size_t remaining = MAX_PATH - static_cast<size_t>(separator + 1 - path);
+            if (wcscpy_s(separator + 1, remaining, L"tst_backend_runtime-crash.dmp") == 0) {
+                HANDLE dumpFile = CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+                                              FILE_ATTRIBUTE_NORMAL, nullptr);
+                BOOL written = FALSE;
+                DWORD error = ERROR_SUCCESS;
+                if (dumpFile != INVALID_HANDLE_VALUE) {
+                    MINIDUMP_EXCEPTION_INFORMATION exceptionInfo{
+                        GetCurrentThreadId(), exceptionPointers, FALSE};
+                    const auto dumpType = static_cast<MINIDUMP_TYPE>(
+                        MiniDumpWithThreadInfo | MiniDumpWithIndirectlyReferencedMemory);
+                    written = MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), dumpFile,
+                                                dumpType, &exceptionInfo, nullptr, nullptr);
+                    if (!written)
+                        error = GetLastError();
+                    CloseHandle(dumpFile);
+                } else {
+                    error = GetLastError();
+                }
+                char message[128]{};
+                const int length = std::snprintf(message, sizeof(message),
+                                                 "backend_runtime dump %s (error %lu)\r\n",
+                                                 written ? "captured" : "failed",
+                                                 static_cast<unsigned long>(error));
+                if (length > 0) {
+                    const DWORD messageLength = static_cast<DWORD>(
+                        length < static_cast<int>(sizeof(message) - 1)
+                            ? length
+                            : static_cast<int>(sizeof(message) - 1));
+                    DWORD ignored = 0;
+                    WriteFile(GetStdHandle(STD_ERROR_HANDLE), message, messageLength, &ignored,
+                              nullptr);
+                }
+            }
+        }
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+} // namespace
+#endif
+
+int main(int argc, char* argv[])
+{
+    TESTLIB_SELFCOVERAGE_START(BackendRuntimeTest)
+    QTest::Internal::callInitMain<BackendRuntimeTest>();
+    QTEST_MAIN_SETUP()
+    BackendRuntimeTest test;
+    QTEST_SET_MAIN_SOURCE_PATH
+    const int result = QTest::qExec(&test, argc, argv);
+#ifdef Q_OS_WIN
+    // QtTest's handler is active during qExec. Replace it before local destruction so
+    // an access violation during test/application teardown leaves a native minidump.
+    SetUnhandledExceptionFilter(&captureBackendRuntimeCrash);
+#endif
+    return result;
+}
 #include "backend_runtime_test.moc"

@@ -236,6 +236,26 @@ jobs:
             --output-junit "$PWD/build/junit.xml")
           "${command[@]}"
 
+      - name: Stage Windows crash diagnostics
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = Join-Path $env:GITHUB_WORKSPACE 'build'
+          $destination = Join-Path $env:RUNNER_TEMP 'cirrus-windows-crash-diagnostics'
+          New-Item -ItemType Directory -Path $destination -Force | Out-Null
+          if (Test-Path -LiteralPath $source) {
+            Get-ChildItem -LiteralPath $source -Recurse -File |
+              Where-Object { $_.Extension -in '.dmp', '.pdb' } |
+              ForEach-Object {
+                $relative = [IO.Path]::GetRelativePath($source, $_.FullName)
+                $target = Join-Path $destination $relative
+                New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
+                Copy-Item -LiteralPath $_.FullName -Destination $target -Force
+              }
+          }
+          Get-ChildItem -LiteralPath $destination -Recurse -File | ForEach-Object { $_.FullName }
+
       - name: Save compiler cache
         if: always() && env.CIRRUS_CCACHE_KEY != '' && env.CIRRUS_CCACHE_HIT != 'true'
         uses: actions/cache/save@v6
@@ -255,6 +275,7 @@ jobs:
             build/Testing/Temporary/LastTest.log
             build/Testing/Temporary/LastTestsFailed.log
             ${{ runner.temp }}/cirrus-windows-audio-evidence/
+            ${{ runner.temp }}/cirrus-windows-crash-diagnostics/
           if-no-files-found: warn
 
   macos-tests:
